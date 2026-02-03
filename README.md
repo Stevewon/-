@@ -2,7 +2,7 @@
 
 QR 코드 기반 보안 중심 하이브리드 메신저
 
-**📱 Android APK 빌드 지원!** - [빌드 가이드](./ANDROID_BUILD.md) 참조
+**📱 Android APK 다운로드**: [여기서 다운로드](./DOWNLOAD.md) | [빌드 가이드](./ANDROID_BUILD.md)
 
 ## 🔐 핵심 개념
 
