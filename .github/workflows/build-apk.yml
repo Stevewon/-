@@ -3,6 +3,8 @@ name: Build Android APK
 on:
   push:
     branches: [ main ]
+    tags:
+      - 'v*'
   pull_request:
     branches: [ main ]
   workflow_dispatch:
@@ -15,7 +17,7 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
     
-    - name: Set up JDK 17
+    - name: Setup Java 17
       uses: actions/setup-java@v4
       with:
         java-version: '17'
@@ -33,61 +35,61 @@ jobs:
     - name: Build web app
       run: npm run build
       env:
-        VITE_API_URL: https://3001-i9hxkysto1zzwy5b3ntbw-2e77fc33.sandbox.novita.ai
+        VITE_API_URL: ${{ secrets.VITE_API_URL || 'https://3001-i9hxkysto1zzwy5b3ntbw-2e77fc33.sandbox.novita.ai' }}
     
     - name: Sync Capacitor
       run: npx cap sync android
     
-    - name: Grant execute permission for gradlew
+    - name: Make gradlew executable
       run: chmod +x android/gradlew
     
     - name: Build Debug APK
       run: |
         cd android
-        ./gradlew assembleDebug --no-daemon
+        ./gradlew assembleDebug --no-daemon --stacktrace
     
-    - name: Sign APK
-      run: |
-        echo "APK built successfully!"
-        ls -lh android/app/build/outputs/apk/debug/
-    
-    - name: Upload APK
+    - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: securet-messenger-debug
+        name: securet-messenger-debug-apk
         path: android/app/build/outputs/apk/debug/app-debug.apk
         retention-days: 30
     
-    - name: Create Release
-      if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    - name: Create Release (on tag)
+      if: startsWith(github.ref, 'refs/tags/')
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: v1.0.${{ github.run_number }}
-        name: Securet Messenger v1.0.${{ github.run_number }}
+        files: android/app/build/outputs/apk/debug/app-debug.apk
+        name: Securet Messenger ${{ github.ref_name }}
         body: |
-          ## 📱 시큐렛 메신저 APK
+          ## 🎉 시큐렛 메신저 Android APK
           
-          ### 다운로드
-          - app-debug.apk (아래 Assets에서 다운로드)
+          ### 📱 다운로드
+          아래 Assets에서 `app-debug.apk` 다운로드
           
-          ### 설치 방법
-          1. APK 파일 다운로드
-          2. Android 기기에서 "알 수 없는 출처" 허용
-          3. APK 파일 탭하여 설치
+          ### 🚀 설치 방법
+          1. APK 파일을 Android 기기로 전송
+          2. 설정 → 보안 → "알 수 없는 출처" 허용
+          3. APK 파일을 탭하여 설치
+          4. 권한 허용 (카메라, 파일 등)
           
-          ### 주요 기능
-          - 🔐 시큐렛 QR 주소 기반 보안 채팅
-          - 📱 QR 코드 스캔으로 친구 추가
+          ### ⚙️ 시스템 요구사항
+          - Android 5.1 (API 22) 이상
+          - 카메라 권한 (QR 스캔)
+          - 인터넷 연결
+          
+          ### ✨ 주요 기능
+          - 🔐 시큐렛 QR 기반 친구 추가
           - 💬 실시간 1:1 채팅
           - 👥 이메일 기반 그룹 채팅
           - 📎 파일 공유
+          - 🔔 푸시 알림 (준비 중)
           
-          ### 버전 정보
-          - 빌드 번호: ${{ github.run_number }}
-          - 커밋: ${{ github.sha }}
-          - 빌드 날짜: ${{ github.event.head_commit.timestamp }}
-        files: android/app/build/outputs/apk/debug/app-debug.apk
-        draft: false
-        prerelease: false
+          ### 🔗 서버 정보
+          백엔드 서버가 실행 중이어야 앱이 작동합니다.
+          
+          ---
+          
+          **문제가 있으신가요?** Issues 탭에서 문의해주세요!
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
