@@ -3,8 +3,6 @@ name: Build Android APK
 on:
   push:
     branches: [ main ]
-    tags:
-      - 'v*'
   pull_request:
     branches: [ main ]
   workflow_dispatch:
@@ -17,138 +15,76 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
     
-    - name: Setup Java 17
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+        
+    - name: Set up JDK 17
       uses: actions/setup-java@v4
       with:
         java-version: '17'
         distribution: 'temurin'
-    
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '18'
-        cache: 'npm'
-    
+        
     - name: Install dependencies
       run: npm ci
-    
+      
     - name: Build web app
       run: npm run build
       env:
         VITE_API_URL: https://3001-i9hxkysto1zzwy5b3ntbw-2e77fc33.sandbox.novita.ai
-    
+      
+    - name: Verify dist directory
+      run: |
+        echo "Checking dist directory..."
+        ls -la dist/ || echo "dist directory not found!"
+        
     - name: Sync Capacitor
       run: npx cap sync android
-    
+      
+    - name: Verify Android project
+      run: |
+        echo "Checking android directory..."
+        ls -la android/
+        echo "Checking gradlew..."
+        ls -la android/gradlew
+        
     - name: Make gradlew executable
       run: chmod +x android/gradlew
-    
-    - name: Build Debug APK
+      
+    - name: Build Android APK
       run: |
         cd android
-        ./gradlew assembleDebug --no-daemon --stacktrace
-    
-    - name: Upload APK Artifact
+        ./gradlew assembleDebug --stacktrace --info
+      
+    - name: Verify APK
+      run: |
+        echo "Checking for APK..."
+        ls -la android/app/build/outputs/apk/debug/ || echo "APK not found!"
+      
+    - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
         name: securet-messenger-apk
         path: android/app/build/outputs/apk/debug/app-debug.apk
-        retention-days: 30
-    
-    - name: Create Release (on tag)
+        if-no-files-found: error
+        
+    - name: Create Release (if tagged)
       if: startsWith(github.ref, 'refs/tags/')
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
         files: android/app/build/outputs/apk/debug/app-debug.apk
         body: |
-          ## 🎉 시큐렛 메신저 Android APK
+          ## 시큐렛 메신저 APK
           
-          ### 📱 다운로드 및 설치
-          1. 아래 Assets에서 app-debug.apk 다운로드
-          2. 핸드폰으로 전송 (USB 또는 클라우드)
-          3. 설정 → 보안 → "알 수 없는 출처" 허용
-          4. APK 파일 탭하여 설치
-          5. 권한 허용 (카메라, 파일 등)
+          ### 설치 방법
+          1. APK 파일 다운로드
+          2. 핸드폰 설정 > 보안 > 알 수 없는 출처 허용
+          3. APK 파일 실행하여 설치
           
-          ### ⚙️ 시스템 요구사항
-          - Android 5.1 (API 22) 이상
-          - 카메라 권한 필요
-          
-          ### ✨ 주요 기능
-          - QR 기반 친구 추가
-          - 실시간 채팅
-          - 파일 공유
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-name: Build Android APK
-
-on:
-  push:
-    branches: [ main ]
-    tags:
-      - 'v*'
-  pull_request:
-    branches: [ main ]
-  workflow_dispatch:
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    
-    - name: Setup Java 17
-      uses: actions/setup-java@v4
-      with:
-        java-version: '17'
-        distribution: 'temurin'
-    
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '18'
-        cache: 'npm'
-    
-    - name: Install dependencies
-      run: npm ci
-    
-    - name: Build web app
-      run: npm run build
-      env:
-        VITE_API_URL: https://3001-i9hxkysto1zzwy5b3ntbw-2e77fc33.sandbox.novita.ai
-    
-    - name: Sync Capacitor
-      run: npx cap sync android
-    
-    - name: Make gradlew executable
-      run: chmod +x android/gradlew
-    
-    - name: Build Debug APK
-      run: |
-        cd android
-        ./gradlew assembleDebug --no-daemon --stacktrace
-    
-    - name: Upload APK Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: securet-messenger-apk
-        path: android/app/build/outputs/apk/debug/app-debug.apk
-        retention-days: 30
-    
-    - name: Create Release (on tag)
-      if: startsWith(github.ref, 'refs/tags/')
-      uses: softprops/action-gh-release@v1
-      with:
-        files: android/app/build/outputs/apk/debug/app-debug.apk
-        body: |
-          ## 시큐렛 메신저 Android APK
-          
-          ### 다운로드 및 설치
-          1. 아래 Assets에서 app-debug.apk 다운로드
-          2. 핸드폰으로 전송
-          3. 설정 → 보안 → "알 수 없는 출처" 허용
-          4. APK 파일 탭하여 설치
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ### 주요 기능
+          - ✅ 시큐렛 QR 기반 친구 추가
+          - ✅ 1:1 실시간 채팅
+          - ✅ 이메일 기반 그룹 채팅
+          - ✅ 파일 공유
