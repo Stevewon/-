@@ -25,6 +25,7 @@ function initDatabase() {
         email TEXT UNIQUE NOT NULL,
         password TEXT NOT NULL,
         nickname TEXT NOT NULL,
+        photo_url TEXT,
         fcm_token TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )

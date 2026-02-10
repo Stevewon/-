@@ -92,6 +92,73 @@ router.post('/login', (req, res) => {
   }
 });
 
+// 구글 로그인 (자동 가입/로그인)
+router.post('/google-login', (req, res) => {
+  try {
+    const { email, name, photoUrl, googleId } = req.body;
+
+    if (!email || !name || !googleId) {
+      return res.status(400).json({ error: '구글 로그인 정보가 필요합니다' });
+    }
+
+    // 이메일로 기존 사용자 확인
+    db.get('SELECT * FROM users WHERE email = ?', [email], (err, user) => {
+      if (err) {
+        return res.status(500).json({ error: '데이터베이스 오류' });
+      }
+
+      if (user) {
+        // 기존 사용자 - 로그인 처리
+        const token = generateToken(user.id);
+        res.json({
+          message: '로그인 성공',
+          user: {
+            id: user.id,
+            email: user.email,
+            nickname: user.nickname,
+            photoUrl: user.photo_url
+          },
+          token,
+          isNewUser: false
+        });
+      } else {
+        // 신규 사용자 - 자동 가입
+        const userId = uuidv4();
+        const nickname = name; // 구글 이름을 닉네임으로 사용
+        // 구글 로그인은 비밀번호가 없으므로 임의의 해시 저장
+        const dummyPassword = 'GOOGLE_LOGIN_NO_PASSWORD';
+
+        db.run(
+          'INSERT INTO users (id, email, password, nickname, photo_url) VALUES (?, ?, ?, ?, ?)',
+          [userId, email, dummyPassword, nickname, photoUrl || ''],
+          function (err) {
+            if (err) {
+              console.error('자동 가입 실패:', err);
+              return res.status(500).json({ error: '자동 가입 실패' });
+            }
+
+            const token = generateToken(userId);
+            res.status(201).json({
+              message: '자동 가입 및 로그인 성공',
+              user: {
+                id: userId,
+                email,
+                nickname,
+                photoUrl: photoUrl || ''
+              },
+              token,
+              isNewUser: true
+            });
+          }
+        );
+      }
+    });
+  } catch (error) {
+    console.error('구글 로그인 오류:', error);
+    res.status(500).json({ error: '서버 오류' });
+  }
+});
+
 // FCM 토큰 업데이트
 router.post('/fcm-token', (req, res) => {
   try {
