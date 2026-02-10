@@ -38,6 +38,7 @@ function initDatabase() {
         name TEXT NOT NULL,
         description TEXT,
         creator_id TEXT NOT NULL,
+        invite_code TEXT UNIQUE,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (creator_id) REFERENCES users(id)
       )
