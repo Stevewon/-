@@ -32,3 +32,12 @@ lerna-debug.log*
 
 # Build
 build/
+
+# Firebase sensitive files
+firebase-service-account.json
+google-services.json
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
