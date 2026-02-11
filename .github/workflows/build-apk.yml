@@ -2,50 +2,61 @@ name: Build Android APK
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
     
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v3
     
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
       with:
-        node-version: '20'
-        
-    - name: Setup Java
-      uses: actions/setup-java@v4
+        node-version: '18'
+    
+    - name: Set up JDK 17
+      uses: actions/setup-java@v3
       with:
         distribution: 'temurin'
         java-version: '17'
     
-    - name: Install npm dependencies
+    - name: Install dependencies
+      working-directory: ./SayToDo
       run: npm install
-      
-    - name: Build web application
-      run: npm run build
-      
-    - name: Setup Capacitor
-      run: |
-        npx cap copy android
-        npx cap update android
-      
+    
+    - name: Create google-services.json
+      working-directory: ./SayToDo/android/app
+      run: echo '${{ secrets.GOOGLE_SERVICES_JSON }}' > google-services.json
+    
+    - name: Make gradlew executable
+      working-directory: ./SayToDo/android
+      run: chmod +x ./gradlew
+    
     - name: Build APK
-      working-directory: android
-      run: |
-        chmod +x ./gradlew
-        ./gradlew assembleDebug --no-daemon --warning-mode all
-      
-    - name: Upload APK artifact
-      uses: actions/upload-artifact@v4
-      if: success()
+      working-directory: ./SayToDo/android
+      run: ./gradlew assembleRelease --no-daemon
+    
+    - name: Upload APK
+      uses: actions/upload-artifact@v3
       with:
-        name: app-debug
-        path: android/app/build/outputs/apk/debug/app-debug.apk
-        retention-days: 7
+        name: SayToDo-APK
+        path: SayToDo/android/app/build/outputs/apk/release/app-release.apk
+        retention-days: 30
+    
+    - name: Create Release
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v1.0.0-${{ github.run_number }}
+        name: SayToDo v1.0.0 Build ${{ github.run_number }}
+        files: SayToDo/android/app/build/outputs/apk/release/app-release.apk
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
