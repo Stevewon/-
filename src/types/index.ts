@@ -2,64 +2,102 @@ export interface User {
   id: string;
   email: string;
   nickname: string;
-  secretQRAddress: string;
-  qrCode: string;
-  createdAt?: string;
-}
-
-export interface Friend {
-  id: string;
-  nickname: string;
-  secret_qr_address: string;
-  added_at: string;
-  isOnline?: boolean;
-}
-
-export interface DirectMessage {
-  id: string;
-  sender_id: string;
-  sender_nickname: string;
-  receiver_id: string;
-  message?: string;
-  file_url?: string;
-  file_name?: string;
-  file_type?: string;
-  is_read: number;
+  role: string;
+  kyc_status: string;
+  kyc_name?: string;
+  kyc_phone?: string;
   created_at: string;
 }
 
-export interface GroupRoom {
+export interface Coin {
   id: string;
+  symbol: string;
   name: string;
-  creator_id?: string;
-  creator_nickname?: string;
-  member_count: number;
-  last_message?: string;
-  created_at: string;
-  members?: GroupMember[];
+  icon: string;
+  price_usd: number;
+  change_24h: number;
+  volume_24h: number;
+  high_24h: number;
+  low_24h: number;
 }
 
-export interface GroupMember {
+export interface Market {
   id: string;
-  nickname: string;
-  email: string;
+  base_coin: string;
+  quote_coin: string;
+  base_name: string;
+  base_price: number;
+  base_icon: string;
+  change_24h: number;
+  volume_24h: number;
+  price_decimals: number;
+  amount_decimals: number;
+  maker_fee: number;
+  taker_fee: number;
 }
 
-export interface GroupMessage {
+export interface OrderbookEntry {
+  price: number;
+  amount: number;
+}
+
+export interface Orderbook {
+  bids: OrderbookEntry[];
+  asks: OrderbookEntry[];
+}
+
+export interface Trade {
   id: string;
-  room_id: string;
-  sender_id: string;
-  sender_nickname: string;
-  message?: string;
-  file_url?: string;
-  file_name?: string;
-  file_type?: string;
+  price: number;
+  amount: number;
+  total: number;
+  side: 'buy' | 'sell';
+  time: string;
+  created_at?: string;
+}
+
+export interface Order {
+  id: string;
+  user_id: string;
+  market_id: string;
+  base_coin: string;
+  quote_coin: string;
+  side: 'buy' | 'sell';
+  type: 'limit' | 'market';
+  price: number;
+  amount: number;
+  filled: number;
+  remaining: number;
+  total: number;
+  status: string;
   created_at: string;
 }
 
-export interface Call {
-  from: string;
-  fromNickname: string;
-  offer: RTCSessionDescriptionInit;
-  callType: 'audio' | 'video';
+export interface Wallet {
+  id: string;
+  coin_symbol: string;
+  coin_name: string;
+  available: number;
+  locked: number;
+  price_usd: number;
+  icon: string;
+  change_24h: number;
+}
+
+export interface Candle {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+export interface Ticker {
+  symbol: string;
+  last: number;
+  change: number;
+  volume: number;
+  high: number;
+  low: number;
 }

@@ -1,50 +1,80 @@
-import { io, Socket } from 'socket.io-client';
-import { useAuthStore } from '../store/authStore';
+// Real-time updates via SSE (Server-Sent Events) for Cloudflare Workers
+// Falls back to polling when SSE is not available
 
-let socket: Socket | null = null;
+let eventSource: EventSource | null = null;
+let tickerCallbacks: ((data: Record<string, any>) => void)[] = [];
+let pollingInterval: ReturnType<typeof setInterval> | null = null;
 
-export const initSocket = () => {
-  const token = useAuthStore.getState().token;
-  
-  if (!token) {
-    console.error('No auth token for socket connection');
-    return null;
+function getApiBase(): string {
+  // In production, API is at the same origin via Cloudflare Pages Functions
+  // In development, Vite proxy handles /api
+  return '';
+}
+
+export function connectTickerStream() {
+  if (eventSource) return;
+
+  try {
+    eventSource = new EventSource(`${getApiBase()}/api/stream/ticker`);
+
+    eventSource.onmessage = (event) => {
+      try {
+        const parsed = JSON.parse(event.data);
+        if (parsed.type === 'tickers' && parsed.data) {
+          tickerCallbacks.forEach(cb => cb(parsed.data));
+        }
+      } catch { /* ignore parse errors */ }
+    };
+
+    eventSource.onerror = () => {
+      // SSE disconnected, fall back to polling
+      disconnectTickerStream();
+      startPolling();
+    };
+  } catch {
+    startPolling();
   }
+}
 
-  if (socket?.connected) {
-    return socket;
+function startPolling() {
+  if (pollingInterval) return;
+  pollingInterval = setInterval(async () => {
+    try {
+      const res = await fetch(`${getApiBase()}/api/market/tickers`);
+      const data = await res.json();
+      tickerCallbacks.forEach(cb => cb(data));
+    } catch { /* ignore */ }
+  }, 3000);
+}
+
+export function disconnectTickerStream() {
+  if (eventSource) {
+    eventSource.close();
+    eventSource = null;
   }
+}
 
-  const socketUrl = import.meta.env.VITE_API_URL || '/';
+export function onTickerUpdate(callback: (data: Record<string, any>) => void) {
+  tickerCallbacks.push(callback);
+  return () => {
+    tickerCallbacks = tickerCallbacks.filter(cb => cb !== callback);
+  };
+}
 
-  socket = io(socketUrl, {
-    auth: { token },
-    transports: ['websocket', 'polling'],
-    reconnection: true,
-    reconnectionDelay: 1000,
-    reconnectionAttempts: 5,
-  });
+// Compatibility shims for components that used socket.io
+export function subscribeToMarket(_symbol: string) {
+  connectTickerStream();
+}
 
-  socket.on('connect', () => {
-    console.log('Socket connected');
-  });
+export function unsubscribeFromMarket(_symbol: string) {
+  // Keep stream alive for other markets
+}
 
-  socket.on('disconnect', (reason) => {
-    console.log('Socket disconnected:', reason);
-  });
-
-  socket.on('connect_error', (error) => {
-    console.error('Socket connection error:', error);
-  });
-
-  return socket;
-};
-
-export const getSocket = () => socket;
-
-export const disconnectSocket = () => {
-  if (socket) {
-    socket.disconnect();
-    socket = null;
-  }
-};
+export function getSocket(): any {
+  // Return a mock socket object for backward compatibility
+  return {
+    on: (_event: string, _callback: (...args: any[]) => void) => {},
+    off: (_event: string, _callback: (...args: any[]) => void) => {},
+    emit: (_event: string, ..._args: any[]) => {},
+  };
+}

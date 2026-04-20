@@ -1,28 +1,26 @@
 import axios from 'axios';
-import { useAuthStore } from '../store/authStore';
 
-const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || '/api',
-});
+// In production, API is served from the same domain via Cloudflare Pages Functions
+// or from a separate Workers domain (api.quantaex.io)
+const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
-// Add auth token to requests
+const api = axios.create({ baseURL: API_BASE });
+
 api.interceptors.request.use((config) => {
-  const token = useAuthStore.getState().token;
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
+  const token = localStorage.getItem('token');
+  if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
 
-// Handle auth errors
 api.interceptors.response.use(
-  (response) => response,
-  (error) => {
-    if (error.response?.status === 401) {
-      useAuthStore.getState().logout();
+  (res) => res,
+  (err) => {
+    if (err.response?.status === 401) {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
       window.location.href = '/login';
     }
-    return Promise.reject(error);
+    return Promise.reject(err);
   }
 );
 

@@ -1,0 +1,17 @@
+{
+  "name": "QuantaEX - 디지털 자산 거래소",
+  "short_name": "QuantaEX",
+  "description": "신뢰할 수 있는 디지털 자산 거래소",
+  "start_url": "/trade/BTC-USDT",
+  "display": "standalone",
+  "background_color": "#0B0E11",
+  "theme_color": "#F0B90B",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

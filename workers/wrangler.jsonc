@@ -1,0 +1,20 @@
+{
+  "name": "quantaex-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2024-12-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "quantaex-production",
+      "database_id": "5eb4f183-1dfc-4310-8872-07b014078dbc"
+    }
+  ],
+  "vars": {
+    "JWT_SECRET": "quantaex-production-secret-change-me",
+    "CORS_ORIGIN": "https://www.quantaex.io"
+  },
+  "routes": [
+    { "pattern": "api.quantaex.io/*", "zone_name": "quantaex.io" }
+  ]
+}
