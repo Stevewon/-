@@ -3,6 +3,7 @@ import useStore from '../../store/useStore';
 import { useI18n } from '../../i18n';
 import api from '../../utils/api';
 import { formatPrice } from '../../utils/format';
+import { showToast } from '../common/Toast';
 
 interface Props {
   symbol: string;
@@ -68,17 +69,20 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
 
       const res = await api.post('/orders', payload);
       const tradeCount = res.data.trades?.length || 0;
-      setMessage(tradeCount > 0
+      const msg = tradeCount > 0
         ? `${t('trade.orderPlaced')} ${tradeCount}${t('trade.tradesExecuted')}`
-        : `${t('trade.orderPlaced')} ${t('trade.waitingMatch')}`
-      );
+        : `${t('trade.orderPlaced')} ${t('trade.waitingMatch')}`;
+      setMessage(msg);
+      showToast('success', side === 'buy' ? '매수 주문' : '매도 주문', msg);
       setAmount('');
       setSliderPct(0);
       fetchWallets();
       fetchOpenOrders(symbol);
       if (onComplete) setTimeout(onComplete, 1500);
     } catch (err: any) {
-      setMessage(err.response?.data?.error || t('trade.orderFailed'));
+      const errMsg = err.response?.data?.error || t('trade.orderFailed');
+      setMessage(errMsg);
+      showToast('error', '주문 실패', errMsg);
     } finally {
       setLoading(false);
     }

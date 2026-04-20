@@ -32,7 +32,7 @@ app.post('/register', async (c) => {
     { symbol: 'KRW', amount: 10000000 },
     { symbol: 'BTC', amount: 0.1 },
     { symbol: 'ETH', amount: 2 },
-    { symbol: 'QTA', amount: 100000 },
+    { symbol: 'QTA', amount: 1000 },
   ];
 
   const batch = defaults.map(d =>

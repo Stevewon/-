@@ -1,5 +1,5 @@
 import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
-import { BarChart3, Wallet, LayoutGrid, Shield, LogIn, LogOut, User, Bell, ChevronDown } from 'lucide-react';
+import { BarChart3, Wallet, LayoutGrid, Shield, LogIn, LogOut, User, ClipboardList } from 'lucide-react';
 import useStore from '../../store/useStore';
 import { useI18n } from '../../i18n';
 import QuantaLogo from '../common/QuantaLogo';
@@ -17,6 +17,7 @@ export default function Layout() {
     { path: '/trade/BTC-USDT', label: t('nav.trade'), icon: BarChart3 },
     { path: '/markets', label: t('nav.markets'), icon: LayoutGrid },
     ...(user ? [
+      { path: '/orders', label: t('nav.orders'), icon: ClipboardList },
       { path: '/wallet', label: t('nav.wallet'), icon: Wallet },
     ] : []),
     ...(user?.role === 'admin' ? [
@@ -64,12 +65,15 @@ export default function Layout() {
 
           {user ? (
             <div className="flex items-center gap-2">
-              <div className="hidden sm:flex items-center gap-1.5 text-sm text-exchange-text-secondary bg-exchange-hover/30 px-2.5 py-1.5 rounded-md">
+              <Link
+                to="/profile"
+                className="hidden sm:flex items-center gap-1.5 text-sm text-exchange-text-secondary bg-exchange-hover/30 px-2.5 py-1.5 rounded-md hover:bg-exchange-hover transition-colors"
+              >
                 <div className="w-5 h-5 bg-exchange-yellow/20 rounded-full flex items-center justify-center">
                   <User size={12} className="text-exchange-yellow" />
                 </div>
                 <span className="max-w-[100px] truncate">{user.nickname}</span>
-              </div>
+              </Link>
               <button
                 onClick={() => { logout(); navigate('/login'); }}
                 className="flex items-center gap-1 text-xs text-exchange-text-secondary hover:text-exchange-sell transition-colors px-2 py-1.5 rounded-md hover:bg-exchange-sell/10"

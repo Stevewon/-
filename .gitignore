@@ -8,4 +8,4 @@ node_modules/
 .vite/
 .DS_Store
 workers/node_modules/
-.github/
+dist/

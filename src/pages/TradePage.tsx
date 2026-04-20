@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import useStore from '../store/useStore';
 import { useI18n } from '../i18n';
-import { subscribeToMarket, unsubscribeFromMarket, onTickerUpdate } from '../utils/socket';
+import { subscribeToMarket, unsubscribeFromMarket, onTickerUpdate, onOrderbookUpdate, onTradesUpdate } from '../utils/socket';
 import { formatPrice, formatPercent, formatVolume } from '../utils/format';
 import CandleChart from '../components/chart/CandleChart';
 import Orderbook from '../components/orderbook/Orderbook';
@@ -11,43 +11,81 @@ import RecentTrades from '../components/trade/RecentTrades';
 import OpenOrders from '../components/trade/OpenOrders';
 import MarketSelector from '../components/market/MarketSelector';
 import CoinIcon from '../components/common/CoinIcon';
-import { ChevronDown, X, TrendingUp, TrendingDown } from 'lucide-react';
+import SkeletonLoader from '../components/common/SkeletonLoader';
+import { ChevronDown, X, TrendingUp, TrendingDown, BarChart3, BookOpen, ArrowLeftRight } from 'lucide-react';
+
+type MobileView = 'chart' | 'orderbook' | 'trades';
 
 export default function TradePage() {
   const { symbol = 'BTC-USDT' } = useParams();
   const navigate = useNavigate();
   const { t } = useI18n();
-  const { tickers, setCurrentMarket, fetchOrderbook, fetchRecentTrades, updateTicker } = useStore();
+  const {
+    tickers, prevTickers, setCurrentMarket,
+    fetchOrderbook, fetchRecentTrades,
+    updateAllTickers, updateOrderbook, addTrades, setRecentTrades,
+    isLoadingOrderbook, isLoadingTrades,
+  } = useStore();
   const [selectedPrice, setSelectedPrice] = useState<number | undefined>();
   const [showMarkets, setShowMarkets] = useState(false);
   const [bottomTab, setBottomTab] = useState<'orders' | 'trades'>('orders');
   const [mobilePanel, setMobilePanel] = useState<'buy' | 'sell' | null>(null);
+  const [mobileView, setMobileView] = useState<MobileView>('chart');
 
   const [base, quote] = symbol.split('-');
   const ticker = tickers[symbol];
+  const prevTicker = prevTickers[symbol];
   const isUp = (ticker?.change ?? 0) >= 0;
+
+  // Price flash effect
+  const [priceFlash, setPriceFlash] = useState<'up' | 'down' | null>(null);
+  useEffect(() => {
+    if (!ticker || !prevTicker) return;
+    if (ticker.last > prevTicker.last) {
+      setPriceFlash('up');
+    } else if (ticker.last < prevTicker.last) {
+      setPriceFlash('down');
+    }
+    const timer = setTimeout(() => setPriceFlash(null), 600);
+    return () => clearTimeout(timer);
+  }, [ticker?.last]);
 
   useEffect(() => {
     setCurrentMarket(symbol);
     subscribeToMarket(symbol);
+
+    // Initial data fetch
     fetchOrderbook(symbol);
     fetchRecentTrades(symbol);
 
-    const interval = setInterval(() => {
-      fetchOrderbook(symbol);
-      fetchRecentTrades(symbol);
-    }, 3000);
-
+    // SSE: ticker updates (all markets)
     const unsubTicker = onTickerUpdate((data) => {
-      Object.entries(data).forEach(([sym, tickerData]) => {
-        updateTicker(sym, tickerData as any);
-      });
+      updateAllTickers(data as any);
+    });
+
+    // SSE: orderbook updates for this market
+    const unsubOrderbook = onOrderbookUpdate((data) => {
+      updateOrderbook(data);
+    });
+
+    // SSE: trade updates for this market
+    let isFirstTradeUpdate = true;
+    const unsubTrades = onTradesUpdate((data) => {
+      if (Array.isArray(data)) {
+        if (isFirstTradeUpdate && data.length > 5) {
+          setRecentTrades(data);
+          isFirstTradeUpdate = false;
+        } else {
+          addTrades(data);
+        }
+      }
     });
 
     return () => {
       unsubscribeFromMarket(symbol);
-      clearInterval(interval);
       unsubTicker();
+      unsubOrderbook();
+      unsubTrades();
     };
   }, [symbol]);
 
@@ -64,11 +102,15 @@ export default function TradePage() {
           <ChevronDown size={14} className="text-exchange-text-third" />
         </button>
 
-        <div className={`text-lg font-bold tabular-nums ${isUp ? 'text-exchange-buy' : 'text-exchange-sell'}`}>
+        <div className={`text-lg font-bold tabular-nums transition-all duration-300 shrink-0 ${
+          priceFlash === 'up' ? 'text-exchange-buy scale-105' :
+          priceFlash === 'down' ? 'text-exchange-sell scale-105' :
+          isUp ? 'text-exchange-buy' : 'text-exchange-sell'
+        }`}>
           {formatPrice(ticker?.last || 0)}
         </div>
 
-        <div className="flex items-center gap-4 text-xs">
+        <div className="flex items-center gap-4 text-xs shrink-0">
           <div className="flex flex-col">
             <span className="text-exchange-text-third text-[10px]">{t('market.change24h')}</span>
             <span className={`font-medium tabular-nums ${isUp ? 'text-exchange-buy' : 'text-exchange-sell'}`}>
@@ -91,8 +133,8 @@ export default function TradePage() {
         </div>
       </div>
 
-      {/* Main Content */}
-      <div className="flex-1 flex min-h-0 relative">
+      {/* ===== DESKTOP LAYOUT (md+) ===== */}
+      <div className="hidden md:flex flex-1 min-h-0 relative">
         {/* Market Selector Overlay */}
         {showMarkets && (
           <div className="absolute inset-0 z-40 bg-exchange-bg/95 backdrop-blur-sm">
@@ -139,7 +181,7 @@ export default function TradePage() {
         </div>
 
         {/* Right Panel: Orderbook + Trade */}
-        <div className="hidden md:flex flex-col w-[580px]">
+        <div className="flex flex-col w-[580px]">
           <div className="flex flex-1 min-h-0">
             {/* Orderbook */}
             <div className="w-[280px] border-r border-exchange-border flex flex-col">
@@ -147,7 +189,11 @@ export default function TradePage() {
                 {t('trade.orderbook')}
               </div>
               <div className="flex-1 min-h-0">
-                <Orderbook onPriceClick={(p) => setSelectedPrice(p)} />
+                {isLoadingOrderbook && useStore.getState().orderbook.bids.length === 0 ? (
+                  <SkeletonLoader type="orderbook" />
+                ) : (
+                  <Orderbook onPriceClick={(p) => setSelectedPrice(p)} />
+                )}
               </div>
             </div>
 
@@ -161,6 +207,106 @@ export default function TradePage() {
               </div>
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* ===== MOBILE LAYOUT (< md) ===== */}
+      <div className="md:hidden flex flex-col flex-1 min-h-0">
+        {/* Market Selector Overlay (Mobile) */}
+        {showMarkets && (
+          <div className="absolute inset-0 z-40 bg-exchange-bg/95 backdrop-blur-sm">
+            <div className="h-full bg-exchange-card">
+              <div className="flex items-center justify-between px-3 py-2 border-b border-exchange-border">
+                <span className="text-sm font-medium">{t('market.markets')}</span>
+                <button onClick={() => setShowMarkets(false)} className="p-1 hover:bg-exchange-hover rounded"><X size={16} className="text-exchange-text-third" /></button>
+              </div>
+              <MarketSelector currentSymbol={symbol} onClose={() => setShowMarkets(false)} />
+            </div>
+          </div>
+        )}
+
+        {/* Mobile Tab Switcher */}
+        <div className="flex items-center border-b border-exchange-border bg-exchange-card">
+          {([
+            { key: 'chart' as MobileView, label: '차트', icon: BarChart3 },
+            { key: 'orderbook' as MobileView, label: '호가', icon: BookOpen },
+            { key: 'trades' as MobileView, label: '체결', icon: ArrowLeftRight },
+          ]).map(({ key, label, icon: Icon }) => (
+            <button
+              key={key}
+              onClick={() => setMobileView(key)}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-medium border-b-2 transition-colors ${
+                mobileView === key
+                  ? 'border-exchange-yellow text-exchange-yellow'
+                  : 'border-transparent text-exchange-text-third'
+              }`}
+            >
+              <Icon size={14} />
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* Mobile Content */}
+        <div className="flex-1 min-h-0 overflow-hidden">
+          {mobileView === 'chart' && (
+            <div className="h-full flex flex-col">
+              <div className="flex-1 min-h-0">
+                <CandleChart symbol={symbol} />
+              </div>
+              {/* Mini Orderbook Below Chart */}
+              <div className="h-32 border-t border-exchange-border overflow-hidden flex">
+                <div className="flex-1 border-r border-exchange-border">
+                  <div className="px-2 py-1 text-[10px] text-exchange-text-third font-medium border-b border-exchange-border flex justify-between">
+                    <span>매수(Bid)</span>
+                    <span>수량</span>
+                  </div>
+                  <div className="overflow-hidden">
+                    {useStore.getState().orderbook.bids.slice(0, 5).map((bid, i) => (
+                      <div key={`mb-${i}`} className="flex justify-between px-2 py-[2px] text-[10px]">
+                        <span className="text-exchange-buy tabular-nums">{formatPrice(bid.price)}</span>
+                        <span className="text-exchange-text-secondary tabular-nums">{formatPrice(bid.amount, 4)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex-1">
+                  <div className="px-2 py-1 text-[10px] text-exchange-text-third font-medium border-b border-exchange-border flex justify-between">
+                    <span>매도(Ask)</span>
+                    <span>수량</span>
+                  </div>
+                  <div className="overflow-hidden">
+                    {useStore.getState().orderbook.asks.slice(0, 5).map((ask, i) => (
+                      <div key={`ma-${i}`} className="flex justify-between px-2 py-[2px] text-[10px]">
+                        <span className="text-exchange-sell tabular-nums">{formatPrice(ask.price)}</span>
+                        <span className="text-exchange-text-secondary tabular-nums">{formatPrice(ask.amount, 4)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {mobileView === 'orderbook' && (
+            <div className="h-full">
+              {isLoadingOrderbook && useStore.getState().orderbook.bids.length === 0 ? (
+                <SkeletonLoader type="orderbook" />
+              ) : (
+                <Orderbook onPriceClick={(p) => { setSelectedPrice(p); setMobilePanel('buy'); }} />
+              )}
+            </div>
+          )}
+
+          {mobileView === 'trades' && (
+            <div className="h-full">
+              {isLoadingTrades ? (
+                <SkeletonLoader type="trades" />
+              ) : (
+                <RecentTrades />
+              )}
+            </div>
+          )}
         </div>
       </div>
 

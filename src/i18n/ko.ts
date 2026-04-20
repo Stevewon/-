@@ -13,6 +13,7 @@ const ko = {
   'nav.register': '회원가입',
   'nav.logout': '로그아웃',
   'nav.mypage': '마이페이지',
+  'nav.orders': '주문내역',
 
   // Auth
   'auth.welcome': '다시 오신 것을 환영합니다',
@@ -37,7 +38,7 @@ const ko = {
   'auth.passwordTooShort': '비밀번호는 6자 이상이어야 합니다',
   'auth.loginFailed': '로그인에 실패했습니다',
   'auth.registerFailed': '회원가입에 실패했습니다',
-  'auth.registerBonus': '회원가입 시 10,000 USDT + 10,000,000 KRW + 0.1 BTC + 2 ETH + 100,000 QTA 지급!',
+  'auth.registerBonus': '회원가입 시 10,000 USDT + 10,000,000 KRW + 0.1 BTC + 2 ETH + 1,000 QTA 지급!',
 
   // Trade
   'trade.orderbook': '호가창',

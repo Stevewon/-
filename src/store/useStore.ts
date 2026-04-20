@@ -14,21 +14,29 @@ interface ExchangeStore {
   markets: Market[];
   currentMarket: string;
   tickers: Record<string, Ticker>;
+  prevTickers: Record<string, Ticker>;
   orderbook: Orderbook;
   recentTrades: Trade[];
+  isLoadingOrderbook: boolean;
+  isLoadingTrades: boolean;
+  isLoadingMarkets: boolean;
   setCurrentMarket: (symbol: string) => void;
   fetchMarkets: () => Promise<void>;
   fetchOrderbook: (symbol: string) => Promise<void>;
   fetchRecentTrades: (symbol: string) => Promise<void>;
   updateTicker: (symbol: string, data: Ticker) => void;
+  updateAllTickers: (data: Record<string, Ticker>) => void;
   updateOrderbook: (data: Orderbook) => void;
   addTrades: (trades: Trade[]) => void;
+  setRecentTrades: (trades: Trade[]) => void;
 
   // Orders
   openOrders: Order[];
   orderHistory: Order[];
+  tradeHistory: Trade[];
   fetchOpenOrders: (market?: string) => Promise<void>;
   fetchOrderHistory: () => Promise<void>;
+  fetchTradeHistory: () => Promise<void>;
 
   // Wallet
   wallets: Wallet[];
@@ -59,51 +67,79 @@ const useStore = create<ExchangeStore>((set, get) => ({
   markets: [],
   currentMarket: 'BTC-USDT',
   tickers: {},
+  prevTickers: {},
   orderbook: { bids: [], asks: [] },
   recentTrades: [],
+  isLoadingOrderbook: true,
+  isLoadingTrades: true,
+  isLoadingMarkets: true,
 
   setCurrentMarket: (symbol) => set({ currentMarket: symbol }),
 
   fetchMarkets: async () => {
     try {
+      set({ isLoadingMarkets: true });
       const [marketsRes, tickersRes] = await Promise.all([
         api.get('/market/markets'),
         api.get('/market/tickers'),
       ]);
-      set({ markets: marketsRes.data, tickers: tickersRes.data });
-    } catch (e) { console.error(e); }
+      set({ markets: marketsRes.data, tickers: tickersRes.data, isLoadingMarkets: false });
+    } catch (e) {
+      set({ isLoadingMarkets: false });
+      console.error(e);
+    }
   },
 
   fetchOrderbook: async (symbol) => {
     try {
-      const res = await api.get(`/market/orderbook/${symbol}`);
-      set({ orderbook: res.data });
-    } catch (e) { console.error(e); }
+      set({ isLoadingOrderbook: true });
+      const res = await api.get(`/stream/orderbook/${symbol}`);
+      set({ orderbook: res.data, isLoadingOrderbook: false });
+    } catch (e) {
+      set({ isLoadingOrderbook: false });
+      console.error(e);
+    }
   },
 
   fetchRecentTrades: async (symbol) => {
     try {
-      const res = await api.get(`/market/trades/${symbol}`);
-      set({ recentTrades: res.data });
-    } catch (e) { console.error(e); }
+      set({ isLoadingTrades: true });
+      const res = await api.get(`/stream/trades/${symbol}`);
+      set({ recentTrades: res.data, isLoadingTrades: false });
+    } catch (e) {
+      set({ isLoadingTrades: false });
+      console.error(e);
+    }
   },
 
   updateTicker: (symbol, data) => {
     set((state) => ({
+      prevTickers: { ...state.prevTickers, [symbol]: state.tickers[symbol] },
       tickers: { ...state.tickers, [symbol]: data },
     }));
   },
 
-  updateOrderbook: (data) => set({ orderbook: data }),
-
-  addTrades: (trades) => {
+  updateAllTickers: (data) => {
     set((state) => ({
-      recentTrades: [...trades, ...state.recentTrades].slice(0, 100),
+      prevTickers: { ...state.tickers },
+      tickers: { ...state.tickers, ...data },
     }));
   },
 
+  updateOrderbook: (data) => set({ orderbook: data, isLoadingOrderbook: false }),
+
+  addTrades: (trades) => {
+    set((state) => ({
+      recentTrades: [...trades, ...state.recentTrades].slice(0, 50),
+      isLoadingTrades: false,
+    }));
+  },
+
+  setRecentTrades: (trades) => set({ recentTrades: trades, isLoadingTrades: false }),
+
   openOrders: [],
   orderHistory: [],
+  tradeHistory: [],
 
   fetchOpenOrders: async (market) => {
     try {
@@ -117,6 +153,13 @@ const useStore = create<ExchangeStore>((set, get) => ({
     try {
       const res = await api.get('/orders/my?status=closed');
       set({ orderHistory: res.data });
+    } catch (e) { console.error(e); }
+  },
+
+  fetchTradeHistory: async () => {
+    try {
+      const res = await api.get('/orders/my/trades');
+      set({ tradeHistory: res.data });
     } catch (e) { console.error(e); }
   },
 
