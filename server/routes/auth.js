@@ -1,184 +1,78 @@
-import express from 'express';
+import { Router } from 'express';
 import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
 import { v4 as uuidv4 } from 'uuid';
-import QRCode from 'qrcode';
-import db from '../db/database.js';
+import db from '../database.js';
+import { generateToken, authMiddleware } from '../middleware/auth.js';
 
-const router = express.Router();
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
+const router = Router();
 
 // Register
-router.post('/register', async (req, res) => {
+router.post('/register', (req, res) => {
   try {
-    const { email, password, nickname, securetQRAddress } = req.body;
+    const { email, password, nickname } = req.body;
+    if (!email || !password || !nickname) return res.status(400).json({ error: 'All fields required' });
 
-    if (!email || !password || !nickname || !securetQRAddress) {
-      return res.status(400).json({ error: '모든 필드를 입력해주세요' });
-    }
+    const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+    if (existing) return res.status(400).json({ error: 'Email already registered' });
 
-    // Validate Securet QR Address format (URL format)
-    try {
-      const url = new URL(securetQRAddress);
-      if (!url.hostname.includes('securet.kr') || !url.searchParams.has('token')) {
-        return res.status(400).json({ error: '유효한 시큐렛 QR 주소가 아닙니다' });
-      }
-    } catch (e) {
-      return res.status(400).json({ error: '시큐렛 QR 주소 형식이 올바르지 않습니다 (URL 형식이어야 합니다)' });
-    }
+    const existingNick = db.prepare('SELECT id FROM users WHERE nickname = ?').get(nickname);
+    if (existingNick) return res.status(400).json({ error: 'Nickname already taken' });
 
-    // Check if email exists
-    const existingUser = await db.getAsync(
-      'SELECT * FROM users WHERE email = ?',
-      [email]
-    );
+    const id = uuidv4();
+    const hashedPw = bcrypt.hashSync(password, 10);
+    db.prepare('INSERT INTO users (id, email, password, nickname) VALUES (?,?,?,?)').run(id, email, hashedPw, nickname);
 
-    if (existingUser) {
-      return res.status(400).json({ error: '이미 존재하는 이메일입니다' });
-    }
-
-    // Check if Securet QR Address exists
-    const existingQR = await db.getAsync(
-      'SELECT * FROM users WHERE secret_qr_address = ?',
-      [securetQRAddress]
-    );
-
-    if (existingQR) {
-      return res.status(400).json({ error: '이미 사용 중인 시큐렛 QR 주소입니다' });
-    }
-
-    // Hash password
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    const userId = uuidv4();
-
-    // Generate QR code as base64 (using the full URL)
-    const qrCodeBase64 = await QRCode.toDataURL(securetQRAddress, {
-      width: 300,
-      margin: 2,
-      color: {
-        dark: '#4f46e5',
-        light: '#ffffff',
-      },
+    // Create default wallets with bonus
+    const defaultCoins = [
+      { symbol: 'USDT', amount: 10000 },
+      { symbol: 'KRW', amount: 10000000 },
+      { symbol: 'BTC', amount: 0.1 },
+      { symbol: 'ETH', amount: 2 },
+      { symbol: 'QTA', amount: 100000 },
+    ];
+    defaultCoins.forEach(c => {
+      db.prepare('INSERT INTO wallets (id, user_id, coin_symbol, available) VALUES (?,?,?,?)').run(uuidv4(), id, c.symbol, c.amount);
     });
 
-    // Insert user
-    await db.runAsync(
-      `INSERT INTO users (id, email, password, nickname, secret_qr_address, qr_code) 
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [userId, email, hashedPassword, nickname, securetQRAddress, qrCodeBase64]
-    );
+    const user = db.prepare('SELECT id, email, nickname, role, kyc_status FROM users WHERE id = ?').get(id);
+    const token = generateToken(user);
 
-    // Generate JWT token
-    const token = jwt.sign(
-      { userId, email, nickname, secretQRAddress: securetQRAddress },
-      JWT_SECRET,
-      { expiresIn: '30d' }
-    );
-
-    res.json({
-      message: '회원가입 성공',
-      token,
-      user: {
-        id: userId,
-        email,
-        nickname,
-        secretQRAddress: securetQRAddress,
-        qrCode: qrCodeBase64,
-      },
-    });
-  } catch (error) {
-    console.error('Register error:', error);
-    res.status(500).json({ error: '회원가입 실패' });
+    res.json({ token, user });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
 // Login
-router.post('/login', async (req, res) => {
+router.post('/login', (req, res) => {
   try {
     const { email, password } = req.body;
-
-    if (!email || !password) {
-      return res.status(400).json({ error: '이메일과 비밀번호를 입력해주세요' });
+    const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+    if (!user || !bcrypt.compareSync(password, user.password)) {
+      return res.status(401).json({ error: 'Invalid credentials' });
     }
+    if (!user.is_active) return res.status(403).json({ error: 'Account disabled' });
 
-    // Find user
-    const user = await db.getAsync(
-      'SELECT * FROM users WHERE email = ?',
-      [email]
-    );
-
-    if (!user) {
-      return res.status(401).json({ error: '이메일 또는 비밀번호가 올바르지 않습니다' });
-    }
-
-    // Check password
-    const isValidPassword = await bcrypt.compare(password, user.password);
-
-    if (!isValidPassword) {
-      return res.status(401).json({ error: '이메일 또는 비밀번호가 올바르지 않습니다' });
-    }
-
-    // Generate JWT token
-    const token = jwt.sign(
-      { 
-        userId: user.id, 
-        email: user.email, 
-        nickname: user.nickname,
-        secretQRAddress: user.secret_qr_address 
-      },
-      JWT_SECRET,
-      { expiresIn: '30d' }
-    );
-
-    res.json({
-      message: '로그인 성공',
-      token,
-      user: {
-        id: user.id,
-        email: user.email,
-        nickname: user.nickname,
-        secretQRAddress: user.secret_qr_address,
-        qrCode: user.qr_code,
-      },
-    });
-  } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({ error: '로그인 실패' });
+    const token = generateToken(user);
+    const { password: _, ...safeUser } = user;
+    res.json({ token, user: safeUser });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
-// Get my profile
-router.get('/me', async (req, res) => {
-  try {
-    const token = req.headers.authorization?.split(' ')[1];
+// Get profile
+router.get('/me', authMiddleware, (req, res) => {
+  const user = db.prepare('SELECT id, email, nickname, role, kyc_status, kyc_name, kyc_phone, created_at FROM users WHERE id = ?').get(req.user.id);
+  res.json(user);
+});
 
-    if (!token) {
-      return res.status(401).json({ error: '인증 토큰이 없습니다' });
-    }
-
-    const decoded = jwt.verify(token, JWT_SECRET);
-    const user = await db.getAsync(
-      'SELECT id, email, nickname, secret_qr_address, qr_code, created_at FROM users WHERE id = ?',
-      [decoded.userId]
-    );
-
-    if (!user) {
-      return res.status(404).json({ error: '사용자를 찾을 수 없습니다' });
-    }
-
-    res.json({
-      id: user.id,
-      email: user.email,
-      nickname: user.nickname,
-      secretQRAddress: user.secret_qr_address,
-      qrCode: user.qr_code,
-      createdAt: user.created_at,
-    });
-  } catch (error) {
-    console.error('Get profile error:', error);
-    res.status(401).json({ error: '인증 실패' });
-  }
+// KYC submit
+router.post('/kyc', authMiddleware, (req, res) => {
+  const { name, phone, id_number } = req.body;
+  db.prepare('UPDATE users SET kyc_status = ?, kyc_name = ?, kyc_phone = ?, kyc_id_number = ? WHERE id = ?')
+    .run('pending', name, phone, id_number, req.user.id);
+  res.json({ message: 'KYC submitted' });
 });
 
 export default router;

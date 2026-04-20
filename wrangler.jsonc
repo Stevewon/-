@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "quantaex",
+  "compatibility_date": "2026-04-20",
+  "pages_build_output_dir": "./dist",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "quantaex-production",
+      "database_id": "5eb4f183-1dfc-4310-8872-07b014078dbc"
+    }
+  ],
+  "vars": {
+    "JWT_SECRET": "quantaex-jwt-secret-change-in-production"
+  }
+}
