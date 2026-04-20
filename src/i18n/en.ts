@@ -13,6 +13,7 @@ const en = {
   'nav.register': 'Register',
   'nav.logout': 'Logout',
   'nav.mypage': 'My Page',
+  'nav.orders': 'Orders',
 
   // Auth
   'auth.welcome': 'Welcome Back',
@@ -37,7 +38,7 @@ const en = {
   'auth.passwordTooShort': 'Password must be at least 6 characters',
   'auth.loginFailed': 'Login failed',
   'auth.registerFailed': 'Registration failed',
-  'auth.registerBonus': 'Bonus: 10,000 USDT + 10,000,000 KRW + 0.1 BTC + 2 ETH + 100,000 QTA upon registration!',
+  'auth.registerBonus': 'Bonus: 10,000 USDT + 10,000,000 KRW + 0.1 BTC + 2 ETH + 1,000 QTA upon registration!',
 
   // Trade
   'trade.orderbook': 'Order Book',

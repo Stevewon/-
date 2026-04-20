@@ -33,35 +33,365 @@ app.route('/api/admin', adminRoutes);
 // Health
 app.get('/api/health', (c) => c.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
-// SSE ticker endpoint
-// SSE ticker - one-shot (Workers don't support long-lived setTimeout)
-app.get('/api/stream/ticker', async (c) => {
-  const markets = await c.env.DB.prepare(
-    `SELECT m.id, m.base_coin, m.quote_coin, c.price_usd, c.change_24h, c.volume_24h
-     FROM markets m JOIN coins c ON c.symbol = m.base_coin WHERE m.is_active = 1`
-  ).all();
+// ===== COIN BASE PRICES (source of truth) =====
+const COIN_PRICES: Record<string, number> = {
+  BTC: 67250, ETH: 3450, BNB: 605, SOL: 172.5, XRP: 0.625,
+  ADA: 0.452, DOGE: 0.0845, DOT: 7.25, AVAX: 38.75, MATIC: 0.865, QTA: 0.0125,
+};
 
-  const tickers: Record<string, any> = {};
-  for (const m of markets.results as any[]) {
-    const sym = `${m.base_coin}-${m.quote_coin}`;
-    const basePrice = m.quote_coin === 'KRW' ? (m.price_usd as number) * 1350 : m.price_usd;
-    tickers[sym] = {
-      last: basePrice,
-      change: m.change_24h || (Math.random() - 0.5) * 5,
-      volume: m.volume_24h || Math.random() * 100000,
-      high: (basePrice as number) * 1.02,
-      low: (basePrice as number) * 0.98,
+// Per-symbol persistent price state
+const priceState: Record<string, {
+  price: number;
+  change24h: number;
+  high: number;
+  low: number;
+  volume: number;
+  prevPrice: number;
+  trend: number; // -1 to 1, drift bias
+  trendDuration: number;
+}> = {};
+
+function initPriceState(symbol: string, basePrice: number, quote: string) {
+  const key = `${symbol}-${quote}`;
+  if (!priceState[key]) {
+    const p = quote === 'KRW' ? basePrice * 1350 : basePrice;
+    const jitter = 1 + (Math.random() - 0.5) * 0.02;
+    const price = p * jitter;
+    priceState[key] = {
+      price,
+      prevPrice: price,
+      change24h: (Math.random() - 0.4) * 6,
+      high: price * (1 + Math.random() * 0.03),
+      low: price * (1 - Math.random() * 0.03),
+      volume: basePrice > 100 ? Math.random() * 8000 + 2000 : Math.random() * 800000 + 100000,
+      trend: (Math.random() - 0.5) * 0.6,
+      trendDuration: Math.floor(Math.random() * 20) + 5,
     };
   }
+  return priceState[key];
+}
 
-  const eventData = `data: ${JSON.stringify({ type: 'tickers', data: tickers })}\n\n`;
+function tickPrice(key: string) {
+  const s = priceState[key];
+  if (!s) return;
 
-  return new Response(eventData, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
+  s.prevPrice = s.price;
+
+  // Occasionally shift trend direction (market regime change)
+  s.trendDuration--;
+  if (s.trendDuration <= 0) {
+    s.trend = (Math.random() - 0.5) * 0.8;
+    s.trendDuration = Math.floor(Math.random() * 30) + 5;
+  }
+
+  // Random walk with trend bias, +-0.05% base volatility
+  const volatility = 0.0005 + Math.random() * 0.0003;
+  const drift = s.trend * 0.0002 + (Math.random() - 0.5) * volatility;
+
+  // Occasional larger moves (1% chance of 0.1-0.3% spike)
+  const spike = Math.random() < 0.01 ? (Math.random() - 0.5) * 0.003 : 0;
+
+  s.price *= (1 + drift + spike);
+  if (s.price > s.high) s.high = s.price;
+  if (s.price < s.low) s.low = s.price;
+
+  // Volume tick
+  const baseVol = s.price > 1000 ? 2 + Math.random() * 8 : 1000 + Math.random() * 5000;
+  s.volume += baseVol;
+
+  // 24h change drift
+  s.change24h += (Math.random() - 0.5) * 0.04 + s.trend * 0.01;
+  s.change24h = Math.max(-15, Math.min(15, s.change24h));
+}
+
+// Generate realistic orderbook around a price
+function generateOrderbook(price: number, _symbol: string) {
+  const spread = price * 0.00015; // 0.015% spread (tight)
+  const bids: { price: number; amount: number }[] = [];
+  const asks: { price: number; amount: number }[] = [];
+
+  const baseAmount = price > 10000 ? 0.2 : price > 1000 ? 1 : price > 100 ? 10 : price > 1 ? 500 : price > 0.01 ? 50000 : 5000000;
+
+  for (let i = 0; i < 25; i++) {
+    // Cluster orders near the spread, thin out further away
+    const distFactor = 1 + i * 0.3 + Math.random() * 0.2;
+    const bidPrice = price - spread * distFactor;
+    const askPrice = price + spread * distFactor;
+
+    // Larger orders further from spread (wall-like behavior)
+    const sizeMultiplier = 0.2 + Math.random() * 1.8 + (i > 15 ? Math.random() * 3 : 0);
+    const bidAmt = baseAmount * sizeMultiplier;
+    const askAmt = baseAmount * (0.2 + Math.random() * 1.8 + (i > 15 ? Math.random() * 3 : 0));
+
+    bids.push({
+      price: +bidPrice.toPrecision(price > 100 ? 7 : 6),
+      amount: +bidAmt.toPrecision(5),
+    });
+    asks.push({
+      price: +askPrice.toPrecision(price > 100 ? 7 : 6),
+      amount: +askAmt.toPrecision(5),
+    });
+  }
+
+  return { bids, asks };
+}
+
+// Incrementally update orderbook (small changes each tick)
+function tickOrderbook(prevBook: { bids: any[]; asks: any[] }, price: number, _symbol: string) {
+  const mutate = (entries: any[], isBid: boolean) => {
+    return entries.map((entry) => {
+      // 30% chance to adjust amount
+      if (Math.random() < 0.3) {
+        const change = entry.amount * (Math.random() * 0.2 - 0.1);
+        const newAmt = Math.max(entry.amount * 0.1, entry.amount + change);
+        return { price: entry.price, amount: +newAmt.toPrecision(5) };
+      }
+      return entry;
+    });
+  };
+
+  return {
+    bids: mutate(prevBook.bids, true),
+    asks: mutate(prevBook.asks, false),
+  };
+}
+
+// Generate simulated recent trades
+function generateRecentTrades(price: number, _symbol: string, count = 30) {
+  const trades: any[] = [];
+  const baseAmount = price > 10000 ? 0.05 : price > 1000 ? 0.5 : price > 100 ? 5 : price > 1 ? 200 : price > 0.01 ? 20000 : 2000000;
+  const now = Date.now();
+
+  for (let i = 0; i < count; i++) {
+    const tradePrice = price * (1 + (Math.random() - 0.5) * 0.001);
+    const amount = baseAmount * (0.05 + Math.random() * 2.5);
+    const side = Math.random() > 0.47 ? 'buy' : 'sell';
+    trades.push({
+      id: `sim-${now}-${i}`,
+      price: +tradePrice.toPrecision(price > 100 ? 7 : 6),
+      amount: +amount.toPrecision(5),
+      total: +(tradePrice * amount).toPrecision(7),
+      side,
+      time: new Date(now - i * (500 + Math.random() * 4000)).toISOString(),
+    });
+  }
+  return trades;
+}
+
+// Generate new trades per tick (1-3 trades)
+function generateTickTrades(price: number, _symbol: string) {
+  const count = Math.random() < 0.3 ? 3 : Math.random() < 0.5 ? 2 : 1;
+  const baseAmount = price > 10000 ? 0.05 : price > 1000 ? 0.5 : price > 100 ? 5 : price > 1 ? 200 : price > 0.01 ? 20000 : 2000000;
+  const trades: any[] = [];
+  const now = Date.now();
+
+  for (let i = 0; i < count; i++) {
+    const tradePrice = price * (1 + (Math.random() - 0.5) * 0.0008);
+    const amount = baseAmount * (0.01 + Math.random() * 1.5);
+    const side = Math.random() > 0.47 ? 'buy' : 'sell';
+    trades.push({
+      id: `sim-${now}-${Math.random().toString(36).slice(2, 8)}`,
+      price: +tradePrice.toPrecision(price > 100 ? 7 : 6),
+      amount: +amount.toPrecision(5),
+      total: +(tradePrice * amount).toPrecision(7),
+      side,
+      time: new Date(now - i * 200).toISOString(),
+    });
+  }
+  return trades;
+}
+
+// Per-market orderbook/trades cache
+const marketCache: Record<string, { orderbook: any; trades: any[] }> = {};
+
+function getMarketCache(key: string, price: number) {
+  if (!marketCache[key]) {
+    marketCache[key] = {
+      orderbook: generateOrderbook(price, key),
+      trades: generateRecentTrades(price, key),
+    };
+  }
+  return marketCache[key];
+}
+
+// ===== TRUE SSE STREAMING: COMBINED TICKER + MARKET DATA =====
+app.get('/api/stream/ticker', async (c) => {
+  // Initialize all price states
+  for (const [symbol, basePrice] of Object.entries(COIN_PRICES)) {
+    initPriceState(symbol, basePrice, 'USDT');
+    initPriceState(symbol, basePrice, 'KRW');
+  }
+
+  // Get optional market subscription
+  const subscribedMarket = c.req.query('market') || '';
+
+  // Try to blend with real DB data (non-blocking)
+  try {
+    const markets = await c.env.DB.prepare(
+      `SELECT m.base_coin, m.quote_coin, c.price_usd FROM markets m JOIN coins c ON c.symbol = m.base_coin WHERE m.is_active = 1`
+    ).all();
+    for (const m of markets.results as any[]) {
+      const key = `${m.base_coin}-${m.quote_coin}`;
+      if (priceState[key] && m.price_usd > 0) {
+        const realPrice = m.quote_coin === 'KRW' ? m.price_usd * 1350 : m.price_usd;
+        priceState[key].price = priceState[key].price * 0.95 + realPrice * 0.05;
+      }
+    }
+  } catch { /* DB might not be available */ }
+
+  // Use ReadableStream with pull-based controller for CF Workers compatibility
+  let tickCount = 0;
+  const maxTicks = 18;
+  const encoder = new TextEncoder();
+
+  const formatEvent = (eventType: string, data: any) => {
+    return `event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`;
+  };
+
+  const buildTickers = () => {
+    const tickers: Record<string, any> = {};
+    for (const [symbol] of Object.entries(COIN_PRICES)) {
+      for (const quote of ['USDT', 'KRW']) {
+        const key = `${symbol}-${quote}`;
+        tickPrice(key);
+        const s = priceState[key];
+        tickers[key] = {
+          last: +s.price.toPrecision(8),
+          change: +s.change24h.toFixed(2),
+          volume: +s.volume.toFixed(2),
+          high: +s.high.toPrecision(8),
+          low: +s.low.toPrecision(8),
+        };
+      }
+    }
+    return tickers;
+  };
+
+  const stream = new ReadableStream({
+    start(controller) {
+      // Send initial ticker data
+      const tickers = buildTickers();
+      controller.enqueue(encoder.encode(formatEvent('tickers', tickers)));
+
+      // Send initial orderbook & trades if subscribed
+      if (subscribedMarket) {
+        const [base, quote] = subscribedMarket.split('-');
+        const key = `${base}-${quote}`;
+        const state = priceState[key];
+        if (state) {
+          const cache = getMarketCache(key, state.price);
+          controller.enqueue(encoder.encode(formatEvent('orderbook', cache.orderbook)));
+          controller.enqueue(encoder.encode(formatEvent('trades', cache.trades)));
+        }
+      }
+
+      // Stream loop
+      const interval = setInterval(() => {
+        tickCount++;
+        if (tickCount > maxTicks) {
+          clearInterval(interval);
+          controller.close();
+          return;
+        }
+
+        try {
+          const tickers = buildTickers();
+          controller.enqueue(encoder.encode(formatEvent('tickers', tickers)));
+
+          if (subscribedMarket) {
+            const [base, quote] = subscribedMarket.split('-');
+            const key = `${base}-${quote}`;
+            const state = priceState[key];
+            if (state) {
+              const cache = getMarketCache(key, state.price);
+              cache.orderbook = tickCount % 5 === 0
+                ? generateOrderbook(state.price, key)
+                : tickOrderbook(cache.orderbook, state.price, key);
+              const newTrades = generateTickTrades(state.price, key);
+              cache.trades = [...newTrades, ...cache.trades].slice(0, 50);
+
+              controller.enqueue(encoder.encode(formatEvent('orderbook', cache.orderbook)));
+              controller.enqueue(encoder.encode(formatEvent('trades', newTrades)));
+            }
+          }
+        } catch {
+          clearInterval(interval);
+          try { controller.close(); } catch {}
+        }
+      }, 1500);
     },
   });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-store',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    },
+  });
+});
+
+// ===== SIMULATED ORDERBOOK ENDPOINT (fallback/REST) =====
+app.get('/api/stream/orderbook/:symbol', async (c) => {
+  const symbol = c.req.param('symbol');
+  const [base, quote] = symbol.split('-');
+  const key = `${base}-${quote}`;
+
+  const basePrice = COIN_PRICES[base];
+  if (basePrice) initPriceState(base, basePrice, quote);
+
+  const state = priceState[key];
+  if (!state) return c.json({ error: 'Unknown symbol' }, 404);
+
+  // Try real orderbook from DB
+  try {
+    const market = await c.env.DB.prepare('SELECT id FROM markets WHERE base_coin = ? AND quote_coin = ?').bind(base, quote).first() as any;
+    if (market) {
+      const { results: realBids } = await c.env.DB.prepare(
+        `SELECT price, SUM(remaining) as amount FROM orders WHERE market_id = ? AND side = 'buy' AND status IN ('open','partial') GROUP BY price ORDER BY price DESC LIMIT 25`
+      ).bind(market.id).all();
+      const { results: realAsks } = await c.env.DB.prepare(
+        `SELECT price, SUM(remaining) as amount FROM orders WHERE market_id = ? AND side = 'sell' AND status IN ('open','partial') GROUP BY price ORDER BY price ASC LIMIT 25`
+      ).bind(market.id).all();
+      if ((realBids as any[]).length > 3 || (realAsks as any[]).length > 3) {
+        return c.json({ bids: realBids, asks: realAsks });
+      }
+    }
+  } catch {}
+
+  const cache = getMarketCache(key, state.price);
+  return c.json(cache.orderbook);
+});
+
+// ===== SIMULATED RECENT TRADES ENDPOINT (fallback/REST) =====
+app.get('/api/stream/trades/:symbol', async (c) => {
+  const symbol = c.req.param('symbol');
+  const [base, quote] = symbol.split('-');
+  const key = `${base}-${quote}`;
+
+  const basePrice = COIN_PRICES[base];
+  if (basePrice) initPriceState(base, basePrice, quote);
+
+  const state = priceState[key];
+  if (!state) return c.json({ error: 'Unknown symbol' }, 404);
+
+  // Try real trades
+  try {
+    const market = await c.env.DB.prepare('SELECT id FROM markets WHERE base_coin = ? AND quote_coin = ?').bind(base, quote).first() as any;
+    if (market) {
+      const { results: realTrades } = await c.env.DB.prepare(`
+        SELECT t.id, t.price, t.amount, t.total, t.created_at as time,
+          CASE WHEN o.side = 'buy' THEN 'buy' ELSE 'sell' END as side
+        FROM trades t JOIN orders o ON o.id = t.buy_order_id
+        WHERE t.market_id = ? ORDER BY t.created_at DESC LIMIT 50
+      `).bind(market.id).all();
+      if ((realTrades as any[]).length > 5) return c.json(realTrades);
+    }
+  } catch {}
+
+  const cache = getMarketCache(key, state.price);
+  return c.json(cache.trades);
 });
 
 // Candle seed endpoint
@@ -76,11 +406,6 @@ app.get('/api/admin/seed-candles', async (c) => {
     return c.json({ error: 'Invalid token' }, 401);
   }
 
-  const coins: Record<string, number> = {
-    BTC: 67250, ETH: 3450, BNB: 605, SOL: 172.5, XRP: 0.625,
-    ADA: 0.452, DOGE: 0.0845, DOT: 7.25, AVAX: 38.75, MATIC: 0.865, QTA: 0.0125,
-  };
-
   const intervals: Record<string, { seconds: number; count: number }> = {
     '1m': { seconds: 60, count: 500 },
     '5m': { seconds: 300, count: 300 },
@@ -93,7 +418,7 @@ app.get('/api/admin/seed-candles', async (c) => {
   const now = Math.floor(Date.now() / 1000);
   let insertCount = 0;
 
-  for (const [symbol, basePrice] of Object.entries(coins)) {
+  for (const [symbol, basePrice] of Object.entries(COIN_PRICES)) {
     for (const quote of ['USDT', 'KRW']) {
       const marketId = `m-${symbol.toLowerCase()}-${quote.toLowerCase()}`;
       const price = quote === 'KRW' ? basePrice * 1350 : basePrice;
@@ -137,10 +462,9 @@ async function verifyToken(token: string, secret: string): Promise<any> {
   return payload;
 }
 
-// SPA fallback: serve index.html for non-API routes
+// SPA fallback
 app.get('*', async (c) => {
   try {
-    // Cloudflare Pages ASSET_SERVER serves static files
     const env = c.env as any;
     if (env.ASSETS) {
       const url = new URL(c.req.url);
