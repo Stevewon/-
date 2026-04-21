@@ -483,4 +483,108 @@ app.get('*', async (c) => {
   }
 });
 
-export default app;
+// ============================================================================
+// Scheduled handler: check price alerts (runs via CF cron trigger)
+// ============================================================================
+export async function checkPriceAlerts(env: Env): Promise<{ checked: number; triggered: number }> {
+  // Load active alerts
+  const { results: alerts } = await env.DB.prepare(
+    `SELECT id, user_id, symbol, direction, target_price, note
+     FROM price_alerts WHERE is_active = 1 AND triggered_at IS NULL LIMIT 500`
+  ).all<any>();
+
+  if (!alerts || alerts.length === 0) {
+    return { checked: 0, triggered: 0 };
+  }
+
+  // Load current prices from coins table
+  const { results: coins } = await env.DB.prepare(
+    'SELECT symbol, price_usd FROM coins WHERE is_active = 1'
+  ).all<{ symbol: string; price_usd: number }>();
+  const priceMap: Record<string, number> = {};
+  for (const c of coins || []) priceMap[c.symbol] = c.price_usd;
+
+  let triggered = 0;
+  const notifStmts: D1PreparedStatement[] = [];
+  const updateStmts: D1PreparedStatement[] = [];
+  const triggeredAt = new Date().toISOString();
+
+  for (const a of alerts) {
+    const currentPrice = priceMap[a.symbol];
+    if (!(currentPrice > 0)) continue;
+
+    const hit =
+      (a.direction === 'above' && currentPrice >= a.target_price) ||
+      (a.direction === 'below' && currentPrice <= a.target_price);
+
+    if (!hit) continue;
+
+    triggered++;
+    const nid = crypto.randomUUID();
+    const arrow = a.direction === 'above' ? '↑' : '↓';
+    const title = `Price Alert: ${a.symbol} ${arrow} ${a.target_price}`;
+    const msg = `${a.symbol} is now ${currentPrice} USD (target ${a.direction} ${a.target_price})${a.note ? ` — ${a.note}` : ''}.`;
+
+    notifStmts.push(
+      env.DB.prepare(
+        `INSERT INTO notifications (id, user_id, type, title, message, data)
+         VALUES (?, ?, 'price_alert', ?, ?, ?)`
+      ).bind(
+        nid,
+        a.user_id,
+        title,
+        msg,
+        JSON.stringify({
+          alert_id: a.id,
+          symbol: a.symbol,
+          direction: a.direction,
+          target_price: a.target_price,
+          current_price: currentPrice,
+        })
+      )
+    );
+
+    updateStmts.push(
+      env.DB.prepare(
+        'UPDATE price_alerts SET triggered_at = ?, is_active = 0 WHERE id = ?'
+      ).bind(triggeredAt, a.id)
+    );
+  }
+
+  if (notifStmts.length > 0) {
+    // Batch in chunks
+    const all = [...notifStmts, ...updateStmts];
+    const CHUNK = 30;
+    for (let i = 0; i < all.length; i += CHUNK) {
+      await env.DB.batch(all.slice(i, i + CHUNK));
+    }
+  }
+
+  return { checked: alerts.length, triggered };
+}
+
+// Admin-only manual trigger (useful for testing/emergency runs)
+app.post('/api/admin/run-price-alert-check', async (c) => {
+  const token = c.req.header('Authorization')?.replace('Bearer ', '');
+  if (!token) return c.json({ error: 'Auth required' }, 401);
+  try {
+    const payload = await verifyToken(token, c.env.JWT_SECRET);
+    if (payload.role !== 'admin') return c.json({ error: 'Admin only' }, 403);
+  } catch {
+    return c.json({ error: 'Invalid token' }, 401);
+  }
+  const result = await checkPriceAlerts(c.env);
+  return c.json(result);
+});
+
+// CF Pages Functions + Workers unified export
+export default {
+  fetch: app.fetch,
+  async scheduled(_event: any, env: Env, ctx: any) {
+    ctx.waitUntil(
+      checkPriceAlerts(env)
+        .then((r) => console.log('[cron] price-alert check:', r))
+        .catch((e) => console.error('[cron] price-alert check failed:', e))
+    );
+  },
+};
