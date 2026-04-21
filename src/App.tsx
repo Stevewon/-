@@ -1,8 +1,9 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
-import { useEffect, Suspense, lazy } from 'react';
+import { useEffect, Suspense, lazy, memo } from 'react';
 import useStore from './store/useStore';
 import Layout from './components/layout/Layout';
 import ToastContainer from './components/common/Toast';
+import ErrorBoundary from './components/common/ErrorBoundary';
 
 // Eagerly loaded (critical path)
 import TradePage from './pages/TradePage';
@@ -21,6 +22,7 @@ const PrivacyPage = lazy(() => import('./pages/PrivacyPage'));
 const SupportPage = lazy(() => import('./pages/SupportPage'));
 const OrderHistoryPage = lazy(() => import('./pages/OrderHistoryPage'));
 const ProfilePage = lazy(() => import('./pages/ProfilePage'));
+const NotFoundPage = lazy(() => import('./pages/NotFoundPage'));
 
 // Loading fallback
 function PageLoader() {
@@ -52,6 +54,7 @@ export default function App() {
   }, []);
 
   return (
+    <ErrorBoundary>
     <Suspense fallback={<PageLoader />}>
       <ToastContainer />
       <Routes>
@@ -74,8 +77,10 @@ export default function App() {
           <Route path="profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
           <Route path="wallet" element={<ProtectedRoute><WalletPage /></ProtectedRoute>} />
           <Route path="admin" element={<ProtectedRoute><AdminPage /></ProtectedRoute>} />
+          <Route path="*" element={<NotFoundPage />} />
         </Route>
       </Routes>
     </Suspense>
+    </ErrorBoundary>
   );
 }

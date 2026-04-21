@@ -38,7 +38,7 @@ const en = {
   'auth.passwordTooShort': 'Password must be at least 6 characters',
   'auth.loginFailed': 'Login failed',
   'auth.registerFailed': 'Registration failed',
-  'auth.registerBonus': 'Bonus: 10,000 USDT + 10,000,000 KRW + 0.1 BTC + 2 ETH + 1,000 QTA upon registration!',
+  'auth.registerBonus': 'Bonus: 1,000 QTA upon registration!',
 
   // Trade
   'trade.orderbook': 'Order Book',
@@ -162,7 +162,7 @@ const en = {
   'home.whyTitle': 'Why QuantaEX?',
   'home.whyDesc': 'A professional and secure trading environment.',
   'home.ctaTitle': 'Start Trading Now',
-  'home.ctaDesc': 'Get 10,000 USDT + 10,000,000 KRW bonus upon registration.',
+  'home.ctaDesc': 'Get 1,000 QTA bonus upon registration.',
   'home.ctaBtn': 'Free Sign Up',
 
   // Status
@@ -175,6 +175,77 @@ const en = {
   'status.partial': 'Partial',
   'status.filled': 'Filled',
   'status.cancelled': 'Cancelled',
+
+  // Error
+  'error.notFound': 'Page Not Found',
+  'error.notFoundDesc': 'The page you requested does not exist or has been moved.',
+  'error.goBack': 'Go Back',
+
+  // TradePage mobile tabs
+  'trade.chart': 'Chart',
+  'trade.orderbookTab': 'Book',
+  'trade.tradesTab': 'Trades',
+  'trade.bidLabel': 'Bid',
+  'trade.askLabel': 'Ask',
+  'trade.quantity': 'Qty',
+  'trade.fee': 'Fee',
+
+  // MarketsPage
+  'market.rising': 'Rising',
+  'market.falling': 'Falling',
+  'market.hot': 'HOT',
+  'market.noResults': 'No results found',
+
+  // Wallet extras
+  'wallet.depositHistory': 'Deposit History',
+  'wallet.withdrawHistory': 'Withdraw History',
+  'wallet.portfolio': 'Portfolio',
+  'wallet.searchCoin': 'Search coin...',
+  'wallet.hideSmall': 'Hide small balances',
+  'wallet.totalValue': 'Total Value',
+
+  // Profile
+  'profile.title': 'My Page',
+  'profile.kycTitle': 'KYC Verification',
+  'profile.kycName': 'Full Name',
+  'profile.kycPhone': 'Phone',
+  'profile.kycId': 'ID Number',
+  'profile.submit': 'Submit',
+  'profile.security': 'Security Settings',
+  'profile.orderHistory': 'Order History',
+  'profile.apiManage': 'API Management',
+  'profile.settings': 'Settings',
+
+  // HomePage
+  'home.stats.volume': 'Total Volume',
+  'home.stats.users': 'Registered Users',
+  'home.stats.coins': 'Supported Coins',
+  'home.stats.markets': 'Markets',
+  'home.table.coin': 'Coin',
+  'home.table.price': 'Price',
+  'home.table.change': '24h Change',
+  'home.table.volume': 'Volume',
+  'home.table.chart': 'Chart',
+  'home.table.trade': 'Trade',
+  'home.features.speed': 'Ultra-Fast Execution',
+  'home.features.speedDesc': 'Millisecond matching engine for fast and accurate trading.',
+  'home.features.security': 'Secure Asset Protection',
+  'home.features.securityDesc': 'Multi-layer security and cold wallets to protect your assets.',
+  'home.features.tools': 'Professional Trading Tools',
+  'home.features.toolsDesc': 'Real-time candle charts, order book, and technical analysis tools.',
+  'home.features.global': 'Global Markets',
+  'home.features.globalDesc': 'Trade BTC, ETH, QTA and more digital assets.',
+  'home.features.2fa': 'Two-Factor Auth (2FA)',
+  'home.features.2faDesc': 'Extra security with Google OTP for account protection.',
+  'home.features.support': '24/7 Support',
+  'home.features.supportDesc': 'Professional support team available around the clock.',
+
+  // Register extras
+  'auth.agreeTerms': 'I agree to the Terms of Service and Privacy Policy',
+  'auth.passwordStrength.weak': 'Weak',
+  'auth.passwordStrength.medium': 'Medium',
+  'auth.passwordStrength.strong': 'Strong',
+  'auth.mustAgreeTerms': 'Please agree to the Terms of Service',
 
   // Language
   'lang.ko': '한국어',

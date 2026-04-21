@@ -38,7 +38,7 @@ const ko = {
   'auth.passwordTooShort': '비밀번호는 6자 이상이어야 합니다',
   'auth.loginFailed': '로그인에 실패했습니다',
   'auth.registerFailed': '회원가입에 실패했습니다',
-  'auth.registerBonus': '회원가입 시 10,000 USDT + 10,000,000 KRW + 0.1 BTC + 2 ETH + 1,000 QTA 지급!',
+  'auth.registerBonus': '회원가입 시 1,000 QTA 지급!',
 
   // Trade
   'trade.orderbook': '호가창',
@@ -162,7 +162,7 @@ const ko = {
   'home.whyTitle': '왜 QuantaEX인가?',
   'home.whyDesc': '전문적이고 안전한 거래 환경을 제공합니다.',
   'home.ctaTitle': '지금 바로 시작하세요',
-  'home.ctaDesc': '회원가입 시 10,000 USDT + 10,000,000 KRW 보너스를 지급합니다.',
+  'home.ctaDesc': '회원가입 시 1,000 QTA 보너스를 지급합니다.',
   'home.ctaBtn': '무료 회원가입',
 
   // Status
@@ -175,6 +175,77 @@ const ko = {
   'status.partial': '부분체결',
   'status.filled': '체결완료',
   'status.cancelled': '취소',
+
+  // Error
+  'error.notFound': '페이지를 찾을 수 없습니다',
+  'error.notFoundDesc': '요청하신 페이지가 존재하지 않거나 이동되었습니다.',
+  'error.goBack': '뒤로가기',
+
+  // TradePage mobile tabs
+  'trade.chart': '차트',
+  'trade.orderbookTab': '호가',
+  'trade.tradesTab': '체결',
+  'trade.bidLabel': '매수(Bid)',
+  'trade.askLabel': '매도(Ask)',
+  'trade.quantity': '수량',
+  'trade.fee': '수수료',
+
+  // MarketsPage
+  'market.rising': '상승',
+  'market.falling': '하락',
+  'market.hot': 'HOT',
+  'market.noResults': '검색 결과가 없습니다',
+
+  // Wallet extras
+  'wallet.depositHistory': '입금내역',
+  'wallet.withdrawHistory': '출금내역',
+  'wallet.portfolio': '포트폴리오',
+  'wallet.searchCoin': '코인 검색...',
+  'wallet.hideSmall': '소액 숨기기',
+  'wallet.totalValue': '총 평가금액',
+
+  // Profile
+  'profile.title': '마이페이지',
+  'profile.kycTitle': 'KYC 인증',
+  'profile.kycName': '실명',
+  'profile.kycPhone': '전화번호',
+  'profile.kycId': '신분증 번호',
+  'profile.submit': '인증 제출',
+  'profile.security': '보안 설정',
+  'profile.orderHistory': '주문 내역',
+  'profile.apiManage': 'API 관리',
+  'profile.settings': '환경 설정',
+
+  // HomePage
+  'home.stats.volume': '누적 거래량',
+  'home.stats.users': '등록 회원',
+  'home.stats.coins': '지원 코인',
+  'home.stats.markets': '마켓 수',
+  'home.table.coin': '코인',
+  'home.table.price': '가격',
+  'home.table.change': '24h 변동',
+  'home.table.volume': '거래량',
+  'home.table.chart': '차트',
+  'home.table.trade': '거래',
+  'home.features.speed': '초고속 주문 체결',
+  'home.features.speedDesc': '밀리초 단위 매칭 엔진으로 빠르고 정확한 거래를 제공합니다.',
+  'home.features.security': '안전한 자산 보호',
+  'home.features.securityDesc': '다중 보안 시스템과 콜드 월렛으로 고객 자산을 안전하게 보관합니다.',
+  'home.features.tools': '전문 트레이딩 도구',
+  'home.features.toolsDesc': '실시간 캔들차트, 호가창, 기술적 분석 도구를 제공합니다.',
+  'home.features.global': '글로벌 마켓',
+  'home.features.globalDesc': 'BTC, ETH, QTA 등 다양한 디지털 자산을 거래할 수 있습니다.',
+  'home.features.2fa': '2단계 인증 (2FA)',
+  'home.features.2faDesc': 'Google OTP를 통한 추가 보안으로 계정을 보호합니다.',
+  'home.features.support': '24/7 고객 지원',
+  'home.features.supportDesc': '전문 상담원이 24시간 고객님의 문의를 지원합니다.',
+
+  // Register extras
+  'auth.agreeTerms': '이용약관 및 개인정보처리방침에 동의합니다',
+  'auth.passwordStrength.weak': '약함',
+  'auth.passwordStrength.medium': '보통',
+  'auth.passwordStrength.strong': '강함',
+  'auth.mustAgreeTerms': '이용약관에 동의해주세요',
 
   // Language
   'lang.ko': '한국어',

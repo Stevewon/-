@@ -26,12 +26,12 @@ app.post('/register', async (c) => {
   await c.env.DB.prepare('INSERT INTO users (id, email, password, nickname) VALUES (?,?,?,?)')
     .bind(id, email, hashedPw, nickname).run();
 
-  // Default wallets with bonus
+  // Default wallets with bonus (1,000 QTA only)
   const defaults = [
-    { symbol: 'USDT', amount: 10000 },
-    { symbol: 'KRW', amount: 10000000 },
-    { symbol: 'BTC', amount: 0.1 },
-    { symbol: 'ETH', amount: 2 },
+    { symbol: 'USDT', amount: 0 },
+    { symbol: 'KRW', amount: 0 },
+    { symbol: 'BTC', amount: 0 },
+    { symbol: 'ETH', amount: 0 },
     { symbol: 'QTA', amount: 1000 },
   ];
 

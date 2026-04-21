@@ -228,9 +228,9 @@ export default function TradePage() {
         {/* Mobile Tab Switcher */}
         <div className="flex items-center border-b border-exchange-border bg-exchange-card">
           {([
-            { key: 'chart' as MobileView, label: '차트', icon: BarChart3 },
-            { key: 'orderbook' as MobileView, label: '호가', icon: BookOpen },
-            { key: 'trades' as MobileView, label: '체결', icon: ArrowLeftRight },
+            { key: 'chart' as MobileView, label: t('trade.chart'), icon: BarChart3 },
+            { key: 'orderbook' as MobileView, label: t('trade.orderbookTab'), icon: BookOpen },
+            { key: 'trades' as MobileView, label: t('trade.tradesTab'), icon: ArrowLeftRight },
           ]).map(({ key, label, icon: Icon }) => (
             <button
               key={key}
@@ -258,8 +258,8 @@ export default function TradePage() {
               <div className="h-32 border-t border-exchange-border overflow-hidden flex">
                 <div className="flex-1 border-r border-exchange-border">
                   <div className="px-2 py-1 text-[10px] text-exchange-text-third font-medium border-b border-exchange-border flex justify-between">
-                    <span>매수(Bid)</span>
-                    <span>수량</span>
+                    <span>{t('trade.bidLabel')}</span>
+                    <span>{t('trade.quantity')}</span>
                   </div>
                   <div className="overflow-hidden">
                     {useStore.getState().orderbook.bids.slice(0, 5).map((bid, i) => (
@@ -272,8 +272,8 @@ export default function TradePage() {
                 </div>
                 <div className="flex-1">
                   <div className="px-2 py-1 text-[10px] text-exchange-text-third font-medium border-b border-exchange-border flex justify-between">
-                    <span>매도(Ask)</span>
-                    <span>수량</span>
+                    <span>{t('trade.askLabel')}</span>
+                    <span>{t('trade.quantity')}</span>
                   </div>
                   <div className="overflow-hidden">
                     {useStore.getState().orderbook.asks.slice(0, 5).map((ask, i) => (

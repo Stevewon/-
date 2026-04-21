@@ -1,7 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { createChart, ColorType, CrosshairMode } from 'lightweight-charts';
 import api from '../../utils/api';
-import { getSocket } from '../../utils/socket';
 
 interface Props {
   symbol: string;
@@ -85,26 +84,33 @@ export default function CandleChart({ symbol }: Props) {
   useEffect(() => {
     loadCandles();
 
-    const socket = getSocket();
-    const handler = (candle: any) => {
-      if (candleSeriesRef.current) {
-        candleSeriesRef.current.update({
-          time: candle.time,
-          open: candle.open,
-          high: candle.high,
-          low: candle.low,
-          close: candle.close,
+    // Poll for candle updates (SSE-compatible, no WebSocket needed)
+    const pollInterval = setInterval(() => {
+      refreshLatestCandle();
+    }, 5000);
+
+    return () => clearInterval(pollInterval);
+  }, [symbol, interval]);
+
+  const refreshLatestCandle = useCallback(async () => {
+    try {
+      const res = await api.get(`/market/candles/${symbol}?interval=${interval}&limit=2`);
+      if (res.data && res.data.length > 0) {
+        const latest = res.data[0];
+        candleSeriesRef.current?.update({
+          time: latest.time,
+          open: latest.open,
+          high: latest.high,
+          low: latest.low,
+          close: latest.close,
         });
         volumeSeriesRef.current?.update({
-          time: candle.time,
-          value: candle.volume,
-          color: candle.close >= candle.open ? 'rgba(14,203,129,0.3)' : 'rgba(246,70,93,0.3)',
+          time: latest.time,
+          value: latest.volume,
+          color: latest.close >= latest.open ? 'rgba(14,203,129,0.3)' : 'rgba(246,70,93,0.3)',
         });
       }
-    };
-
-    socket.on('candle', handler);
-    return () => { socket.off('candle', handler); };
+    } catch {}
   }, [symbol, interval]);
 
   const loadCandles = async () => {
