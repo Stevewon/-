@@ -8,6 +8,10 @@ import QuantaLogo from '../components/common/QuantaLogo';
 import LangSwitch from '../components/common/LangSwitch';
 
 export default function RegisterPage() {
+  const { t } = useI18n();
+  const setAuth = useStore((s) => s.setAuth);
+  const navigate = useNavigate();
+
   const [email, setEmail] = useState('');
   const [nickname, setNickname] = useState('');
   const [password, setPassword] = useState('');
@@ -29,9 +33,6 @@ export default function RegisterPage() {
   const pwStrength = getPasswordStrength(password);
   const strengthLabels = [t('auth.passwordStrength.weak'), t('auth.passwordStrength.weak'), t('auth.passwordStrength.medium'), t('auth.passwordStrength.strong')];
   const strengthColors = ['bg-exchange-sell', 'bg-exchange-sell', 'bg-exchange-yellow', 'bg-exchange-buy'];
-  const setAuth = useStore((s) => s.setAuth);
-  const navigate = useNavigate();
-  const { t } = useI18n();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
