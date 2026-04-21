@@ -800,6 +800,9 @@ const en = {
   'admin.wallets': 'Wallets',
   'admin.withdrawApproved': 'Withdrawal approved',
   'admin.withdrawRejected': 'Withdrawal rejected',
+  'admin.runPriceAlertCheck': 'Run Price Alert Check',
+  'admin.priceAlertCheckDone': 'Price alert check complete',
+  'admin.priceAlertCheckSummary': 'Checked {checked} alerts, triggered {triggered}',
 
 };
 

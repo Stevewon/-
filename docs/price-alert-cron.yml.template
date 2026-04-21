@@ -1,0 +1,54 @@
+name: Price Alert Cron
+
+# Triggers the /api/admin/run-price-alert-check endpoint every 5 minutes.
+#
+# NOTE: GitHub's free cron tier runs workflows with up to 10 minutes delay
+# and may skip runs during high load. For stricter timing use the dedicated
+# Cloudflare Worker in ../cron-worker/ (requires Workers Scripts Edit token).
+#
+# Required repository secrets:
+#   ADMIN_EMAIL    - admin account email (default: admin@quantaex.io)
+#   ADMIN_PASSWORD - admin account password
+# Optional:
+#   API_BASE       - API base URL (default: https://quantaex.io)
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  check-price-alerts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Login and run price-alert check
+        env:
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL || 'admin@quantaex.io' }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          API_BASE: ${{ secrets.API_BASE || 'https://quantaex.io' }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ADMIN_PASSWORD}" ]; then
+            echo "::error::ADMIN_PASSWORD secret not set; skipping."
+            exit 0
+          fi
+
+          LOGIN=$(curl -sf -X POST "${API_BASE}/api/auth/login" \
+            -H "Content-Type: application/json" \
+            -d "{\"email\":\"${ADMIN_EMAIL}\",\"password\":\"${ADMIN_PASSWORD}\"}")
+          TOKEN=$(echo "$LOGIN" | python3 -c "import json,sys;print(json.load(sys.stdin)['token'])")
+
+          if [ -z "$TOKEN" ]; then
+            echo "::error::Login failed"
+            exit 1
+          fi
+
+          RESULT=$(curl -sf -X POST "${API_BASE}/api/admin/run-price-alert-check" \
+            -H "Authorization: Bearer ${TOKEN}")
+          echo "Result: $RESULT"
+
+          # Parse and summarize
+          CHECKED=$(echo "$RESULT" | python3 -c "import json,sys;print(json.load(sys.stdin).get('checked',0))")
+          TRIGGERED=$(echo "$RESULT" | python3 -c "import json,sys;print(json.load(sys.stdin).get('triggered',0))")
+          echo "::notice::Price alerts — checked=${CHECKED}, triggered=${TRIGGERED}"

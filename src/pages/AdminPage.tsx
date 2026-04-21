@@ -3,7 +3,7 @@ import {
   Users, BarChart3, ShieldCheck, ArrowUpFromLine, RefreshCw, Activity,
   DollarSign, TrendingUp, Search, Filter, ChevronLeft, ChevronRight,
   Ban, UserCheck, Crown, KeyRound, X, CheckCircle2, XCircle, Clock,
-  Coins, Send, ArrowDownToLine, Megaphone, Wallet, Hash,
+  Coins, Send, ArrowDownToLine, Megaphone, Wallet, Hash, Bell,
 } from 'lucide-react';
 import useStore from '../store/useStore';
 import { useI18n } from '../i18n';
@@ -47,6 +47,25 @@ export default function AdminPage() {
     setTimeout(() => setRefreshing(false), 400);
   };
 
+  const [alertChecking, setAlertChecking] = useState(false);
+  const runPriceAlertCheck = async () => {
+    if (alertChecking) return;
+    setAlertChecking(true);
+    try {
+      const res = await api.post('/admin/run-price-alert-check');
+      const { checked = 0, triggered = 0 } = res.data || {};
+      showToast(
+        triggered > 0 ? 'success' : 'info',
+        t('admin.priceAlertCheckDone'),
+        t('admin.priceAlertCheckSummary', { checked, triggered }),
+      );
+    } catch (e: any) {
+      showToast('error', t('common.error'), e.response?.data?.error || 'Failed');
+    } finally {
+      setAlertChecking(false);
+    }
+  };
+
   useEffect(() => { loadStats(); }, []);
 
   if (user?.role !== 'admin') return <div className="p-8 text-center text-exchange-sell">{t('admin.accessDenied')}</div>;
@@ -72,13 +91,24 @@ export default function AdminPage() {
           </div>
           <h1 className="text-2xl font-bold">{t('admin.dashboard')}</h1>
         </div>
-        <button
-          onClick={refresh}
-          className="p-2 text-exchange-text-third hover:text-exchange-text rounded-lg hover:bg-exchange-hover/50 transition-colors"
-          aria-label="Refresh"
-        >
-          <RefreshCw size={18} className={refreshing ? 'animate-spin' : ''} />
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={runPriceAlertCheck}
+            disabled={alertChecking}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-exchange-text-secondary hover:text-exchange-yellow rounded-lg hover:bg-exchange-hover/50 transition-colors disabled:opacity-50"
+            title={t('admin.runPriceAlertCheck')}
+          >
+            <Bell size={14} className={alertChecking ? 'animate-pulse' : ''} />
+            <span className="hidden sm:inline">{t('admin.runPriceAlertCheck')}</span>
+          </button>
+          <button
+            onClick={refresh}
+            className="p-2 text-exchange-text-third hover:text-exchange-text rounded-lg hover:bg-exchange-hover/50 transition-colors"
+            aria-label="Refresh"
+          >
+            <RefreshCw size={18} className={refreshing ? 'animate-spin' : ''} />
+          </button>
+        </div>
       </div>
 
       {/* Tabs */}
