@@ -22,16 +22,51 @@ app.post('/', authMiddleware, async (c) => {
   if (amount <= 0) return c.json({ error: 'Invalid amount' }, 400);
   if (type === 'limit' && (!price || price <= 0)) return c.json({ error: 'Price required for limit order' }, 400);
 
-  // Check balance
-  if (side === 'buy') {
-    const total = type === 'limit' ? price * amount : amount * 999999;
-    const wallet = await c.env.DB.prepare('SELECT available FROM wallets WHERE user_id = ? AND coin_symbol = ?').bind(user.id, quote).first() as any;
-    if (!wallet || wallet.available < total) return c.json({ error: 'Insufficient balance' }, 400);
+  // ============================================================================
+  // Balance check & lock
+  // ----------------------------------------------------------------------------
+  // For LIMIT orders we know the exact cost up-front and lock accordingly.
+  // For MARKET orders we use an estimated worst-case cost derived from the
+  // current best ask (buy) / best bid (sell) so the user can't over-commit.
+  // Any un-used locked funds are refunded by matchOrder() after execution.
+  // ============================================================================
+  let lockAmount = 0;
+  let lockSymbol = '';
 
-    const lockAmount = type === 'limit' ? price * amount * (1 + market.taker_fee) : wallet.available;
+  if (side === 'buy') {
+    lockSymbol = quote;
+    if (type === 'limit') {
+      lockAmount = price * amount * (1 + market.taker_fee);
+    } else {
+      // Market buy: estimate using best-ask (+20% safety cushion) and coin
+      // reference price as fallback. This prevents locking the entire wallet
+      // balance, which previously froze user funds when no sell orders
+      // were available.
+      const bestAsk = await c.env.DB.prepare(
+        `SELECT MIN(price) AS p FROM orders
+         WHERE market_id = ? AND side = 'sell' AND status IN ('open','partial')`
+      ).bind(market.id).first() as any;
+      const refPrice = await c.env.DB.prepare(
+        'SELECT price_usd FROM coins WHERE symbol = ?'
+      ).bind(base).first() as any;
+      const estPrice = (bestAsk?.p && bestAsk.p > 0)
+        ? bestAsk.p
+        : (refPrice?.price_usd && refPrice.price_usd > 0 ? refPrice.price_usd : 0);
+      if (!estPrice || estPrice <= 0) {
+        return c.json({ error: 'Market price unavailable; use a limit order' }, 400);
+      }
+      // 20% safety buffer so slippage doesn't short-lock
+      lockAmount = estPrice * amount * 1.2 * (1 + market.taker_fee);
+    }
+
+    const wallet = await c.env.DB.prepare('SELECT available FROM wallets WHERE user_id = ? AND coin_symbol = ?').bind(user.id, quote).first() as any;
+    if (!wallet || wallet.available < lockAmount) return c.json({ error: 'Insufficient balance' }, 400);
+
     await c.env.DB.prepare('UPDATE wallets SET available = available - ?, locked = locked + ? WHERE user_id = ? AND coin_symbol = ?')
       .bind(lockAmount, lockAmount, user.id, quote).run();
   } else {
+    lockSymbol = base;
+    lockAmount = amount;
     const wallet = await c.env.DB.prepare('SELECT available FROM wallets WHERE user_id = ? AND coin_symbol = ?').bind(user.id, base).first() as any;
     if (!wallet || wallet.available < amount) return c.json({ error: 'Insufficient balance' }, 400);
 
@@ -46,8 +81,8 @@ app.post('/', authMiddleware, async (c) => {
     'INSERT INTO orders (id, user_id, market_id, side, type, price, amount, remaining, total) VALUES (?,?,?,?,?,?,?,?,?)'
   ).bind(orderId, user.id, market.id, side, type, orderPrice, amount, amount, (orderPrice || 0) * amount).run();
 
-  // Match order
-  const result = await matchOrder(c.env.DB, orderId, market);
+  // Match order (passes lockAmount so unused funds are refunded)
+  const result = await matchOrder(c.env.DB, orderId, market, { lockAmount, lockSymbol });
 
   return c.json({
     order: result.order,
@@ -64,13 +99,18 @@ app.delete('/:id', authMiddleware, async (c) => {
 
   const market = await c.env.DB.prepare('SELECT * FROM markets WHERE id = ?').bind(order.market_id).first() as any;
 
-  // Unlock remaining funds
+  // Unlock remaining funds. Only limit orders can reach this point with
+  // status in ('open','partial'); market orders always finalise inside
+  // matchOrder, so order.price is guaranteed to be a valid number here.
   if (order.side === 'buy') {
+    if (!order.price || order.price <= 0) {
+      return c.json({ error: 'Cannot cancel: invalid order price' }, 400);
+    }
     const unlockAmount = order.remaining * order.price * (1 + market.taker_fee);
-    await c.env.DB.prepare('UPDATE wallets SET available = available + ?, locked = locked - ? WHERE user_id = ? AND coin_symbol = ?')
+    await c.env.DB.prepare('UPDATE wallets SET available = available + ?, locked = MAX(0, locked - ?) WHERE user_id = ? AND coin_symbol = ?')
       .bind(unlockAmount, unlockAmount, user.id, market.quote_coin).run();
   } else {
-    await c.env.DB.prepare('UPDATE wallets SET available = available + ?, locked = locked - ? WHERE user_id = ? AND coin_symbol = ?')
+    await c.env.DB.prepare('UPDATE wallets SET available = available + ?, locked = MAX(0, locked - ?) WHERE user_id = ? AND coin_symbol = ?')
       .bind(order.remaining, order.remaining, user.id, market.base_coin).run();
   }
 
@@ -116,8 +156,19 @@ app.get('/my/trades', authMiddleware, async (c) => {
   return c.json(results);
 });
 
-// Matching engine for D1
-async function matchOrder(DB: D1Database, orderId: string, market: any) {
+// Matching engine for D1.
+//
+// `lockInfo` carries the amount/symbol that the caller pre-locked when the
+// order was created. Any portion of that lock that doesn't get consumed by
+// actual trades (e.g. a market order with no liquidity, or a limit buy with
+// safety-buffered lock) is refunded to `available` at the end so user funds
+// never stay frozen.
+async function matchOrder(
+  DB: D1Database,
+  orderId: string,
+  market: any,
+  lockInfo?: { lockAmount: number; lockSymbol: string }
+) {
   const order = await DB.prepare('SELECT * FROM orders WHERE id = ?').bind(orderId).first() as any;
   const trades: any[] = [];
 
@@ -132,6 +183,10 @@ async function matchOrder(DB: D1Database, orderId: string, market: any) {
   ).bind(market.id, oppositeSide).all();
 
   let remaining = order.remaining;
+
+  // Track how much of the taker's locked quote was actually consumed
+  // (only relevant for buy orders, where the lock is in quote currency).
+  let quoteConsumed = 0;
 
   for (const match of matchingOrders as any[]) {
     if (remaining <= 0) break;
@@ -168,6 +223,8 @@ async function matchOrder(DB: D1Database, orderId: string, market: any) {
     await addBalance(DB, sellerId, market.quote_coin, tradeTotal - sellerFee);
     await subtractLocked(DB, sellerId, market.base_coin, tradeAmount);
 
+    if (order.side === 'buy') quoteConsumed += tradeTotal + buyerFee;
+
     trades.push({ id: tradeId, price: tradePrice, amount: tradeAmount, total: tradeTotal });
     remaining -= tradeAmount;
   }
@@ -177,6 +234,40 @@ async function matchOrder(DB: D1Database, orderId: string, market: any) {
   const status = remaining <= 0 ? 'filled' : filled > 0 ? 'partial' : (order.type === 'market' ? 'cancelled' : 'open');
   await DB.prepare("UPDATE orders SET filled = ?, remaining = ?, status = ?, updated_at = datetime('now') WHERE id = ?")
     .bind(filled, remaining, status, order.id).run();
+
+  // ============================================================================
+  // 🔒 Refund unused locks (critical: prevents stuck balances)
+  // ----------------------------------------------------------------------------
+  // - For LIMIT orders that stay `open` we keep the lock for the remaining qty
+  //   (the cancel handler will refund it if the user cancels later).
+  // - For MARKET orders (status 'filled' or 'cancelled' here) and any LIMIT
+  //   order that is fully filled, we compute the leftover and move it back
+  //   from `locked` to `available` in the same wallet.
+  // ============================================================================
+  if (lockInfo && lockInfo.lockAmount > 0) {
+    if (order.side === 'buy') {
+      // LIMIT open: the matching engine has already reduced `locked` by the
+      // consumed portion (tradeTotal + buyerFee per trade). No refund needed
+      // while the order remains open — the rest corresponds to `remaining`.
+      if (order.type === 'market' || status === 'filled' || status === 'cancelled') {
+        const refund = Math.max(0, lockInfo.lockAmount - quoteConsumed);
+        if (refund > 0) {
+          await DB.prepare(
+            'UPDATE wallets SET available = available + ?, locked = MAX(0, locked - ?) WHERE user_id = ? AND coin_symbol = ?'
+          ).bind(refund, refund, order.user_id, lockInfo.lockSymbol).run();
+        }
+      }
+    } else {
+      // Sell side: lock is in base coin, equals `amount`. The matching engine
+      // reduces locked per trade. For market sells that end in 'cancelled'
+      // with no fills (or partial fills), refund the untraded remainder.
+      if ((order.type === 'market' || status === 'filled' || status === 'cancelled') && remaining > 0) {
+        await DB.prepare(
+          'UPDATE wallets SET available = available + ?, locked = MAX(0, locked - ?) WHERE user_id = ? AND coin_symbol = ?'
+        ).bind(remaining, remaining, order.user_id, lockInfo.lockSymbol).run();
+      }
+    }
+  }
 
   // Update candles if trades happened
   if (trades.length > 0) {
