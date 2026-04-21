@@ -791,6 +791,9 @@ const ko = {
   'admin.wallets': '지갑',
   'admin.withdrawApproved': '출금 승인',
   'admin.withdrawRejected': '출금 거부',
+  'admin.runPriceAlertCheck': '가격알림 체크 실행',
+  'admin.priceAlertCheckDone': '가격알림 체크 완료',
+  'admin.priceAlertCheckSummary': '{checked}건 확인, {triggered}건 발송',
 
 };
 
