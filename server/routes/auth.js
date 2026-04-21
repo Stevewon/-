@@ -43,18 +43,48 @@ router.post('/register', (req, res) => {
   }
 });
 
+// Helpers for login history
+function parseDevice(ua = '') {
+  if (!ua) return 'Unknown';
+  const s = ua.toLowerCase();
+  if (s.includes('iphone')) return 'iPhone';
+  if (s.includes('ipad')) return 'iPad';
+  if (s.includes('android')) return 'Android';
+  if (s.includes('mac os') || s.includes('macintosh')) return 'Mac';
+  if (s.includes('windows')) return 'Windows';
+  if (s.includes('linux')) return 'Linux';
+  return 'Browser';
+}
+function getClientIp(req) {
+  return (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.ip || req.socket?.remoteAddress || null;
+}
+function recordLogin(userId, req, status, reason = null) {
+  try {
+    const ua = req.headers['user-agent'] || '';
+    db.prepare(`
+      INSERT INTO login_history (id, user_id, ip_address, user_agent, device, status, reason)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(uuidv4(), userId, getClientIp(req), ua.slice(0, 500), parseDevice(ua), status, reason);
+  } catch (e) { /* ignore logging errors */ }
+}
+
 // Login
 router.post('/login', (req, res) => {
   try {
     const { email, password } = req.body;
     const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
     if (!user || !bcrypt.compareSync(password, user.password)) {
+      if (user) recordLogin(user.id, req, 'failed', 'Invalid credentials');
       return res.status(401).json({ error: 'Invalid credentials' });
     }
-    if (!user.is_active) return res.status(403).json({ error: 'Account disabled' });
+    if (!user.is_active) {
+      recordLogin(user.id, req, 'failed', 'Account disabled');
+      return res.status(403).json({ error: 'Account disabled' });
+    }
 
     const token = generateToken(user);
-    const { password: _, ...safeUser } = user;
+    const { password: _, two_factor_secret: __, ...safeUser } = user;
+    recordLogin(user.id, req, 'success');
     res.json({ token, user: safeUser });
   } catch (e) {
     res.status(500).json({ error: e.message });

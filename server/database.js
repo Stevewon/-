@@ -202,6 +202,44 @@ addColumnIfMissing('deposits', 'from_address', 'TEXT');
 addColumnIfMissing('withdrawals', 'network', 'TEXT');
 addColumnIfMissing('withdrawals', 'memo', 'TEXT');
 
+// Profile & security columns on users
+addColumnIfMissing('users', 'two_factor_enabled', 'INTEGER DEFAULT 0');
+addColumnIfMissing('users', 'two_factor_secret', 'TEXT');
+addColumnIfMissing('users', 'kyc_address', 'TEXT');
+addColumnIfMissing('users', 'kyc_id_document_url', 'TEXT');
+addColumnIfMissing('users', 'kyc_address_document_url', 'TEXT');
+addColumnIfMissing('users', 'kyc_submitted_at', 'DATETIME');
+addColumnIfMissing('users', 'kyc_reviewed_at', 'DATETIME');
+addColumnIfMissing('users', 'avatar_url', 'TEXT');
+
+// Login history & sessions
+db.exec(`
+  CREATE TABLE IF NOT EXISTS login_history (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    ip_address TEXT,
+    user_agent TEXT,
+    device TEXT,
+    location TEXT,
+    status TEXT DEFAULT 'success',
+    reason TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_login_history_user ON login_history(user_id, created_at DESC);
+
+  CREATE TABLE IF NOT EXISTS user_sessions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    token_id TEXT UNIQUE NOT NULL,
+    ip_address TEXT,
+    user_agent TEXT,
+    device TEXT,
+    last_active_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id, last_active_at DESC);
+`);
+
 // ===== SEED DATA =====
 function seedData() {
   const coinCount = db.prepare('SELECT COUNT(*) as cnt FROM coins').get();

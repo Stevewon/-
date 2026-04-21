@@ -22,6 +22,9 @@ const PrivacyPage = lazy(() => import('./pages/PrivacyPage'));
 const SupportPage = lazy(() => import('./pages/SupportPage'));
 const OrderHistoryPage = lazy(() => import('./pages/OrderHistoryPage'));
 const ProfilePage = lazy(() => import('./pages/ProfilePage'));
+const KycPage = lazy(() => import('./pages/KycPage'));
+const SecurityPage = lazy(() => import('./pages/SecurityPage'));
+const ApiKeysPage = lazy(() => import('./pages/ApiKeysPage'));
 const NotificationsPage = lazy(() => import('./pages/NotificationsPage'));
 const NotFoundPage = lazy(() => import('./pages/NotFoundPage'));
 
@@ -76,6 +79,9 @@ export default function App() {
           <Route path="support" element={<SupportPage />} />
           <Route path="orders" element={<ProtectedRoute><OrderHistoryPage /></ProtectedRoute>} />
           <Route path="profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
+          <Route path="profile/kyc" element={<ProtectedRoute><KycPage /></ProtectedRoute>} />
+          <Route path="profile/security" element={<ProtectedRoute><SecurityPage /></ProtectedRoute>} />
+          <Route path="profile/api-keys" element={<ProtectedRoute><ApiKeysPage /></ProtectedRoute>} />
           <Route path="notifications" element={<ProtectedRoute><NotificationsPage /></ProtectedRoute>} />
           <Route path="wallet" element={<ProtectedRoute><WalletPage /></ProtectedRoute>} />
           <Route path="admin" element={<ProtectedRoute><AdminPage /></ProtectedRoute>} />
