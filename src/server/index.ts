@@ -53,12 +53,20 @@ app.use('/api/*', async (c, next) => {
             const row = await c.env.DB.prepare(
               "SELECT value FROM system_state WHERE key = 'price_alert_last_run'"
             ).first<{ value: string }>();
+
+            // Auto-seed if the marker row doesn't exist (e.g., fresh DB)
+            if (!row) {
+              await c.env.DB.prepare(
+                "INSERT OR IGNORE INTO system_state (key, value) VALUES ('price_alert_last_run', '0')"
+              ).run();
+            }
+
             const last = row ? parseInt(row.value || '0', 10) : 0;
             if (now - last < SELF_SCHEDULE_INTERVAL_MS) return;
 
             // Optimistic lock: only proceed if we successfully move the
-            // marker forward. `OR IGNORE` ensures concurrent isolates race
-            // safely.
+            // marker forward. Other isolates racing will see the already-
+            // incremented value and back off.
             const upd = await c.env.DB.prepare(
               `UPDATE system_state SET value = ?, updated_at = CURRENT_TIMESTAMP
                WHERE key = 'price_alert_last_run' AND CAST(value AS INTEGER) = ?`
@@ -71,6 +79,9 @@ app.use('/api/*', async (c, next) => {
             console.log('[self-scheduler] price-alert check:', result);
           } catch (e) {
             console.error('[self-scheduler] failed:', e);
+            // On failure, allow next request to retry sooner by rolling
+            // back the in-memory throttle
+            lastSelfScheduleAttempt = 0;
           }
         })()
       );
@@ -522,21 +533,6 @@ async function verifyToken(token: string, secret: string): Promise<any> {
   return payload;
 }
 
-// SPA fallback
-app.get('*', async (c) => {
-  try {
-    const env = c.env as any;
-    if (env.ASSETS) {
-      const url = new URL(c.req.url);
-      url.pathname = '/index.html';
-      return env.ASSETS.fetch(new Request(url.toString(), c.req.raw));
-    }
-    return c.text('Not Found', 404);
-  } catch {
-    return c.text('Not Found', 404);
-  }
-});
-
 // ============================================================================
 // Scheduled handler: check price alerts (runs via CF cron trigger)
 // ============================================================================
@@ -629,6 +625,56 @@ app.post('/api/admin/run-price-alert-check', async (c) => {
   }
   const result = await checkPriceAlerts(c.env);
   return c.json(result);
+});
+
+// Admin: inspect the self-scheduler state
+app.get('/api/admin/scheduler-status', async (c) => {
+  const token = c.req.header('Authorization')?.replace('Bearer ', '');
+  if (!token) return c.json({ error: 'Auth required' }, 401);
+  try {
+    const payload = await verifyToken(token, c.env.JWT_SECRET);
+    if (payload.role !== 'admin') return c.json({ error: 'Admin only' }, 403);
+  } catch {
+    return c.json({ error: 'Invalid token' }, 401);
+  }
+
+  const row = await c.env.DB.prepare(
+    "SELECT value, updated_at FROM system_state WHERE key = 'price_alert_last_run'"
+  ).first<{ value: string; updated_at: string }>();
+
+  const activeAlerts = await c.env.DB.prepare(
+    'SELECT COUNT(*) AS cnt FROM price_alerts WHERE is_active = 1 AND triggered_at IS NULL'
+  ).first<{ cnt: number }>();
+
+  const last = row ? parseInt(row.value || '0', 10) : 0;
+  const now = Date.now();
+  return c.json({
+    last_run_ms: last,
+    last_run_iso: last > 0 ? new Date(last).toISOString() : null,
+    last_updated_at: row?.updated_at || null,
+    seconds_since_last_run: last > 0 ? Math.floor((now - last) / 1000) : null,
+    interval_seconds: Math.floor(SELF_SCHEDULE_INTERVAL_MS / 1000),
+    next_run_due_seconds: last > 0 ? Math.max(0, Math.floor((last + SELF_SCHEDULE_INTERVAL_MS - now) / 1000)) : 0,
+    active_alerts: activeAlerts?.cnt || 0,
+    server_time: new Date().toISOString(),
+  });
+});
+
+// SPA fallback (must be registered AFTER all API routes so Hono matches
+// specific API paths first and falls through to asset serving only for
+// non-API requests)
+app.get('*', async (c) => {
+  try {
+    const env = c.env as any;
+    if (env.ASSETS) {
+      const url = new URL(c.req.url);
+      url.pathname = '/index.html';
+      return env.ASSETS.fetch(new Request(url.toString(), c.req.raw));
+    }
+    return c.text('Not Found', 404);
+  } catch {
+    return c.text('Not Found', 404);
+  }
 });
 
 // CF Pages Functions + Workers unified export
