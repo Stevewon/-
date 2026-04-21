@@ -8,7 +8,7 @@ interface FAQ {
   category: string;
 }
 
-const FAQS: FAQ[] = [
+const FAQS_KO: FAQ[] = [
   { category: 'account', question: '회원가입은 어떻게 하나요?', answer: '상단 "회원가입" 버튼을 클릭하고, 이메일, 닉네임, 비밀번호를 입력하면 바로 가입할 수 있습니다. 가입 시 10,000 USDT + 10,000,000 KRW 보너스가 자동 지급됩니다.' },
   { category: 'account', question: 'KYC 인증은 어떻게 하나요?', answer: '로그인 후 마이페이지(지갑) > KYC 인증 메뉴에서 성명, 연락처, 신분증 번호를 입력하여 신청할 수 있습니다. 인증 처리는 최대 24시간 이내에 완료됩니다.' },
   { category: 'account', question: '비밀번호를 분실했어요. 어떻게 하나요?', answer: '로그인 페이지에서 "비밀번호 찾기"를 클릭하고, 가입 시 사용한 이메일을 입력하면 비밀번호 재설정 링크가 전송됩니다. (현재 준비 중인 기능입니다)' },
@@ -25,18 +25,40 @@ const FAQS: FAQ[] = [
   { category: 'other', question: 'QTA 토큰은 무엇인가요?', answer: 'QTA(Quanta Token)은 QuantaEX 거래소의 자체 토큰입니다. 거래 수수료 할인(25%), 이벤트 참여, 거버넌스 투표 등 다양한 혜택이 제공됩니다.' },
 ];
 
-const CATEGORIES = [
-  { key: 'all', label: '전체', icon: MessageSquare },
-  { key: 'account', label: '계정/보안', icon: Shield },
-  { key: 'trade', label: '거래', icon: ArrowRightLeft },
-  { key: 'wallet', label: '입출금', icon: Wallet },
-  { key: 'other', label: '기타', icon: UserCog },
+const FAQS_EN: FAQ[] = [
+  { category: 'account', question: 'How do I sign up?', answer: 'Click the "Register" button at the top, enter your email, nickname, and password to create an account instantly. You will receive a bonus of 10,000 USDT + 10,000,000 KRW upon registration.' },
+  { category: 'account', question: 'How do I complete KYC verification?', answer: 'After logging in, go to My Page > KYC Verification and submit your full name, phone number, and ID number. Verification is typically completed within 24 hours.' },
+  { category: 'account', question: 'I forgot my password. What should I do?', answer: 'On the login page, click "Forgot Password" and enter the email you used to register. A password reset link will be sent to you. (This feature is currently in development.)' },
+  { category: 'account', question: 'How do I set up 2FA?', answer: 'Install the Google Authenticator app, then go to My Page > Security Settings to enable 2FA. (Coming in a future update.)' },
+  { category: 'trade', question: 'How do I place an order?', answer: 'Select a coin on the Trade page, choose Buy or Sell in the order panel. For limit orders, enter your desired price and quantity. For market orders, just enter the quantity.' },
+  { category: 'trade', question: 'What is the difference between limit and market orders?', answer: 'A limit order lets you set a specific price. It is executed when the market reaches that price. A market order is executed immediately at the current best price.' },
+  { category: 'trade', question: 'How do I cancel an open order?', answer: 'Go to the "Open Orders" section at the bottom of the Trade page and click "Cancel" on the order you wish to cancel. Locked assets will be released immediately.' },
+  { category: 'trade', question: 'What are the trading fees?', answer: 'The base fee is 0.10% for both Maker and Taker. Fees can be reduced to as low as 0.04% based on your 30-day trading volume. An additional 25% discount is available when paying fees with QTA tokens. See the Fees page for details.' },
+  { category: 'wallet', question: 'How do I make a deposit?', answer: 'Go to the Wallet page, click Deposit, select the coin you want, and enter the amount. Deposit fees are free.' },
+  { category: 'wallet', question: 'How do I withdraw?', answer: 'Go to the Wallet page, click Withdraw, select the coin, enter the amount and withdrawal address, then submit. Withdrawals are processed after admin approval.' },
+  { category: 'wallet', question: 'How long does a withdrawal take?', answer: 'After submission, withdrawals go through an admin approval process. They are typically processed within 1-2 hours, though blockchain network conditions may cause delays.' },
+  { category: 'wallet', question: 'What is the minimum withdrawal amount?', answer: 'Minimum withdrawal amounts vary by coin. For example, BTC is 0.001 BTC and ETH is 0.01 ETH. Check the Fees page for full details.' },
+  { category: 'other', question: 'What is QuantaEX?', answer: 'QuantaEX is a digital asset trading platform where you can trade 13+ cryptocurrencies including BTC, ETH, and QTA on USDT and KRW markets. We offer professional trading tools including real-time charts, order book, and fast order execution.' },
+  { category: 'other', question: 'What is the QTA token?', answer: 'QTA (Quanta Token) is the native token of QuantaEX. It offers various benefits including a 25% trading fee discount, event participation, and governance voting.' },
 ];
 
+// CATEGORIES is defined inside the component
+
 export default function SupportPage() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
+  const isKo = lang === 'ko';
+
+  const CATEGORIES = [
+    { key: 'all', label: t('support.catAll'), icon: MessageSquare },
+    { key: 'account', label: t('support.catAccount'), icon: Shield },
+    { key: 'trade', label: t('support.catTrade'), icon: ArrowRightLeft },
+    { key: 'wallet', label: t('support.catWallet'), icon: Wallet },
+    { key: 'other', label: t('support.catOther'), icon: UserCog },
+  ];
   const [category, setCategory] = useState('all');
   const [openFaq, setOpenFaq] = useState<number | null>(null);
+
+  const FAQS = isKo ? FAQS_KO : FAQS_EN;
 
   const filteredFaqs = category === 'all' ? FAQS : FAQS.filter(f => f.category === category);
 
@@ -51,7 +73,7 @@ export default function SupportPage() {
             </div>
             <div>
               <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">{t('footer.support')}</h1>
-              <p className="text-sm text-exchange-text-secondary mt-0.5">궁금한 점이 있으시면 FAQ를 확인하시거나 고객센터로 문의해 주세요.</p>
+              <p className="text-sm text-exchange-text-secondary mt-0.5">{t('support.subtitle')}</p>
             </div>
           </div>
         </div>
@@ -66,8 +88,8 @@ export default function SupportPage() {
                 <Mail size={22} className="text-blue-400" />
               </div>
               <div>
-                <h3 className="font-bold text-sm mb-1">이메일 문의</h3>
-                <p className="text-xs text-exchange-text-third mb-2">24시간 접수 가능</p>
+                <h3 className="font-bold text-sm mb-1">{t('support.emailInquiry')}</h3>
+                <p className="text-xs text-exchange-text-third mb-2">{t('support.emailAvail')}</p>
                 <a href="mailto:support@quantaex.io" className="text-sm text-exchange-yellow hover:underline font-medium">
                   support@quantaex.io
                 </a>
@@ -80,9 +102,9 @@ export default function SupportPage() {
                 <MessageSquare size={22} className="text-exchange-buy" />
               </div>
               <div>
-                <h3 className="font-bold text-sm mb-1">실시간 채팅</h3>
-                <p className="text-xs text-exchange-text-third mb-2">평일 09:00 - 18:00 (KST)</p>
-                <span className="text-xs font-medium text-exchange-text-third bg-exchange-hover/60 px-2 py-1 rounded">서비스 준비 중</span>
+                <h3 className="font-bold text-sm mb-1">{t('support.liveChat')}</h3>
+                <p className="text-xs text-exchange-text-third mb-2">{t('support.liveChatHours')}</p>
+                <span className="text-xs font-medium text-exchange-text-third bg-exchange-hover/60 px-2 py-1 rounded">{t('support.comingSoon')}</span>
               </div>
             </div>
           </div>
@@ -92,9 +114,9 @@ export default function SupportPage() {
                 <Clock size={22} className="text-exchange-yellow" />
               </div>
               <div>
-                <h3 className="font-bold text-sm mb-1">평균 응답 시간</h3>
-                <p className="text-xs text-exchange-text-third mb-2">이메일 접수 기준</p>
-                <span className="text-lg font-bold text-exchange-yellow">2시간 이내</span>
+                <h3 className="font-bold text-sm mb-1">{t('support.avgResponse')}</h3>
+                <p className="text-xs text-exchange-text-third mb-2">{t('support.basedOnEmail')}</p>
+                <span className="text-lg font-bold text-exchange-yellow">{t('support.within2h')}</span>
               </div>
             </div>
           </div>
@@ -103,8 +125,8 @@ export default function SupportPage() {
         {/* FAQ Section */}
         <div className="mb-6">
           <div className="flex items-center gap-2 mb-6">
-            <h2 className="text-xl font-bold">자주 묻는 질문 (FAQ)</h2>
-            <span className="text-xs text-exchange-text-third bg-exchange-hover/60 px-2 py-1 rounded-full">{FAQS.length}개</span>
+            <h2 className="text-xl font-bold">{t('support.faqTitle')}</h2>
+            <span className="text-xs text-exchange-text-third bg-exchange-hover/60 px-2 py-1 rounded-full">{t('support.faqCount', { count: String(FAQS.length) })}</span>
           </div>
 
           {/* Category Filters */}
@@ -168,10 +190,9 @@ export default function SupportPage() {
               <AlertTriangle size={20} className="text-exchange-sell" />
             </div>
             <div>
-              <h3 className="font-bold text-sm mb-2">긴급 문의</h3>
+              <h3 className="font-bold text-sm mb-2">{t('support.emergency')}</h3>
               <p className="text-sm text-exchange-text-secondary leading-relaxed mb-3">
-                해킹, 계정 도용, 비정상적인 출금 등 긴급 상황 발생 시 즉시 아래로 연락해 주세요.
-                제목에 <strong className="text-exchange-sell">[긴급]</strong>을 표기해 주시면 우선 처리됩니다.
+                {t('support.emergencyDesc')}
               </p>
               <a href="mailto:security@quantaex.io" className="inline-flex items-center gap-1.5 text-sm text-exchange-sell hover:underline font-medium">
                 <Mail size={14} />

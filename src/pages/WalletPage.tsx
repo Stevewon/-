@@ -105,36 +105,36 @@ export default function WalletPage() {
   }, [wallets, hideZero, search, sortField, sortDir]);
 
   const handleDeposit = async () => {
-    if (!amount || parseFloat(amount) <= 0) { setPanelMsg('유효한 금액을 입력하세요'); return; }
+    if (!amount || parseFloat(amount) <= 0) { setPanelMsg(t('wallet.invalidAmount')); return; }
     setPanelLoading(true);
     setPanelMsg('');
     try {
       await api.post('/wallet/deposit', { coin_symbol: selectedCoin, amount: parseFloat(amount) });
-      setPanelMsg('입금이 완료되었습니다');
+      setPanelMsg(t('wallet.depositComplete'));
       setAmount('');
       fetchWallets();
       setTimeout(() => { setPanelMsg(''); }, 2000);
     } catch (err: any) {
-      setPanelMsg(err.response?.data?.error || '입금 실패');
+      setPanelMsg(err.response?.data?.error || t('wallet.depositFailed'));
     } finally {
       setPanelLoading(false);
     }
   };
 
   const handleWithdraw = async () => {
-    if (!amount || parseFloat(amount) <= 0) { setPanelMsg('유효한 금액을 입력하세요'); return; }
-    if (!address) { setPanelMsg('출금 주소를 입력하세요'); return; }
+    if (!amount || parseFloat(amount) <= 0) { setPanelMsg(t('wallet.invalidAmount')); return; }
+    if (!address) { setPanelMsg(t('wallet.enterAddress')); return; }
     setPanelLoading(true);
     setPanelMsg('');
     try {
       await api.post('/wallet/withdraw', { coin_symbol: selectedCoin, amount: parseFloat(amount), address });
-      setPanelMsg('출금 신청이 완료되었습니다');
+      setPanelMsg(t('wallet.withdrawComplete'));
       setAmount('');
       setAddress('');
       fetchWallets();
       setTimeout(() => { setPanelMsg(''); }, 2000);
     } catch (err: any) {
-      setPanelMsg(err.response?.data?.error || '출금 실패');
+      setPanelMsg(err.response?.data?.error || t('wallet.withdrawFailed'));
     } finally {
       setPanelLoading(false);
     }
@@ -150,7 +150,7 @@ export default function WalletPage() {
   };
 
   const statusLabel = (status: string) => {
-    const map: Record<string, string> = { completed: '완료', pending: '처리중', failed: '실패' };
+    const map: Record<string, string> = { completed: t('status.completed'), pending: t('status.processing'), failed: t('status.failed') };
     return map[status] || status;
   };
 
@@ -160,7 +160,7 @@ export default function WalletPage() {
     return (
       <div className="min-h-[60vh] flex flex-col items-center justify-center">
         <Wallet size={48} className="text-exchange-text-third mb-4" />
-        <p className="text-exchange-text-secondary mb-4">로그인이 필요합니다</p>
+        <p className="text-exchange-text-secondary mb-4">{t('wallet.loginRequired')}</p>
         <Link to="/login" className="btn-primary px-6 py-2 rounded-lg">{t('nav.login')}</Link>
       </div>
     );
@@ -175,7 +175,7 @@ export default function WalletPage() {
           <div className="flex-1">
             <div className="flex items-center gap-2 mb-1">
               <Wallet size={18} className="text-exchange-yellow" />
-              <span className="text-sm text-exchange-text-secondary">총 자산 평가</span>
+              <span className="text-sm text-exchange-text-secondary">{t('wallet.totalAssets')}</span>
               <button onClick={() => setHideBalance(!hideBalance)} className="text-exchange-text-third hover:text-exchange-text transition-colors">
                 {hideBalance ? <EyeOff size={16} /> : <Eye size={16} />}
               </button>
@@ -196,19 +196,19 @@ export default function WalletPage() {
                 onClick={() => { setShowPanel('deposit'); setPanelMsg(''); }}
                 className="flex items-center gap-1.5 px-4 py-2 bg-exchange-buy/10 text-exchange-buy rounded-lg text-sm font-medium hover:bg-exchange-buy/20 transition-colors"
               >
-                <ArrowDownLeft size={16} /> 입금
+                <ArrowDownLeft size={16} /> {t('wallet.deposit')}
               </button>
               <button
                 onClick={() => { setShowPanel('withdraw'); setPanelMsg(''); }}
                 className="flex items-center gap-1.5 px-4 py-2 bg-exchange-sell/10 text-exchange-sell rounded-lg text-sm font-medium hover:bg-exchange-sell/20 transition-colors"
               >
-                <ArrowUpRight size={16} /> 출금
+                <ArrowUpRight size={16} /> {t('wallet.withdraw')}
               </button>
               <Link
                 to="/trade/BTC-USDT"
                 className="flex items-center gap-1.5 px-4 py-2 bg-exchange-yellow/10 text-exchange-yellow rounded-lg text-sm font-medium hover:bg-exchange-yellow/20 transition-colors"
               >
-                <TrendingUp size={16} /> 거래하기
+                <TrendingUp size={16} /> {t('wallet.trade')}
               </Link>
             </div>
           </div>
@@ -217,10 +217,10 @@ export default function WalletPage() {
           <div className="w-full md:w-64 bg-exchange-bg/50 rounded-xl p-4 border border-exchange-border/50">
             <div className="flex items-center gap-1.5 mb-3">
               <PieChart size={14} className="text-exchange-yellow" />
-              <span className="text-xs font-medium text-exchange-text-secondary">포트폴리오</span>
+              <span className="text-xs font-medium text-exchange-text-secondary">{t('wallet.portfolio')}</span>
             </div>
             {portfolio.length === 0 ? (
-              <p className="text-xs text-exchange-text-third text-center py-4">보유 자산 없음</p>
+              <p className="text-xs text-exchange-text-third text-center py-4">{t('wallet.noAssets')}</p>
             ) : (
               <div className="space-y-2">
                 {/* Bar Chart */}
@@ -234,7 +234,7 @@ export default function WalletPage() {
                     />
                   ))}
                   {otherPct > 0 && (
-                    <div className="h-full" style={{ width: `${otherPct}%`, backgroundColor: COLORS[5] }} title={`기타: ${otherPct.toFixed(1)}%`} />
+                    <div className="h-full" style={{ width: `${otherPct}%`, backgroundColor: COLORS[5] }} title={`${t('wallet.other')}: ${otherPct.toFixed(1)}%`} />
                   )}
                 </div>
                 {/* Legend */}
@@ -249,7 +249,7 @@ export default function WalletPage() {
                   {otherPct > 0 && (
                     <div className="flex items-center gap-1.5 text-[11px]">
                       <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: COLORS[5] }} />
-                      <span className="text-exchange-text-secondary">기타</span>
+                      <span className="text-exchange-text-secondary">{t('wallet.other')}</span>
                       <span className="text-exchange-text-third ml-auto tabular-nums">{otherPct.toFixed(1)}%</span>
                     </div>
                   )}
@@ -265,15 +265,15 @@ export default function WalletPage() {
         <div className="bg-exchange-card rounded-xl border border-exchange-border p-5 mb-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-semibold text-exchange-text flex items-center gap-2">
-              {showPanel === 'deposit' ? <><ArrowDownLeft size={18} className="text-exchange-buy" /> 입금</> : <><ArrowUpRight size={18} className="text-exchange-sell" /> 출금</>}
+              {showPanel === 'deposit' ? <><ArrowDownLeft size={18} className="text-exchange-buy" /> {t('wallet.deposit')}</> : <><ArrowUpRight size={18} className="text-exchange-sell" /> {t('wallet.withdraw')}</>}
             </h3>
-            <button onClick={() => setShowPanel(null)} className="text-exchange-text-third hover:text-exchange-text text-sm">닫기</button>
+            <button onClick={() => setShowPanel(null)} className="text-exchange-text-third hover:text-exchange-text text-sm">{t('common.close')}</button>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Coin Select */}
             <div>
-              <label className="text-xs text-exchange-text-third mb-1.5 block">코인 선택</label>
+              <label className="text-xs text-exchange-text-third mb-1.5 block">{t('wallet.coinSelect')}</label>
               <select
                 value={selectedCoin}
                 onChange={e => setSelectedCoin(e.target.value)}
@@ -284,14 +284,14 @@ export default function WalletPage() {
                 ))}
               </select>
               <p className="text-[11px] text-exchange-text-third mt-1.5">
-                잔고: {formatPrice(wallets.find(w => w.coin_symbol === selectedCoin)?.available || 0)} {selectedCoin}
+                {t('wallet.balance')}: {formatPrice(wallets.find(w => w.coin_symbol === selectedCoin)?.available || 0)} {selectedCoin}
               </p>
             </div>
 
             {/* Amount */}
             <div>
               <label className="text-xs text-exchange-text-third mb-1.5 block">
-                {showPanel === 'deposit' ? '입금' : '출금'} 수량
+                {showPanel === 'deposit' ? t('wallet.deposit') : t('wallet.withdraw')} {t('trade.amount')}
               </label>
               <input
                 type="number"
@@ -319,7 +319,7 @@ export default function WalletPage() {
             {/* Address (withdraw only) */}
             {showPanel === 'withdraw' && (
               <div className="md:col-span-2">
-                <label className="text-xs text-exchange-text-third mb-1.5 block">출금 주소</label>
+                <label className="text-xs text-exchange-text-third mb-1.5 block">{t('wallet.withdrawAddress')}</label>
                 <input
                   type="text"
                   value={address}
@@ -340,10 +340,10 @@ export default function WalletPage() {
                 showPanel === 'deposit' ? 'btn-buy' : 'btn-sell'
               }`}
             >
-              {panelLoading ? '처리중...' : (showPanel === 'deposit' ? '입금하기' : '출금하기')}
+              {panelLoading ? t('wallet.processing') : (showPanel === 'deposit' ? t('wallet.submitDeposit') : t('wallet.submitWithdraw'))}
             </button>
             {panelMsg && (
-              <span className={`text-xs ${panelMsg.includes('완료') ? 'text-exchange-buy' : 'text-exchange-sell'}`}>
+              <span className={`text-xs ${panelMsg.includes('completed') || panelMsg.includes('Complete') || panelMsg.includes('완료') ? 'text-exchange-buy' : 'text-exchange-sell'}`}>
                 {panelMsg}
               </span>
             )}
@@ -354,9 +354,9 @@ export default function WalletPage() {
       {/* Tabs */}
       <div className="flex items-center gap-1 mb-4 border-b border-exchange-border">
         {([
-          { key: 'assets' as Tab, label: '자산 목록', icon: Wallet },
-          { key: 'deposits' as Tab, label: '입금 내역', icon: ArrowDownLeft },
-          { key: 'withdrawals' as Tab, label: '출금 내역', icon: ArrowUpRight },
+          { key: 'assets' as Tab, label: t('wallet.assetList'), icon: Wallet },
+          { key: 'deposits' as Tab, label: t('wallet.depositHistory'), icon: ArrowDownLeft },
+          { key: 'withdrawals' as Tab, label: t('wallet.withdrawHistory'), icon: ArrowUpRight },
         ]).map(({ key, label, icon: Icon }) => (
           <button
             key={key}
@@ -384,7 +384,7 @@ export default function WalletPage() {
                 type="text"
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                placeholder="코인 검색..."
+                placeholder={t('wallet.searchCoin')}
                 className="input-field pl-9 text-xs h-8"
               />
             </div>
@@ -395,7 +395,7 @@ export default function WalletPage() {
                 onChange={e => setHideZero(e.target.checked)}
                 className="accent-exchange-yellow w-3.5 h-3.5"
               />
-              잔액 0 숨기기
+              {t('wallet.hideZero')}
             </label>
           </div>
 
@@ -408,26 +408,26 @@ export default function WalletPage() {
               {/* Desktop Table */}
               <div className="hidden md:block bg-exchange-card rounded-xl border border-exchange-border overflow-hidden">
                 <div className="flex items-center px-4 py-3 text-xs text-exchange-text-third font-medium border-b border-exchange-border bg-exchange-bg/50">
-                  <span className="w-[22%]">코인</span>
-                  <span className="w-[15%] text-right">보유수량</span>
-                  <span className="w-[15%] text-right">동결수량</span>
-                  <span className="w-[15%] text-right">현재가 (USD)</span>
+                  <span className="w-[22%]">{t('wallet.coin')}</span>
+                  <span className="w-[15%] text-right">{t('wallet.availableBalance')}</span>
+                  <span className="w-[15%] text-right">{t('wallet.frozenQty')}</span>
+                  <span className="w-[15%] text-right">{t('wallet.currentPrice')}</span>
                   <button
                     onClick={() => { if (sortField === 'change') setSortDir(d => d === 'desc' ? 'asc' : 'desc'); else { setSortField('change'); setSortDir('desc'); }}}
                     className="w-[13%] text-right flex items-center justify-end gap-1 hover:text-exchange-text"
                   >
-                    24h 변동 {sortField === 'change' ? (sortDir === 'desc' ? <ChevronDown size={10} /> : <ChevronUp size={10} />) : null}
+                    {t('wallet.change24h')} {sortField === 'change' ? (sortDir === 'desc' ? <ChevronDown size={10} /> : <ChevronUp size={10} />) : null}
                   </button>
                   <button
                     onClick={() => { if (sortField === 'value') setSortDir(d => d === 'desc' ? 'asc' : 'desc'); else { setSortField('value'); setSortDir('desc'); }}}
                     className="w-[20%] text-right flex items-center justify-end gap-1 hover:text-exchange-text"
                   >
-                    평가금액 {sortField === 'value' ? (sortDir === 'desc' ? <ChevronDown size={10} /> : <ChevronUp size={10} />) : null}
+                    {t('wallet.valuation')} {sortField === 'value' ? (sortDir === 'desc' ? <ChevronDown size={10} /> : <ChevronUp size={10} />) : null}
                   </button>
                 </div>
 
                 {filteredWallets.length === 0 ? (
-                  <div className="py-12 text-center text-exchange-text-third text-sm">검색 결과 없음</div>
+                  <div className="py-12 text-center text-exchange-text-third text-sm">{t('wallet.noResults')}</div>
                 ) : (
                   filteredWallets.map(w => {
                     const value = (w.available + w.locked) * (w.price_usd || 0);
@@ -486,16 +486,16 @@ export default function WalletPage() {
                       </div>
                       <div className="grid grid-cols-2 gap-2 text-xs">
                         <div>
-                          <span className="text-exchange-text-third">보유</span>
+                          <span className="text-exchange-text-third">{t('wallet.holdings')}</span>
                           <p className="text-exchange-text tabular-nums font-medium">{hideBalance ? '••••' : formatAmount(w.available)}</p>
                         </div>
                         <div className="text-right">
-                          <span className="text-exchange-text-third">평가금액</span>
+                          <span className="text-exchange-text-third">{t('wallet.valuation')}</span>
                           <p className="text-exchange-text tabular-nums font-medium">{hideBalance ? '••••' : `$${formatPrice(value)}`}</p>
                         </div>
                         {w.locked > 0 && (
                           <div>
-                            <span className="text-exchange-text-third">동결</span>
+                            <span className="text-exchange-text-third">{t('wallet.frozenQty')}</span>
                             <p className="text-exchange-text-secondary tabular-nums">{hideBalance ? '••••' : formatAmount(w.locked)}</p>
                           </div>
                         )}
@@ -517,18 +517,18 @@ export default function WalletPage() {
               {/* Desktop */}
               <div className="hidden md:block">
                 <div className="flex items-center px-4 py-3 text-xs text-exchange-text-third font-medium border-b border-exchange-border bg-exchange-bg/50">
-                  <span className="w-[15%]">코인</span>
-                  <span className="w-[20%] text-right">수량</span>
-                  {tab === 'withdrawals' && <span className="w-[15%] text-right">수수료</span>}
-                  {tab === 'withdrawals' && <span className="w-[20%]">주소</span>}
-                  <span className="w-[15%] text-center">상태</span>
-                  <span className="w-[15%] text-right">시간</span>
+                  <span className="w-[15%]">{t('wallet.coin')}</span>
+                  <span className="w-[20%] text-right">{t('wallet.qty')}</span>
+                  {tab === 'withdrawals' && <span className="w-[15%] text-right">{t('wallet.feeLbl')}</span>}
+                  {tab === 'withdrawals' && <span className="w-[20%]">{t('wallet.address')}</span>}
+                  <span className="w-[15%] text-center">{t('admin.status')}</span>
+                  <span className="w-[15%] text-right">{t('trade.time')}</span>
                 </div>
 
                 {(tab === 'deposits' ? deposits : withdrawals).length === 0 ? (
                   <div className="py-16 text-center">
                     <History size={36} className="mx-auto text-exchange-text-third mb-3 opacity-40" />
-                    <p className="text-exchange-text-secondary text-sm">{tab === 'deposits' ? '입금' : '출금'} 내역이 없습니다</p>
+                    <p className="text-exchange-text-secondary text-sm">{t('wallet.noHistory', { type: tab === 'deposits' ? t('wallet.deposit') : t('wallet.withdraw') })}</p>
                   </div>
                 ) : (
                   (tab === 'deposits' ? deposits : withdrawals).map((item: any) => (
@@ -550,7 +550,7 @@ export default function WalletPage() {
                         {statusIcon(item.status)}
                         <span className="text-exchange-text-secondary">{statusLabel(item.status)}</span>
                       </span>
-                      <span className="w-[15%] text-right text-exchange-text-third">{timeAgo(item.created_at)}</span>
+                      <span className="w-[15%] text-right text-exchange-text-third">{timeAgo(item.created_at, t)}</span>
                     </div>
                   ))
                 )}
@@ -561,7 +561,7 @@ export default function WalletPage() {
                 {(tab === 'deposits' ? deposits : withdrawals).length === 0 ? (
                   <div className="py-12 text-center">
                     <History size={32} className="mx-auto text-exchange-text-third mb-2 opacity-40" />
-                    <p className="text-exchange-text-secondary text-sm">{tab === 'deposits' ? '입금' : '출금'} 내역이 없습니다</p>
+                    <p className="text-exchange-text-secondary text-sm">{t('wallet.noHistory', { type: tab === 'deposits' ? t('wallet.deposit') : t('wallet.withdraw') })}</p>
                   </div>
                 ) : (
                   (tab === 'deposits' ? deposits : withdrawals).map((item: any) => (
@@ -577,18 +577,18 @@ export default function WalletPage() {
                         </div>
                       </div>
                       <div className="flex justify-between text-xs">
-                        <span className="text-exchange-text-third">수량</span>
+                        <span className="text-exchange-text-third">{t('wallet.qty')}</span>
                         <span className="tabular-nums text-exchange-text">{formatAmount(item.amount)}</span>
                       </div>
                       {tab === 'withdrawals' && item.fee && (
                         <div className="flex justify-between text-xs mt-0.5">
-                          <span className="text-exchange-text-third">수수료</span>
+                          <span className="text-exchange-text-third">{t('wallet.feeLbl')}</span>
                           <span className="tabular-nums text-exchange-text-secondary">{formatAmount(item.fee)}</span>
                         </div>
                       )}
                       <div className="flex justify-between text-xs mt-0.5">
-                        <span className="text-exchange-text-third">시간</span>
-                        <span className="text-exchange-text-third">{timeAgo(item.created_at)}</span>
+                        <span className="text-exchange-text-third">{t('trade.time')}</span>
+                        <span className="text-exchange-text-third">{timeAgo(item.created_at, t)}</span>
                       </div>
                     </div>
                   ))

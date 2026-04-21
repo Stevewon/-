@@ -73,7 +73,7 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
         ? `${t('trade.orderPlaced')} ${tradeCount}${t('trade.tradesExecuted')}`
         : `${t('trade.orderPlaced')} ${t('trade.waitingMatch')}`;
       setMessage(msg);
-      showToast('success', side === 'buy' ? '매수 주문' : '매도 주문', msg);
+      showToast('success', side === 'buy' ? t('trade.buyOrder') : t('trade.sellOrder'), msg);
       setAmount('');
       setSliderPct(0);
       fetchWallets();
@@ -82,7 +82,7 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
     } catch (err: any) {
       const errMsg = err.response?.data?.error || t('trade.orderFailed');
       setMessage(errMsg);
-      showToast('error', '주문 실패', errMsg);
+      showToast('error', t('trade.orderFailed'), errMsg);
     } finally {
       setLoading(false);
     }
@@ -202,7 +202,7 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
             <span className="text-exchange-text-secondary font-mono tabular-nums">{formatPrice(total)} {quote}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-exchange-text-third">수수료 (0.1%)</span>
+            <span className="text-exchange-text-third">{t('trade.feeRate')}</span>
             <span className="text-exchange-text-secondary font-mono tabular-nums">{formatPrice(fee)} {quote}</span>
           </div>
         </div>
@@ -222,7 +222,7 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
       {/* Message */}
       {message && (
         <div className={`mt-2 text-xs text-center px-2 py-1.5 rounded-lg ${
-          message.includes('실패') || message.includes('failed') || message.includes('Insufficient') || message.includes('로그인')
+          message.includes('failed') || message.includes('Insufficient') || message.includes('login') || message.includes('Failed') || message.includes('실패') || message.includes('로그인')
             ? 'bg-exchange-sell/10 text-exchange-sell'
             : 'bg-exchange-buy/10 text-exchange-buy'
         }`}>

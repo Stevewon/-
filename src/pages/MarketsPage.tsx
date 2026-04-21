@@ -137,7 +137,7 @@ export default function MarketsPage() {
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-exchange-text mb-1">{t('market.allMarkets')}</h1>
         <p className="text-sm text-exchange-text-secondary">
-          {listed.length}개 마켓 · 실시간 업데이트
+          {t('market.marketCount', { count: String(listed.length) })}
         </p>
       </div>
 
@@ -170,16 +170,16 @@ export default function MarketsPage() {
           }`}
         >
           <Star size={12} fill={showFavOnly ? '#F0B90B' : 'none'} />
-          즐겨찾기
+          {t('market.favorites')}
         </button>
 
         {/* Quick Filters */}
         <div className="flex items-center gap-1">
           {([
-            { key: 'all' as QuickFilter, label: '전체', icon: Filter },
-            { key: 'gainers' as QuickFilter, label: '상승', icon: TrendingUp },
-            { key: 'losers' as QuickFilter, label: '하락', icon: TrendingDown },
-            { key: 'hot' as QuickFilter, label: 'HOT', icon: Flame },
+            { key: 'all' as QuickFilter, label: t('market.all'), icon: Filter },
+            { key: 'gainers' as QuickFilter, label: t('market.rising'), icon: TrendingUp },
+            { key: 'losers' as QuickFilter, label: t('market.falling'), icon: TrendingDown },
+            { key: 'hot' as QuickFilter, label: t('market.hot'), icon: Flame },
           ]).map(({ key, label, icon: Icon }) => (
             <button
               key={key}
@@ -203,7 +203,7 @@ export default function MarketsPage() {
             type="text"
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="코인 검색..."
+            placeholder={t('market.searchCoin')}
             className="input-field pl-9 text-xs h-8 w-full"
           />
         </div>
@@ -220,25 +220,25 @@ export default function MarketsPage() {
             <div className="flex items-center px-4 py-3 text-xs text-exchange-text-third font-medium border-b border-exchange-border bg-exchange-bg/50">
               <span className="w-[4%]"></span>
               <button onClick={() => toggleSort('name')} className="w-[20%] flex items-center gap-1 hover:text-exchange-text">
-                거래쌍 <SortIcon field="name" />
+                {t('market.pair')} <SortIcon field="name" />
               </button>
               <button onClick={() => toggleSort('price')} className="w-[18%] text-right flex items-center justify-end gap-1 hover:text-exchange-text">
-                가격 <SortIcon field="price" />
+                {t('trade.price')} <SortIcon field="price" />
               </button>
               <button onClick={() => toggleSort('change')} className="w-[14%] text-right flex items-center justify-end gap-1 hover:text-exchange-text">
-                24h 변동 <SortIcon field="change" />
+                {t('market.change')} <SortIcon field="change" />
               </button>
               <button onClick={() => toggleSort('volume')} className="w-[16%] text-right flex items-center justify-end gap-1 hover:text-exchange-text">
-                거래량 <SortIcon field="volume" />
+                {t('market.volume')} <SortIcon field="volume" />
               </button>
-              <span className="w-[16%] text-center">차트</span>
-              <span className="w-[12%] text-center">거래</span>
+              <span className="w-[16%] text-center">{t('market.chart')}</span>
+              <span className="w-[12%] text-center">{t('market.tradeBtn')}</span>
             </div>
 
             {listed.length === 0 ? (
               <div className="py-16 text-center">
                 <BarChart3 size={36} className="mx-auto text-exchange-text-third mb-3 opacity-40" />
-                <p className="text-exchange-text-secondary text-sm">검색 결과가 없습니다</p>
+                <p className="text-exchange-text-secondary text-sm">{t('market.noResults')}</p>
               </div>
             ) : (
               listed.map(m => {
@@ -287,7 +287,7 @@ export default function MarketsPage() {
                         className="px-4 py-1.5 rounded-md text-xs font-semibold bg-exchange-yellow text-black hover:bg-exchange-yellow/90 transition-colors"
                         onClick={(e) => { e.stopPropagation(); navigate(`/trade/${m.sym}`); }}
                       >
-                        거래
+                        {t('market.tradeBtn')}
                       </button>
                     </span>
                   </div>
@@ -301,7 +301,7 @@ export default function MarketsPage() {
             {listed.length === 0 ? (
               <div className="py-12 text-center">
                 <BarChart3 size={32} className="mx-auto text-exchange-text-third mb-2 opacity-40" />
-                <p className="text-exchange-text-secondary text-sm">검색 결과가 없습니다</p>
+                <p className="text-exchange-text-secondary text-sm">{t('market.noResults')}</p>
               </div>
             ) : (
               listed.map(m => {
@@ -344,8 +344,8 @@ export default function MarketsPage() {
 
                     <div className="flex items-center justify-between mt-2 pt-2 border-t border-exchange-border/30">
                       <div className="flex items-center gap-3 text-[11px] text-exchange-text-third">
-                        <span>거래량 {formatVolume(m.volume)}</span>
-                        <span>고가 {formatPrice(m.high)}</span>
+                        <span>{t('market.vol')} {formatVolume(m.volume)}</span>
+                        <span>{t('market.high')} {formatPrice(m.high)}</span>
                       </div>
                       <Sparkline change={m.change} />
                     </div>

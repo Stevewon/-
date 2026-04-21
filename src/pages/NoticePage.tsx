@@ -11,7 +11,7 @@ interface Notice {
   content: string;
 }
 
-const NOTICES: Notice[] = [
+const NOTICES_KO: Notice[] = [
   {
     id: 1, type: 'notice', title: 'QuantaEX 거래소 그랜드 오픈 안내', date: '2026-04-20', pinned: true,
     content: 'QuantaEX 거래소가 정식 오픈되었습니다. BTC, ETH, QTA 등 13종의 암호화폐를 USDT 및 KRW 마켓에서 거래하실 수 있습니다. 회원가입 시 10,000 USDT + 10,000,000 KRW 보너스가 지급됩니다. 많은 이용 부탁드립니다.',
@@ -38,29 +38,61 @@ const NOTICES: Notice[] = [
   },
 ];
 
-const TYPE_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
-  notice: { label: '공지', color: 'text-blue-400', bg: 'bg-blue-400/10' },
-  event: { label: '이벤트', color: 'text-exchange-yellow', bg: 'bg-exchange-yellow/10' },
-  maintenance: { label: '점검', color: 'text-exchange-sell', bg: 'bg-exchange-sell/10' },
-  listing: { label: '상장', color: 'text-exchange-buy', bg: 'bg-exchange-buy/10' },
-};
+const NOTICES_EN: Notice[] = [
+  {
+    id: 1, type: 'notice', title: 'QuantaEX Grand Opening Announcement', date: '2026-04-20', pinned: true,
+    content: 'QuantaEX is now officially open. You can trade 13 types of cryptocurrencies including BTC, ETH, and QTA on the USDT and KRW markets. Sign up to receive a bonus of 10,000 USDT + 10,000,000 KRW. We look forward to your participation.',
+  },
+  {
+    id: 2, type: 'listing', title: '[New Listing] QTA (Quanta Token) Listed', date: '2026-04-20', pinned: true,
+    content: 'QTA (Quanta Token) has been listed on QuantaEX.\n\n■ Listing Date: April 20, 2026 (Sun) 00:00 (KST)\n■ Trading Pairs: QTA/USDT, QTA/KRW\n■ Deposits/Withdrawals: Available immediately\n\nTo celebrate the listing, QTA trading fees are discounted by 50%.',
+  },
+  {
+    id: 3, type: 'event', title: '[Event] Sign-Up Bonus Giveaway', date: '2026-04-20',
+    content: 'New members will receive the following bonuses upon registration:\n\n• 10,000 USDT\n• 10,000,000 KRW\n• 0.1 BTC\n• 2 ETH\n• 1,000 QTA\n\nEvent period: April 20, 2026 ~ until further notice',
+  },
+  {
+    id: 4, type: 'notice', title: 'KYC Verification Process Guide', date: '2026-04-19',
+    content: 'Please complete your KYC verification for uninterrupted trading.\n\n■ How to verify: My Page > Security Settings > KYC Verification\n■ Required documents: Full name, phone number, ID number\n■ Processing time: Within 24 hours of submission\n\nWithdrawals may be restricted without KYC verification.',
+  },
+  {
+    id: 5, type: 'maintenance', title: '[Completed] Scheduled Server Maintenance', date: '2026-04-18',
+    content: 'Scheduled server maintenance has been completed.\n\n■ Maintenance window: April 18, 2026, 02:00 ~ 04:00 (KST)\n■ Scope: Temporary suspension of all services\n■ Current status: Normal operation\n\nWe apologize for any inconvenience.',
+  },
+  {
+    id: 6, type: 'notice', title: 'Anomaly Detection System Update', date: '2026-04-17',
+    content: 'The anomaly detection system has been updated to better protect customer assets.\n\nKey changes:\n• Automatic blocking of abnormal large orders\n• Enhanced IP-based access restrictions\n• Additional verification steps for withdrawals',
+  },
+];
+
+// TYPE_CONFIG is defined inside the component to access t()
 
 export default function NoticePage() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
+  const isKo = lang === 'ko';
+
+  const TYPE_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
+    notice: { label: t('notice.typeNotice'), color: 'text-blue-400', bg: 'bg-blue-400/10' },
+    event: { label: t('notice.typeEvent'), color: 'text-exchange-yellow', bg: 'bg-exchange-yellow/10' },
+    maintenance: { label: t('notice.typeMaintenance'), color: 'text-exchange-sell', bg: 'bg-exchange-sell/10' },
+    listing: { label: t('notice.typeListing'), color: 'text-exchange-buy', bg: 'bg-exchange-buy/10' },
+  };
   const [selectedNotice, setSelectedNotice] = useState<Notice | null>(null);
   const [filter, setFilter] = useState<string>('all');
   const [search, setSearch] = useState('');
+
+  const NOTICES = isKo ? NOTICES_KO : NOTICES_EN;
 
   const filtered = NOTICES
     .filter(n => filter === 'all' || n.type === filter)
     .filter(n => !search || n.title.toLowerCase().includes(search.toLowerCase()));
 
   const filters = [
-    { key: 'all', label: '전체', count: NOTICES.length },
-    { key: 'notice', label: '공지', count: NOTICES.filter(n => n.type === 'notice').length },
-    { key: 'event', label: '이벤트', count: NOTICES.filter(n => n.type === 'event').length },
-    { key: 'listing', label: '상장', count: NOTICES.filter(n => n.type === 'listing').length },
-    { key: 'maintenance', label: '점검', count: NOTICES.filter(n => n.type === 'maintenance').length },
+    { key: 'all', label: t('common.all'), count: NOTICES.length },
+    { key: 'notice', label: t('notice.typeNotice'), count: NOTICES.filter(n => n.type === 'notice').length },
+    { key: 'event', label: t('notice.typeEvent'), count: NOTICES.filter(n => n.type === 'event').length },
+    { key: 'listing', label: t('notice.typeListing'), count: NOTICES.filter(n => n.type === 'listing').length },
+    { key: 'maintenance', label: t('notice.typeMaintenance'), count: NOTICES.filter(n => n.type === 'maintenance').length },
   ];
 
   return (
@@ -74,7 +106,7 @@ export default function NoticePage() {
             </div>
             <div>
               <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">{t('footer.notice')}</h1>
-              <p className="text-sm text-exchange-text-secondary mt-0.5">QuantaEX 주요 공지사항 및 업데이트</p>
+              <p className="text-sm text-exchange-text-secondary mt-0.5">{t('notice.subtitle')}</p>
             </div>
           </div>
         </div>
@@ -107,7 +139,7 @@ export default function NoticePage() {
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="공지사항 검색..."
+              placeholder={t('notice.searchPlaceholder')}
               className="input-field pl-9 text-sm !py-2.5"
             />
           </div>
@@ -122,7 +154,7 @@ export default function NoticePage() {
                 className="flex items-center gap-1.5 text-sm text-exchange-yellow hover:underline mb-4"
               >
                 <ArrowLeft size={14} />
-                목록으로 돌아가기
+                {t('notice.backToList')}
               </button>
               <div className="flex items-center gap-2 mb-3">
                 <span className={`text-xs font-medium px-2.5 py-1 rounded-lg ${TYPE_CONFIG[selectedNotice.type].bg} ${TYPE_CONFIG[selectedNotice.type].color}`}>
@@ -130,7 +162,7 @@ export default function NoticePage() {
                 </span>
                 {selectedNotice.pinned && (
                   <span className="text-xs font-medium px-2 py-1 rounded-lg bg-exchange-yellow/10 text-exchange-yellow flex items-center gap-1">
-                    <Pin size={10} /> 고정
+                    <Pin size={10} /> {t('notice.pinned')}
                   </span>
                 )}
               </div>
@@ -152,7 +184,7 @@ export default function NoticePage() {
             {filtered.length === 0 ? (
               <div className="p-12 text-center text-exchange-text-third">
                 <Bell size={32} className="mx-auto mb-3 opacity-30" />
-                <p>검색 결과가 없습니다.</p>
+                <p>{t('market.noResults')}</p>
               </div>
             ) : (
               filtered.map((notice) => {
