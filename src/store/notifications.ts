@@ -141,6 +141,26 @@ const useNotifications = create<NotificationState>((set, get) => ({
     const current = get().eventSource;
     if (current) return;
 
+    // Try SSE first (Express dev env); fall back to polling on Cloudflare Pages
+    let sseFailed = false;
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+    const startPolling = () => {
+      if (pollTimer) return;
+      // Poll every 15s as fallback
+      pollTimer = setInterval(async () => {
+        try {
+          const prevIds = new Set(get().items.map((x) => x.id));
+          await get().fetch();
+          await get().fetchUnreadCount();
+          // Detect new items and fire side-effects for them
+          const newItems = get().items.filter((x) => !prevIds.has(x.id) && !x.is_read);
+          for (const n of newItems.slice(0, 3)) fireSideEffects(n);
+        } catch { /* ignore */ }
+      }, 15000);
+      set({ connected: true });
+    };
+
     try {
       const base = ''; // same-origin via vite proxy
       const es = new EventSource(`${base}/api/notifications/stream?token=${encodeURIComponent(token)}`);
@@ -158,18 +178,35 @@ const useNotifications = create<NotificationState>((set, get) => ({
 
       es.onerror = () => {
         set({ connected: false });
-        // Let EventSource auto-reconnect
+        // If SSE repeatedly fails (likely Cloudflare Pages), start polling after first error
+        if (!sseFailed) {
+          sseFailed = true;
+          setTimeout(() => {
+            // Give EventSource a chance to reconnect; if still failing, switch to polling
+            if (!get().connected) {
+              try { es.close(); } catch { /* ignore */ }
+              set({ eventSource: null });
+              startPolling();
+            }
+          }, 3000);
+        }
       };
 
       set({ eventSource: es });
     } catch {
-      set({ connected: false });
+      // EventSource constructor failed (unlikely) → fall back to polling
+      startPolling();
     }
+
+    // Expose poll timer cleanup via a wrapper on disconnect
+    (get() as any)._pollTimer = pollTimer;
   },
 
   disconnect: () => {
     const es = get().eventSource;
     if (es) es.close();
+    const pt = (get() as any)._pollTimer;
+    if (pt) clearInterval(pt);
     set({ eventSource: null, connected: false });
   },
 }));

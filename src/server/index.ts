@@ -5,6 +5,9 @@ import marketRoutes from './routes/market';
 import orderRoutes from './routes/order';
 import walletRoutes from './routes/wallet';
 import adminRoutes from './routes/admin';
+import notificationRoutes from './routes/notifications';
+import priceAlertRoutes from './routes/priceAlerts';
+import profileRoutes from './routes/profile';
 
 export type Env = {
   DB: D1Database;
@@ -29,6 +32,9 @@ app.route('/api/market', marketRoutes);
 app.route('/api/orders', orderRoutes);
 app.route('/api/wallet', walletRoutes);
 app.route('/api/admin', adminRoutes);
+app.route('/api/notifications', notificationRoutes);
+app.route('/api/price-alerts', priceAlertRoutes);
+app.route('/api/profile', profileRoutes);
 
 // Health
 app.get('/api/health', (c) => c.json({ status: 'ok', timestamp: new Date().toISOString() }));
