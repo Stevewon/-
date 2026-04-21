@@ -35,6 +35,18 @@ Free plan — `*/5` is a safe default).
 
 ## Deploy
 
+### One-shot script (recommended)
+
+```bash
+cd cron-worker
+CLOUDFLARE_API_TOKEN=<token> ./deploy.sh
+```
+
+The script validates the token, installs deps if needed, deploys, and pings
+`/run` to confirm the Worker is live.
+
+### Manual
+
 ```bash
 cd cron-worker
 npm install
@@ -43,6 +55,16 @@ CLOUDFLARE_API_TOKEN=<token> npx wrangler deploy
 
 On first deploy Cloudflare will create the Worker `quantaex-cron`, attach
 the D1 binding, and activate the cron schedule.
+
+### Required token permissions
+
+Create a token at https://dash.cloudflare.com/profile/api-tokens with:
+
+- **Account** → **Workers Scripts** → **Edit**
+- **Account** → **D1** → **Edit**
+- **Account** → **Account Settings** → **Read**
+
+Scope: Include → Specific account → your account.
 
 ## Manual trigger
 
