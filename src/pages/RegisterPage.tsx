@@ -15,6 +15,20 @@ export default function RegisterPage() {
   const [showPw, setShowPw] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [agreeTerms, setAgreeTerms] = useState(false);
+
+  const getPasswordStrength = (pw: string) => {
+    if (pw.length < 6) return 0;
+    let score = 0;
+    if (pw.length >= 8) score++;
+    if (/[A-Z]/.test(pw)) score++;
+    if (/[0-9]/.test(pw)) score++;
+    if (/[^A-Za-z0-9]/.test(pw)) score++;
+    return Math.min(3, score);
+  };
+  const pwStrength = getPasswordStrength(password);
+  const strengthLabels = [t('auth.passwordStrength.weak'), t('auth.passwordStrength.weak'), t('auth.passwordStrength.medium'), t('auth.passwordStrength.strong')];
+  const strengthColors = ['bg-exchange-sell', 'bg-exchange-sell', 'bg-exchange-yellow', 'bg-exchange-buy'];
   const setAuth = useStore((s) => s.setAuth);
   const navigate = useNavigate();
   const { t } = useI18n();
@@ -22,6 +36,7 @@ export default function RegisterPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    if (!agreeTerms) return setError(t('auth.mustAgreeTerms'));
     if (password !== confirmPw) return setError(t('auth.passwordMismatch'));
     if (password.length < 6) return setError(t('auth.passwordTooShort'));
 
@@ -83,6 +98,18 @@ export default function RegisterPage() {
                   {showPw ? <EyeOff size={16} /> : <Eye size={16} />}
                 </button>
               </div>
+              {password.length > 0 && (
+                <div className="mt-1.5 flex items-center gap-2">
+                  <div className="flex gap-1 flex-1">
+                    {[0, 1, 2].map((i) => (
+                      <div key={i} className={`h-1 flex-1 rounded-full transition-colors ${i < pwStrength ? strengthColors[pwStrength] : 'bg-exchange-border'}`} />
+                    ))}
+                  </div>
+                  <span className={`text-[10px] font-medium ${pwStrength >= 3 ? 'text-exchange-buy' : pwStrength >= 2 ? 'text-exchange-yellow' : 'text-exchange-sell'}`}>
+                    {strengthLabels[pwStrength]}
+                  </span>
+                </div>
+              )}
             </div>
 
             <div>
@@ -91,7 +118,15 @@ export default function RegisterPage() {
                 className="input-field" placeholder={t('auth.confirmPasswordPlaceholder')} required autoComplete="new-password" />
             </div>
 
-            <button type="submit" disabled={loading}
+            <div className="flex items-start gap-2">
+              <input type="checkbox" id="agreeTerms" checked={agreeTerms} onChange={(e) => setAgreeTerms(e.target.checked)}
+                className="mt-1 w-4 h-4 rounded border-exchange-border accent-exchange-yellow" />
+              <label htmlFor="agreeTerms" className="text-xs text-exchange-text-secondary leading-relaxed cursor-pointer">
+                {t('auth.agreeTerms')}
+              </label>
+            </div>
+
+            <button type="submit" disabled={loading || !agreeTerms}
               className="btn-primary w-full disabled:opacity-50 !py-3 text-sm font-semibold rounded-lg">
               {loading ? t('auth.creating') : t('auth.registerBtn')}
             </button>

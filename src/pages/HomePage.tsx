@@ -48,12 +48,12 @@ export default function HomePage() {
   );
 
   const features = [
-    { icon: Zap, title: '초고속 주문 체결', desc: '밀리초 단위 매칭 엔진으로 빠르고 정확한 거래를 제공합니다.', color: 'text-exchange-yellow', bg: 'bg-exchange-yellow/10' },
-    { icon: Shield, title: '안전한 자산 보호', desc: '다중 보안 시스템과 콜드 월렛으로 고객 자산을 안전하게 보관합니다.', color: 'text-exchange-buy', bg: 'bg-exchange-buy/10' },
-    { icon: BarChart3, title: '전문 트레이딩 도구', desc: '실시간 캔들차트, 호가창, 기술적 분석 도구를 제공합니다.', color: 'text-blue-400', bg: 'bg-blue-400/10' },
-    { icon: Globe, title: '글로벌 마켓', desc: 'BTC, ETH, QTA 등 다양한 디지털 자산을 거래할 수 있습니다.', color: 'text-purple-400', bg: 'bg-purple-400/10' },
-    { icon: Lock, title: '2단계 인증 (2FA)', desc: 'Google OTP를 통한 추가 보안으로 계정을 보호합니다.', color: 'text-orange-400', bg: 'bg-orange-400/10' },
-    { icon: Headphones, title: '24/7 고객 지원', desc: '전문 상담원이 24시간 고객님의 문의를 지원합니다.', color: 'text-cyan-400', bg: 'bg-cyan-400/10' },
+    { icon: Zap, title: t('home.features.speed'), desc: t('home.features.speedDesc'), color: 'text-exchange-yellow', bg: 'bg-exchange-yellow/10' },
+    { icon: Shield, title: t('home.features.security'), desc: t('home.features.securityDesc'), color: 'text-exchange-buy', bg: 'bg-exchange-buy/10' },
+    { icon: BarChart3, title: t('home.features.tools'), desc: t('home.features.toolsDesc'), color: 'text-blue-400', bg: 'bg-blue-400/10' },
+    { icon: Globe, title: t('home.features.global'), desc: t('home.features.globalDesc'), color: 'text-purple-400', bg: 'bg-purple-400/10' },
+    { icon: Lock, title: t('home.features.2fa'), desc: t('home.features.2faDesc'), color: 'text-orange-400', bg: 'bg-orange-400/10' },
+    { icon: Headphones, title: t('home.features.support'), desc: t('home.features.supportDesc'), color: 'text-cyan-400', bg: 'bg-cyan-400/10' },
   ];
 
   return (
@@ -158,10 +158,10 @@ export default function HomePage() {
         <div className="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid grid-cols-2 lg:grid-cols-4 divide-x divide-exchange-border">
             {[
-              { value: `$${animatedVol}B+`, label: '누적 거래량' },
-              { value: `${animatedUsers.toLocaleString()}+`, label: '등록 회원' },
-              { value: '13+', label: '지원 코인' },
-              { value: '22', label: '마켓 수' },
+              { value: `$${animatedVol}B+`, label: t('home.stats.volume') },
+              { value: `${animatedUsers.toLocaleString()}+`, label: t('home.stats.users') },
+              { value: '13+', label: t('home.stats.coins') },
+              { value: '22', label: t('home.stats.markets') },
             ].map((stat) => (
               <div key={stat.label} className="py-7 sm:py-10 lg:py-12 px-4 sm:px-8 text-center">
                 <div className="text-2xl sm:text-3xl lg:text-4xl font-extrabold text-exchange-yellow tabular-nums leading-none mb-2">
@@ -179,7 +179,7 @@ export default function HomePage() {
         <div className="flex items-end justify-between mb-6 sm:mb-10">
           <div>
             <h2 className="text-xl sm:text-2xl lg:text-3xl font-bold">{t('home.livePrice')}</h2>
-            <p className="text-sm text-exchange-text-third mt-1 hidden sm:block">실시간으로 업데이트되는 암호화폐 시세</p>
+            <p className="text-sm text-exchange-text-third mt-1 hidden sm:block">{t('app.description')}</p>
           </div>
           <Link to="/markets" className="text-sm text-exchange-yellow hover:text-yellow-400 flex items-center gap-1 font-semibold transition-colors">
             {t('home.viewAll')} <ChevronRight size={16} />
@@ -191,12 +191,12 @@ export default function HomePage() {
           <div className="bg-exchange-card border border-exchange-border rounded-2xl overflow-hidden">
             {/* Table Header */}
             <div className="grid grid-cols-12 px-6 lg:px-8 py-4 text-xs lg:text-sm text-exchange-text-third font-semibold border-b border-exchange-border bg-exchange-hover/20 uppercase tracking-wide">
-              <div className="col-span-3">코인</div>
-              <div className="col-span-2 text-right">가격</div>
-              <div className="col-span-2 text-right">24h 변동</div>
-              <div className="col-span-2 text-right">거래량</div>
-              <div className="col-span-2 text-center">차트</div>
-              <div className="col-span-1 text-center">거래</div>
+              <div className="col-span-3">{t('home.table.coin')}</div>
+              <div className="col-span-2 text-right">{t('home.table.price')}</div>
+              <div className="col-span-2 text-right">{t('home.table.change')}</div>
+              <div className="col-span-2 text-right">{t('home.table.volume')}</div>
+              <div className="col-span-2 text-center">{t('home.table.chart')}</div>
+              <div className="col-span-1 text-center">{t('home.table.trade')}</div>
             </div>
             {/* Table Rows */}
             {topCoins.map((coin, idx) => {
@@ -240,7 +240,7 @@ export default function HomePage() {
                   </div>
                   <div className="col-span-1 flex justify-center">
                     <span className="text-xs font-bold text-exchange-bg bg-exchange-yellow hover:bg-yellow-400 px-4 py-2 rounded-lg transition-colors">
-                      거래
+                      {t('home.table.trade')}
                     </span>
                   </div>
                 </div>
