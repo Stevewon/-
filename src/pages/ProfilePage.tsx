@@ -23,16 +23,16 @@ export default function ProfilePage() {
 
   const handleKycSubmit = async () => {
     if (!kycName || !kycPhone || !kycIdNumber) {
-      showToast('warning', 'KYC 인증', '모든 항목을 입력해주세요');
+      showToast('warning', t('profile.kycTitle'), t('profile.kycAllFields'));
       return;
     }
     setKycLoading(true);
     try {
       await api.post('/auth/kyc', { name: kycName, phone: kycPhone, id_number: kycIdNumber });
-      showToast('success', 'KYC 인증', 'KYC 인증 신청이 완료되었습니다');
+      showToast('success', t('profile.kycTitle'), t('profile.kycSubmitted'));
       setShowKyc(false);
     } catch (err: any) {
-      showToast('error', 'KYC 인증 실패', err.response?.data?.error || '다시 시도해주세요');
+      showToast('error', t('profile.kycFailed'), err.response?.data?.error || t('profile.kycRetry'));
     } finally {
       setKycLoading(false);
     }
@@ -41,14 +41,14 @@ export default function ProfilePage() {
   const handleLogout = () => {
     logout();
     navigate('/login');
-    showToast('info', '로그아웃', '안전하게 로그아웃되었습니다');
+    showToast('info', t('profile.logoutMsg'), t('profile.logoutDesc'));
   };
 
   if (!user) {
     return (
       <div className="min-h-[60vh] flex flex-col items-center justify-center">
         <User size={48} className="text-exchange-text-third mb-4" />
-        <p className="text-exchange-text-secondary mb-4">로그인이 필요합니다</p>
+        <p className="text-exchange-text-secondary mb-4">{t('wallet.loginRequired')}</p>
         <Link to="/login" className="btn-primary px-6 py-2 rounded-lg">{t('nav.login')}</Link>
       </div>
     );
@@ -56,10 +56,10 @@ export default function ProfilePage() {
 
   const kycStatus = user.kyc_status || 'none';
   const kycStatusConfig: Record<string, { label: string; color: string; icon: typeof CheckCircle2; bg: string }> = {
-    none: { label: '미인증', color: 'text-exchange-text-third', icon: AlertCircle, bg: 'bg-exchange-hover/50' },
-    pending: { label: '심사중', color: 'text-exchange-yellow', icon: Clock, bg: 'bg-exchange-yellow/10' },
-    approved: { label: '인증완료', color: 'text-exchange-buy', icon: CheckCircle2, bg: 'bg-exchange-buy/10' },
-    rejected: { label: '반려', color: 'text-exchange-sell', icon: XCircle, bg: 'bg-exchange-sell/10' },
+    none: { label: t('profile.unverified'), color: 'text-exchange-text-third', icon: AlertCircle, bg: 'bg-exchange-hover/50' },
+    pending: { label: t('profile.underReview'), color: 'text-exchange-yellow', icon: Clock, bg: 'bg-exchange-yellow/10' },
+    approved: { label: t('profile.verified'), color: 'text-exchange-buy', icon: CheckCircle2, bg: 'bg-exchange-buy/10' },
+    rejected: { label: t('profile.rejected'), color: 'text-exchange-sell', icon: XCircle, bg: 'bg-exchange-sell/10' },
   };
   const kyc = kycStatusConfig[kycStatus] || kycStatusConfig.none;
   const KycIcon = kyc.icon;
@@ -81,7 +81,7 @@ export default function ProfilePage() {
             <div className="flex items-center gap-2 mt-1">
               <Clock size={13} className="text-exchange-text-third" />
               <span className="text-xs text-exchange-text-third">
-                가입일: {user.created_at ? new Date(user.created_at).toLocaleDateString('ko-KR') : '-'}
+                {t('profile.joinDate')}: {user.created_at ? new Date(user.created_at).toLocaleDateString('en-US') : '-'}
               </span>
             </div>
           </div>
@@ -97,7 +97,7 @@ export default function ProfilePage() {
                 <Shield size={20} className={kyc.color} />
               </div>
               <div>
-                <h3 className="text-sm font-semibold text-exchange-text">본인인증 (KYC)</h3>
+                <h3 className="text-sm font-semibold text-exchange-text">{t('profile.kycIdentity')}</h3>
                 <div className="flex items-center gap-1.5 mt-0.5">
                   <KycIcon size={13} className={kyc.color} />
                   <span className={`text-xs font-medium ${kyc.color}`}>{kyc.label}</span>
@@ -109,7 +109,7 @@ export default function ProfilePage() {
                 onClick={() => setShowKyc(!showKyc)}
                 className="px-4 py-2 bg-exchange-yellow text-black rounded-lg text-xs font-semibold hover:bg-exchange-yellow/90 transition-colors"
               >
-                인증하기
+                {t('profile.verify')}
               </button>
             )}
           </div>
@@ -118,32 +118,32 @@ export default function ProfilePage() {
           {showKyc && (
             <div className="mt-4 pt-4 border-t border-exchange-border space-y-3">
               <div>
-                <label className="text-xs text-exchange-text-third mb-1 block">이름 (실명)</label>
+                <label className="text-xs text-exchange-text-third mb-1 block">{t('profile.kycName')}</label>
                 <input
                   type="text"
                   value={kycName}
                   onChange={e => setKycName(e.target.value)}
-                  placeholder="홍길동"
+                  placeholder={t('profile.namePlaceholder')}
                   className="input-field text-sm"
                 />
               </div>
               <div>
-                <label className="text-xs text-exchange-text-third mb-1 block">전화번호</label>
+                <label className="text-xs text-exchange-text-third mb-1 block">{t('profile.kycPhone')}</label>
                 <input
                   type="tel"
                   value={kycPhone}
                   onChange={e => setKycPhone(e.target.value)}
-                  placeholder="010-0000-0000"
+                  placeholder={t('profile.phonePlaceholder')}
                   className="input-field text-sm"
                 />
               </div>
               <div>
-                <label className="text-xs text-exchange-text-third mb-1 block">주민등록번호 (앞자리)</label>
+                <label className="text-xs text-exchange-text-third mb-1 block">{t('profile.idLabel')}</label>
                 <input
                   type="text"
                   value={kycIdNumber}
                   onChange={e => setKycIdNumber(e.target.value)}
-                  placeholder="000000"
+                  placeholder={t('profile.idPlaceholder')}
                   maxLength={6}
                   className="input-field text-sm"
                 />
@@ -154,13 +154,13 @@ export default function ProfilePage() {
                   disabled={kycLoading}
                   className="btn-primary text-sm !py-2 disabled:opacity-50"
                 >
-                  {kycLoading ? '처리중...' : '인증 신청'}
+                  {kycLoading ? t('wallet.processing') : t('profile.submit')}
                 </button>
                 <button
                   onClick={() => setShowKyc(false)}
                   className="px-4 py-2 rounded-lg text-sm text-exchange-text-secondary hover:text-exchange-text border border-exchange-border hover:bg-exchange-hover transition-colors"
                 >
-                  취소
+                  {t('common.cancel')}
                 </button>
               </div>
             </div>
@@ -171,10 +171,10 @@ export default function ProfilePage() {
       {/* Menu Items */}
       <div className="bg-exchange-card rounded-xl border border-exchange-border overflow-hidden mb-4">
         {([
-          { icon: Lock, label: '보안 설정', desc: '비밀번호 변경, 2FA 설정', path: '#' },
-          { icon: FileText, label: '주문 내역', desc: '주문 및 체결 기록 확인', path: '/orders' },
-          { icon: Smartphone, label: 'API 관리', desc: 'API 키 발급 및 관리', path: '#' },
-          { icon: Settings, label: '환경 설정', desc: '알림, 화폐 단위 설정', path: '#' },
+          { icon: Lock, label: t('profile.security'), desc: t('profile.securityDesc'), path: '#' },
+          { icon: FileText, label: t('profile.orderHistory'), desc: t('profile.orderHistoryDesc'), path: '/orders' },
+          { icon: Smartphone, label: t('profile.apiManage'), desc: t('profile.apiManageDesc'), path: '#' },
+          { icon: Settings, label: t('profile.settings'), desc: t('profile.settingsDesc'), path: '#' },
         ]).map(({ icon: Icon, label, desc, path }, i) => (
           <Link
             key={i}
@@ -199,7 +199,7 @@ export default function ProfilePage() {
         className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-exchange-card rounded-xl border border-exchange-border text-exchange-sell text-sm font-medium hover:bg-exchange-sell/10 transition-colors"
       >
         <LogOut size={16} />
-        로그아웃
+        {t('nav.logout')}
       </button>
     </div>
   );

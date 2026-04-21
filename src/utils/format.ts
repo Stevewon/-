@@ -28,15 +28,27 @@ export function formatKRW(price: number): string {
   return new Intl.NumberFormat('ko-KR').format(Math.round(price));
 }
 
-export function timeAgo(dateStr: string): string {
+export function timeAgo(dateStr: string, t?: (key: string, params?: Record<string, string | number>) => string): string {
   if (!dateStr) return '';
   const diff = Date.now() - new Date(dateStr).getTime();
   const mins = Math.floor(diff / 60000);
-  if (mins < 1) return '방금';
-  if (mins < 60) return `${mins}분 전`;
+
+  if (t) {
+    if (mins < 1) return t('time.justNow');
+    if (mins < 60) return t('time.minsAgo', { n: mins });
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return t('time.hoursAgo', { n: hrs });
+    const days = Math.floor(hrs / 24);
+    if (days < 30) return t('time.daysAgo', { n: days });
+    return t('time.monthsAgo', { n: Math.floor(days / 30) });
+  }
+
+  // Fallback English
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
   const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}시간 전`;
+  if (hrs < 24) return `${hrs}h ago`;
   const days = Math.floor(hrs / 24);
-  if (days < 30) return `${days}일 전`;
-  return `${Math.floor(days / 30)}달 전`;
+  if (days < 30) return `${days}d ago`;
+  return `${Math.floor(days / 30)}mo ago`;
 }

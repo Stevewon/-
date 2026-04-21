@@ -47,8 +47,7 @@ function FooterLink({ label, to, href, highlight }: { label: string; to?: string
 
 // ===== Main Footer =====
 export default function Footer() {
-  const { t, lang } = useI18n();
-  const isKo = lang === 'ko';
+  const { t } = useI18n();
 
   const socialLinks = [
     { icon: IconDiscord, label: 'Discord' },
@@ -64,49 +63,49 @@ export default function Footer() {
   ];
 
   const aboutLinks = [
-    { label: isKo ? '회사 소개' : 'About', to: '/home' },
-    { label: isKo ? '인재 채용' : 'Careers', href: '#' },
-    { label: isKo ? '공지사항' : 'Announcements', to: '/notice' },
-    { label: isKo ? '보도자료' : 'Press', href: '#' },
-    { label: isKo ? '이용약관' : 'Terms', to: '/terms' },
-    { label: isKo ? '개인정보처리방침' : 'Privacy', to: '/privacy' },
-    { label: isKo ? '블로그' : 'Blog', href: '#' },
-    { label: isKo ? '투자 유의사항' : 'Risk Warning', href: '#' },
+    { label: t('footer.about'), to: '/home' },
+    { label: t('footer.careers'), href: '#' },
+    { label: t('footer.notice'), to: '/notice' },
+    { label: t('footer.press'), href: '#' },
+    { label: t('footer.terms'), to: '/terms' },
+    { label: t('footer.privacy'), to: '/privacy' },
+    { label: t('footer.blog'), href: '#' },
+    { label: t('footer.riskWarning'), href: '#' },
   ];
 
   const productLinks = [
-    { label: isKo ? '거래소' : 'Exchange', to: '/trade/BTC-USDT', highlight: true },
-    { label: isKo ? '시세' : 'Markets', to: '/markets' },
-    { label: isKo ? '수수료' : 'Fees', to: '/fee' },
-    { label: isKo ? '아카데미' : 'Academy', href: '#' },
-    { label: isKo ? '에어드롭' : 'Airdrop', href: '#' },
-    { label: isKo ? 'ETH 스테이킹' : 'ETH Staking', href: '#' },
-    { label: isKo ? 'QTA 스테이킹' : 'QTA Staking', href: '#' },
+    { label: t('footer.exchange'), to: '/trade/BTC-USDT', highlight: true },
+    { label: t('nav.markets'), to: '/markets' },
+    { label: t('footer.fee'), to: '/fee' },
+    { label: t('footer.academy'), href: '#' },
+    { label: t('footer.airdrop'), href: '#' },
+    { label: t('footer.ethStaking'), href: '#' },
+    { label: t('footer.qtaStaking'), href: '#' },
   ];
 
   const buyLinks = [
-    { label: isKo ? '비트코인 구매' : 'Buy Bitcoin', to: '/trade/BTC-USDT' },
-    { label: isKo ? 'ETH 구매' : 'Buy Ethereum', to: '/trade/ETH-USDT' },
-    { label: isKo ? 'XRP 구매' : 'Buy XRP', to: '/trade/XRP-USDT' },
-    { label: isKo ? 'SOL 구매' : 'Buy Solana', to: '/trade/SOL-USDT' },
-    { label: isKo ? 'QTA 토큰' : 'QTA Token', href: '#' },
-    { label: isKo ? '알트코인 구매' : 'Buy Altcoins', to: '/markets' },
+    { label: t('footer.buyBitcoin'), to: '/trade/BTC-USDT' },
+    { label: t('footer.buyEthereum'), to: '/trade/ETH-USDT' },
+    { label: t('footer.buyXrp'), to: '/trade/XRP-USDT' },
+    { label: t('footer.buySolana'), to: '/trade/SOL-USDT' },
+    { label: t('footer.qtaToken'), href: '#' },
+    { label: t('footer.buyAltcoins'), to: '/markets' },
   ];
 
   const serviceLinks = [
-    { label: isKo ? '제휴' : 'Affiliate', href: '#' },
-    { label: isKo ? '추천인' : 'Referral', href: '#' },
-    { label: isKo ? 'OTC 거래' : 'OTC Trading', href: '#' },
-    { label: isKo ? '과거 시세 데이터' : 'Historical Data', href: '#' },
-    { label: isKo ? '준비금 증명' : 'Proof of Reserves', href: '#' },
+    { label: t('footer.affiliate'), href: '#' },
+    { label: t('footer.referral'), href: '#' },
+    { label: t('footer.otcTrading'), href: '#' },
+    { label: t('footer.historicalData'), href: '#' },
+    { label: t('footer.proofOfReserves'), href: '#' },
   ];
 
   const supportLinks = [
-    { label: isKo ? '24/7 채팅 상담' : '24/7 Chat', to: '/support' },
-    { label: isKo ? '고객센터' : 'Support Center', to: '/support' },
-    { label: isKo ? '수수료 안내' : 'Fees', to: '/fee' },
-    { label: isKo ? 'API' : 'APIs', href: '#' },
-    { label: isKo ? '민원 접수' : 'Complaints', href: '#' },
+    { label: t('footer.chat247'), to: '/support' },
+    { label: t('footer.supportCenter'), to: '/support' },
+    { label: t('footer.fee'), to: '/fee' },
+    { label: t('footer.api'), href: '#' },
+    { label: t('footer.complaints'), href: '#' },
   ];
 
   return (
@@ -115,7 +114,6 @@ export default function Footer() {
 
         {/* ===== MOBILE FOOTER (< md) ===== */}
         <div className="md:hidden">
-          {/* Social icons */}
           <div className="flex items-center gap-2 flex-wrap mb-6">
             {socialLinks.map(({ icon: Icon, label }) => (
               <a key={label} href="#" className="w-8 h-8 rounded-full bg-exchange-hover/60 flex items-center justify-center text-exchange-text-secondary hover:text-exchange-text transition-colors">
@@ -124,42 +122,39 @@ export default function Footer() {
             ))}
           </div>
 
-          {/* Accordion-style columns - 2 cols */}
           <div className="grid grid-cols-2 gap-x-6 gap-y-5 mb-6">
             <div>
-              <h4 className="text-xs font-semibold text-exchange-text mb-2.5">{isKo ? '회사 소개' : 'About Us'}</h4>
+              <h4 className="text-xs font-semibold text-exchange-text mb-2.5">{t('footer.aboutUs')}</h4>
               <div className="flex flex-col gap-2">
                 {aboutLinks.slice(0, 5).map((l, i) => <FooterLink key={i} {...l} />)}
               </div>
             </div>
             <div>
-              <h4 className="text-xs font-semibold text-exchange-text mb-2.5">{isKo ? '상품' : 'Products'}</h4>
+              <h4 className="text-xs font-semibold text-exchange-text mb-2.5">{t('footer.products')}</h4>
               <div className="flex flex-col gap-2">
                 {productLinks.map((l, i) => <FooterLink key={i} {...l} />)}
               </div>
             </div>
             <div>
-              <h4 className="text-xs font-semibold text-exchange-text mb-2.5">{isKo ? '코인 구매' : 'Buy Crypto'}</h4>
+              <h4 className="text-xs font-semibold text-exchange-text mb-2.5">{t('footer.buyCrypto')}</h4>
               <div className="flex flex-col gap-2">
                 {buyLinks.map((l, i) => <FooterLink key={i} {...l} />)}
               </div>
             </div>
             <div>
-              <h4 className="text-xs font-semibold text-exchange-text mb-2.5">{isKo ? '고객지원' : 'Support'}</h4>
+              <h4 className="text-xs font-semibold text-exchange-text mb-2.5">{t('footer.support')}</h4>
               <div className="flex flex-col gap-2">
                 {supportLinks.map((l, i) => <FooterLink key={i} {...l} />)}
               </div>
             </div>
           </div>
 
-          {/* Bottom controls */}
           <div className="flex items-center gap-3 mb-4 pt-4 border-t border-exchange-border/50">
             <LangSwitch />
             <span className="text-[10px] text-exchange-text-third">KRW / USD</span>
             <span className="ml-auto"><Moon size={12} className="text-exchange-text-third" /></span>
           </div>
 
-          {/* Copyright */}
           <div className="flex items-center gap-2">
             <QuantaLogo size={18} showText={false} />
             <p className="text-[10px] text-exchange-text-third leading-relaxed">
@@ -172,11 +167,8 @@ export default function Footer() {
         <div className="hidden md:block">
           <div className="grid grid-cols-12 gap-6 lg:gap-10">
 
-            {/* Community column */}
             <div className="col-span-2">
-              <h4 className="text-sm font-bold text-exchange-text mb-5">
-                {isKo ? '커뮤니티' : 'Community'}
-              </h4>
+              <h4 className="text-sm font-bold text-exchange-text mb-5">{t('footer.community')}</h4>
               <div className="grid grid-cols-5 gap-2 mb-6">
                 {socialLinks.map(({ icon: Icon, label }) => (
                   <a key={label} href="#" target="_blank" rel="noopener noreferrer"
@@ -185,7 +177,6 @@ export default function Footer() {
                   </a>
                 ))}
               </div>
-              {/* Language & Theme */}
               <div className="flex flex-col gap-2.5">
                 <div className="flex items-center gap-2">
                   <Globe size={13} className="text-exchange-text-third" />
@@ -197,42 +188,39 @@ export default function Footer() {
                 </div>
                 <div className="flex items-center gap-2 text-xs text-exchange-text-secondary">
                   <Moon size={13} className="text-exchange-text-third" />
-                  <span>{isKo ? '다크모드' : 'Dark Mode'}</span>
+                  <span>{t('footer.darkMode')}</span>
                 </div>
               </div>
             </div>
 
-            {/* About Us */}
             <div className="col-span-2">
-              <h4 className="text-sm font-bold text-exchange-text mb-5">{isKo ? '회사 소개' : 'About Us'}</h4>
+              <h4 className="text-sm font-bold text-exchange-text mb-5">{t('footer.aboutUs')}</h4>
               <div className="flex flex-col gap-[11px]">
                 {aboutLinks.map((l, i) => <FooterLink key={i} {...l} />)}
               </div>
             </div>
 
-            {/* Products */}
             <div className="col-span-2">
-              <h4 className="text-sm font-bold text-exchange-text mb-5">{isKo ? '상품' : 'Products'}</h4>
+              <h4 className="text-sm font-bold text-exchange-text mb-5">{t('footer.products')}</h4>
               <div className="flex flex-col gap-[11px]">
                 {productLinks.map((l, i) => <FooterLink key={i} {...l} />)}
               </div>
             </div>
 
-            {/* Buy Crypto + Service */}
             <div className="col-span-3">
               <div className="grid grid-cols-2 gap-6">
                 <div>
-                  <h4 className="text-sm font-bold text-exchange-text mb-5">{isKo ? '코인 구매' : 'Buy Crypto'}</h4>
+                  <h4 className="text-sm font-bold text-exchange-text mb-5">{t('footer.buyCrypto')}</h4>
                   <div className="flex flex-col gap-[11px]">
                     {buyLinks.map((l, i) => <FooterLink key={i} {...l} />)}
                   </div>
-                  <h4 className="text-sm font-bold text-exchange-text mt-6 mb-5">{isKo ? '서비스' : 'Service'}</h4>
+                  <h4 className="text-sm font-bold text-exchange-text mt-6 mb-5">{t('footer.service')}</h4>
                   <div className="flex flex-col gap-[11px]">
                     {serviceLinks.map((l, i) => <FooterLink key={i} {...l} />)}
                   </div>
                 </div>
                 <div>
-                  <h4 className="text-sm font-bold text-exchange-text mb-5">{isKo ? '고객지원' : 'Support'}</h4>
+                  <h4 className="text-sm font-bold text-exchange-text mb-5">{t('footer.support')}</h4>
                   <div className="flex flex-col gap-[11px]">
                     {supportLinks.map((l, i) => <FooterLink key={i} {...l} />)}
                   </div>
@@ -240,7 +228,6 @@ export default function Footer() {
               </div>
             </div>
 
-            {/* QR Placeholder */}
             <div className="col-span-1 flex flex-col items-center">
               <div className="w-16 h-16 lg:w-[72px] lg:h-[72px] bg-exchange-hover/40 rounded-lg flex items-center justify-center mb-2">
                 <svg width="36" height="36" viewBox="0 0 40 40" fill="none" className="text-exchange-text-third">
@@ -254,11 +241,10 @@ export default function Footer() {
                   <rect x="30" y="30" width="6" height="6" rx="1" fill="currentColor" />
                 </svg>
               </div>
-              <span className="text-[10px] text-exchange-text-third text-center leading-tight">{isKo ? '앱 다운로드' : 'Download App'}</span>
+              <span className="text-[10px] text-exchange-text-third text-center leading-tight">{t('footer.downloadApp')}</span>
             </div>
           </div>
 
-          {/* Bottom bar */}
           <div className="border-t border-exchange-border mt-10 pt-6 flex items-center justify-between gap-6">
             <div className="flex items-center gap-2.5">
               <QuantaLogo size={20} showText={true} />
@@ -266,9 +252,7 @@ export default function Footer() {
             <p className="text-[11px] text-exchange-text-third text-right leading-relaxed">
               &copy; 2026 {t('footer.copyright')}
               <span className="mx-1.5 text-exchange-border">|</span>
-              {isKo
-                ? 'QuantaEX는 가상자산 거래 플랫폼이며, 투자 조언을 제공하지 않습니다.'
-                : 'QuantaEX is a digital asset trading platform and does not provide investment advice.'}
+              {t('footer.disclaimer')}
             </p>
           </div>
         </div>

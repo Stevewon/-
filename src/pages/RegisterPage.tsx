@@ -92,7 +92,7 @@ export default function RegisterPage() {
               <label className="text-sm text-exchange-text-secondary mb-1.5 block font-medium">{t('auth.password')}</label>
               <div className="relative">
                 <input type={showPw ? 'text' : 'password'} value={password} onChange={(e) => setPassword(e.target.value)}
-                  className="input-field pr-10" placeholder="6자 이상" required autoComplete="new-password" />
+                  className="input-field pr-10" placeholder={t('auth.passwordMin6')} required autoComplete="new-password" />
                 <button type="button" onClick={() => setShowPw(!showPw)}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-exchange-text-third hover:text-exchange-text transition-colors">
                   {showPw ? <EyeOff size={16} /> : <Eye size={16} />}

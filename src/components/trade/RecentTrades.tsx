@@ -39,7 +39,7 @@ export default function RecentTrades() {
       <div className="flex-1 overflow-y-auto">
         {recentTrades.length === 0 ? (
           <div className="p-4 text-center text-exchange-text-third text-xs">
-            체결 내역이 없습니다
+            {t('trade.noTrades')}
           </div>
         ) : (
           recentTrades.slice(0, 30).map((trade, i) => {

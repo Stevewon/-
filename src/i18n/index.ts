@@ -3,7 +3,7 @@ import ko from './ko';
 import en from './en';
 
 type Lang = 'ko' | 'en';
-type TranslationKey = keyof typeof ko;
+type TranslationKey = keyof typeof en;
 
 const translations: Record<Lang, Record<string, string>> = { ko, en };
 
@@ -14,8 +14,8 @@ interface I18nStore {
 }
 
 const getSavedLang = (): Lang => {
-  if (typeof window === 'undefined') return 'ko';
-  return (localStorage.getItem('quantaex_lang') as Lang) || 'ko';
+  if (typeof window === 'undefined') return 'en';
+  return (localStorage.getItem('quantaex_lang') as Lang) || 'en';
 };
 
 export const useI18n = create<I18nStore>((set, get) => ({
@@ -27,7 +27,7 @@ export const useI18n = create<I18nStore>((set, get) => ({
   },
   t: (key: string, params?: Record<string, string | number>) => {
     const { lang } = get();
-    let text = translations[lang]?.[key] || translations['ko']?.[key] || key;
+    let text = translations[lang]?.[key] || translations['en']?.[key] || key;
     if (params) {
       Object.entries(params).forEach(([k, v]) => {
         text = text.replace(`{${k}}`, String(v));

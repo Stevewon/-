@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import useStore from '../store/useStore';
 import { useI18n } from '../i18n';
-import { formatPrice, formatAmount, timeAgo, formatPercent } from '../utils/format';
+import { formatPrice, formatAmount, timeAgo } from '../utils/format';
 import CoinIcon from '../components/common/CoinIcon';
 import SkeletonLoader from '../components/common/SkeletonLoader';
 import {
@@ -119,12 +119,12 @@ export default function OrderHistoryPage() {
           </div>
           <div>
             <h1 className="text-xl font-bold text-exchange-text">
-              {tab === 'orders' ? '주문 내역' : '체결 내역'}
+              {tab === 'orders' ? t('orderHistory.title') : t('orderHistory.tradeTitle')}
             </h1>
             <p className="text-xs text-exchange-text-secondary">
               {tab === 'orders'
-                ? `총 ${filteredOrders.length}건의 주문`
-                : `총 ${filteredTrades.length}건의 체결`}
+                ? t('orderHistory.total', { count: String(filteredOrders.length) })
+                : t('orderHistory.totalTrades', { count: String(filteredTrades.length) })}
             </p>
           </div>
         </div>
@@ -141,7 +141,7 @@ export default function OrderHistoryPage() {
           }`}
         >
           <ClipboardList size={16} />
-          주문 내역
+          {t('orderHistory.title')}
           <span className="text-[10px] bg-exchange-hover/60 px-1.5 py-0.5 rounded-full">
             {allOrders.length}
           </span>
@@ -155,7 +155,7 @@ export default function OrderHistoryPage() {
           }`}
         >
           <ArrowLeftRight size={16} />
-          체결 내역
+          {t('orderHistory.tradeTitle')}
           <span className="text-[10px] bg-exchange-hover/60 px-1.5 py-0.5 rounded-full">
             {(tradeHistory as any[]).length}
           </span>
@@ -176,7 +176,7 @@ export default function OrderHistoryPage() {
                     : 'text-exchange-text-secondary hover:text-exchange-text'
                 }`}
               >
-                {s === 'all' ? '전체' : statusLabel(s)}
+                {s === 'all' ? t('common.all') : statusLabel(s)}
               </button>
             ))}
           </div>
@@ -188,7 +188,7 @@ export default function OrderHistoryPage() {
             type="text"
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="코인 검색..."
+            placeholder={t('market.searchCoin')}
             className="input-field pl-9 text-xs h-8"
           />
         </div>
@@ -204,19 +204,19 @@ export default function OrderHistoryPage() {
           {/* Table Header */}
           <div className="flex items-center px-4 py-3 text-xs text-exchange-text-third font-medium border-b border-exchange-border bg-exchange-bg/50">
             <span className="w-[4%]"></span>
-            <span className="w-[14%]">거래쌍</span>
-            <span className="w-[8%]">유형</span>
-            <span className="w-[8%]">주문방식</span>
+            <span className="w-[14%]">{t('trade.pair')}</span>
+            <span className="w-[8%]">{t('trade.side')}</span>
+            <span className="w-[8%]">{t('trade.type')}</span>
             <button onClick={() => toggleSort('price')} className="w-[14%] text-right flex items-center justify-end gap-1 hover:text-exchange-text">
-              가격 <ArrowUpDown size={10} />
+              {t('trade.price')} <ArrowUpDown size={10} />
             </button>
             <button onClick={() => toggleSort('amount')} className="w-[14%] text-right flex items-center justify-end gap-1 hover:text-exchange-text">
-              수량 <ArrowUpDown size={10} />
+              {t('trade.amount')} <ArrowUpDown size={10} />
             </button>
-            <span className="w-[10%] text-right">체결률</span>
-            <span className="w-[10%] text-center">상태</span>
+            <span className="w-[10%] text-right">{t('trade.filled')}</span>
+            <span className="w-[10%] text-center">{t('admin.status')}</span>
             <button onClick={() => toggleSort('time')} className="w-[14%] text-right flex items-center justify-end gap-1 hover:text-exchange-text">
-              시간 <ArrowUpDown size={10} />
+              {t('trade.time')} <ArrowUpDown size={10} />
             </button>
             <span className="w-[4%]"></span>
           </div>
@@ -224,7 +224,7 @@ export default function OrderHistoryPage() {
           {filteredOrders.length === 0 ? (
             <div className="py-16 text-center">
               <ClipboardList size={40} className="mx-auto text-exchange-text-third mb-3 opacity-40" />
-              <p className="text-exchange-text-secondary text-sm">주문 내역이 없습니다</p>
+              <p className="text-exchange-text-secondary text-sm">{t('orderHistory.noOrders')}</p>
             </div>
           ) : (
             filteredOrders.map((order) => {
@@ -245,10 +245,10 @@ export default function OrderHistoryPage() {
                       <span className="text-exchange-text font-medium">{order.base_coin}/{order.quote_coin}</span>
                     </span>
                     <span className={`w-[8%] font-semibold ${order.side === 'buy' ? 'text-exchange-buy' : 'text-exchange-sell'}`}>
-                      {order.side === 'buy' ? '매수' : '매도'}
+                      {order.side === 'buy' ? t('trade.buy') : t('trade.sell')}
                     </span>
                     <span className="w-[8%] text-exchange-text-secondary">
-                      {order.type === 'limit' ? '지정가' : '시장가'}
+                      {order.type === 'limit' ? t('trade.limit') : t('trade.market')}
                     </span>
                     <span className="w-[14%] text-right tabular-nums text-exchange-text">
                       {order.price ? formatPrice(order.price) : '-'}
@@ -273,7 +273,7 @@ export default function OrderHistoryPage() {
                         <span className="text-exchange-text-secondary">{statusLabel(order.status)}</span>
                       </span>
                     </span>
-                    <span className="w-[14%] text-right text-exchange-text-third">{timeAgo(order.created_at)}</span>
+                    <span className="w-[14%] text-right text-exchange-text-third">{timeAgo(order.created_at, t)}</span>
                     <span className="w-[4%]"></span>
                   </div>
 
@@ -282,19 +282,19 @@ export default function OrderHistoryPage() {
                     <div className="px-8 py-3 bg-exchange-bg/50 border-b border-exchange-border/30 text-xs">
                       <div className="grid grid-cols-4 gap-4">
                         <div>
-                          <span className="text-exchange-text-third">주문 ID</span>
+                          <span className="text-exchange-text-third">{t('orderHistory.orderId')}</span>
                           <p className="text-exchange-text font-mono text-[10px] mt-0.5">{order.id.slice(0, 16)}...</p>
                         </div>
                         <div>
-                          <span className="text-exchange-text-third">총액</span>
+                          <span className="text-exchange-text-third">{t('orderHistory.totalAmount')}</span>
                           <p className="text-exchange-text tabular-nums mt-0.5">{formatPrice(order.total || order.price * order.amount)}</p>
                         </div>
                         <div>
-                          <span className="text-exchange-text-third">체결 수량</span>
+                          <span className="text-exchange-text-third">{t('orderHistory.filledQty')}</span>
                           <p className="text-exchange-text tabular-nums mt-0.5">{formatAmount(order.filled)} / {formatAmount(order.amount)}</p>
                         </div>
                         <div>
-                          <span className="text-exchange-text-third">잔여 수량</span>
+                          <span className="text-exchange-text-third">{t('orderHistory.remainingQty')}</span>
                           <p className="text-exchange-text tabular-nums mt-0.5">{formatAmount(order.remaining || order.amount - order.filled)}</p>
                         </div>
                       </div>
@@ -309,19 +309,19 @@ export default function OrderHistoryPage() {
         /* Trade History Tab */
         <div className="bg-exchange-card rounded-xl border border-exchange-border overflow-hidden">
           <div className="flex items-center px-4 py-3 text-xs text-exchange-text-third font-medium border-b border-exchange-border bg-exchange-bg/50">
-            <span className="w-[15%]">거래쌍</span>
-            <span className="w-[10%]">유형</span>
-            <span className="w-[18%] text-right">가격</span>
-            <span className="w-[15%] text-right">수량</span>
-            <span className="w-[18%] text-right">총액</span>
-            <span className="w-[12%] text-right">수수료</span>
-            <span className="w-[12%] text-right">시간</span>
+            <span className="w-[15%]">{t('trade.pair')}</span>
+            <span className="w-[10%]">{t('trade.side')}</span>
+            <span className="w-[18%] text-right">{t('trade.price')}</span>
+            <span className="w-[15%] text-right">{t('trade.amount')}</span>
+            <span className="w-[18%] text-right">{t('orderHistory.totalAmount')}</span>
+            <span className="w-[12%] text-right">{t('trade.fee')}</span>
+            <span className="w-[12%] text-right">{t('trade.time')}</span>
           </div>
 
           {filteredTrades.length === 0 ? (
             <div className="py-16 text-center">
               <ArrowLeftRight size={40} className="mx-auto text-exchange-text-third mb-3 opacity-40" />
-              <p className="text-exchange-text-secondary text-sm">체결 내역이 없습니다</p>
+              <p className="text-exchange-text-secondary text-sm">{t('orderHistory.noTrades')}</p>
             </div>
           ) : (
             filteredTrades.map((trade: any, i: number) => (
@@ -333,13 +333,13 @@ export default function OrderHistoryPage() {
                   </span>
                 </span>
                 <span className={`w-[10%] font-semibold ${trade.side === 'buy' ? 'text-exchange-buy' : 'text-exchange-sell'}`}>
-                  {trade.side === 'buy' ? '매수' : '매도'}
+                  {trade.side === 'buy' ? t('trade.buy') : t('trade.sell')}
                 </span>
                 <span className="w-[18%] text-right tabular-nums text-exchange-text">{formatPrice(trade.price)}</span>
                 <span className="w-[15%] text-right tabular-nums text-exchange-text">{formatAmount(trade.amount)}</span>
                 <span className="w-[18%] text-right tabular-nums text-exchange-text">{formatPrice(trade.total || trade.price * trade.amount)}</span>
                 <span className="w-[12%] text-right tabular-nums text-exchange-text-third">{trade.fee ? formatAmount(trade.fee) : '-'}</span>
-                <span className="w-[12%] text-right text-exchange-text-third">{timeAgo(trade.created_at || trade.time)}</span>
+                <span className="w-[12%] text-right text-exchange-text-third">{timeAgo(trade.created_at || trade.time, t)}</span>
               </div>
             ))
           )}

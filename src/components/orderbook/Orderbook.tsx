@@ -79,7 +79,7 @@ export default function Orderbook({ onPriceClick }: Props) {
       <div className="flex-1 overflow-hidden flex flex-col justify-end">
         {asks.length === 0 ? (
           <div className="flex-1 flex items-center justify-center text-exchange-text-third text-[10px]">
-            매도 주문 없음
+            {t('trade.noAsks')}
           </div>
         ) : (
           asks.map((ask, i) => {
@@ -117,7 +117,7 @@ export default function Orderbook({ onPriceClick }: Props) {
       <div className="flex-1 overflow-hidden">
         {bids.length === 0 ? (
           <div className="flex-1 flex items-center justify-center text-exchange-text-third text-[10px] h-full">
-            매수 주문 없음
+            {t('trade.noBids')}
           </div>
         ) : (
           bids.map((bid, i) => {
