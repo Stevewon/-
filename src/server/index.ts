@@ -26,6 +26,60 @@ const app = new Hono<AppEnv>();
 // CORS for API routes
 app.use('/api/*', cors());
 
+// ============================================================================
+// Self-scheduling price-alert check
+// Runs (at most) once per SELF_SCHEDULE_INTERVAL_MS via waitUntil when an
+// incoming API request detects that the last run is stale. This works even on
+// Cloudflare Pages Functions (which doesn't support Cron Triggers) because
+// each incoming request gets the chance to kick off a background check.
+// ============================================================================
+const SELF_SCHEDULE_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+let lastSelfScheduleAttempt = 0;
+
+app.use('/api/*', async (c, next) => {
+  // Fast path: skip the DB lookup on every request by using an in-memory
+  // throttle first (60s). Multiple isolates may race; the DB check is the
+  // authoritative guard.
+  const now = Date.now();
+  if (now - lastSelfScheduleAttempt > 60_000) {
+    lastSelfScheduleAttempt = now;
+
+    // Fire-and-forget via ctx.waitUntil so it never blocks the response
+    const ctx = c.executionCtx as any;
+    if (ctx && typeof ctx.waitUntil === 'function') {
+      ctx.waitUntil(
+        (async () => {
+          try {
+            const row = await c.env.DB.prepare(
+              "SELECT value FROM system_state WHERE key = 'price_alert_last_run'"
+            ).first<{ value: string }>();
+            const last = row ? parseInt(row.value || '0', 10) : 0;
+            if (now - last < SELF_SCHEDULE_INTERVAL_MS) return;
+
+            // Optimistic lock: only proceed if we successfully move the
+            // marker forward. `OR IGNORE` ensures concurrent isolates race
+            // safely.
+            const upd = await c.env.DB.prepare(
+              `UPDATE system_state SET value = ?, updated_at = CURRENT_TIMESTAMP
+               WHERE key = 'price_alert_last_run' AND CAST(value AS INTEGER) = ?`
+            ).bind(String(now), last).run();
+
+            // If no row was updated we lost the race
+            if (!upd.meta || upd.meta.changes === 0) return;
+
+            const result = await checkPriceAlerts(c.env);
+            console.log('[self-scheduler] price-alert check:', result);
+          } catch (e) {
+            console.error('[self-scheduler] failed:', e);
+          }
+        })()
+      );
+    }
+  }
+
+  await next();
+});
+
 // Routes
 app.route('/api/auth', authRoutes);
 app.route('/api/market', marketRoutes);
