@@ -6,6 +6,7 @@ import QuantaLogo from '../common/QuantaLogo';
 import LangSwitch from '../common/LangSwitch';
 import TickerBar from '../common/TickerBar';
 import Footer from '../common/Footer';
+import NotificationBell from '../common/NotificationBell';
 
 export default function Layout() {
   const { user, logout } = useStore();
@@ -62,6 +63,7 @@ export default function Layout() {
 
         <div className="flex items-center gap-2">
           <LangSwitch />
+          {user && <NotificationBell />}
 
           {user ? (
             <div className="flex items-center gap-2">

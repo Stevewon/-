@@ -1,5 +1,6 @@
 import db from '../database.js';
 import { v4 as uuidv4 } from 'uuid';
+import { createNotification } from './notifications.js';
 
 class PriceSimulator {
   constructor(io) {
@@ -67,8 +68,63 @@ class PriceSimulator {
       if (market.quote_coin === 'USDT') {
         db.prepare('UPDATE coins SET price_usd = ?, change_24h = ? WHERE symbol = ?')
           .run(newPrice, change24h, market.base_coin);
+
+        // Check price alerts for this symbol (USDT market only)
+        this._checkPriceAlerts(market.base_coin, newPrice);
       }
     });
+  }
+
+  /**
+   * Check armed price alerts for a given symbol and fire notifications.
+   * Deactivates the alert after triggering.
+   */
+  _checkPriceAlerts(symbol, price) {
+    try {
+      const alerts = db.prepare(`
+        SELECT * FROM price_alerts
+        WHERE is_active = 1 AND symbol = ?
+      `).all(symbol);
+
+      if (alerts.length === 0) return;
+
+      for (const a of alerts) {
+        const hit =
+          (a.direction === 'above' && price >= a.target_price) ||
+          (a.direction === 'below' && price <= a.target_price);
+
+        if (hit) {
+          // Disarm & record trigger time
+          db.prepare(`
+            UPDATE price_alerts
+            SET is_active = 0, triggered_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+          `).run(a.id);
+
+          // Best-effort notification (don't throw)
+          try {
+            const dirLabel = a.direction === 'above' ? '≥' : '≤';
+            createNotification(a.user_id, {
+              type: 'price',
+              title: `${symbol} ${a.direction === 'above' ? 'reached' : 'dropped to'} ${a.target_price}`,
+              message: `Current price: ${price.toFixed(price > 1 ? 2 : 6)} USDT (target ${dirLabel} ${a.target_price})`,
+              data: {
+                symbol: `${symbol}-${a.quote_coin || 'USDT'}`,
+                price,
+                target: a.target_price,
+                direction: a.direction,
+                alert_id: a.id,
+              },
+            });
+          } catch (e) {
+            console.error('[priceAlert] notify failed:', e.message);
+          }
+        }
+      }
+    } catch (e) {
+      // Swallow errors so the price tick loop never breaks
+      console.error('[priceAlert] check failed:', e.message);
+    }
   }
 
   _updateAllCandles() {

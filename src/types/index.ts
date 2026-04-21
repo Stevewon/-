@@ -6,7 +6,37 @@ export interface User {
   kyc_status: string;
   kyc_name?: string;
   kyc_phone?: string;
+  kyc_address?: string;
+  kyc_submitted_at?: string;
+  kyc_reviewed_at?: string;
+  two_factor_enabled?: number;
+  avatar_url?: string;
   created_at: string;
+}
+
+export interface LoginHistoryEntry {
+  id: string;
+  user_id: string;
+  ip_address: string | null;
+  user_agent: string | null;
+  device: string | null;
+  location: string | null;
+  status: 'success' | 'failed';
+  reason: string | null;
+  created_at: string;
+}
+
+export interface ApiKey {
+  id: string;
+  user_id: string;
+  label: string;
+  api_key: string;
+  permissions: string; // comma-separated: read,trade,withdraw
+  ip_whitelist: string | null;
+  is_active: number;
+  last_used_at: string | null;
+  created_at: string;
+  expires_at: string | null;
 }
 
 export interface Coin {

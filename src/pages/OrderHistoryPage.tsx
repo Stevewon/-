@@ -6,8 +6,9 @@ import { formatPrice, formatAmount, timeAgo } from '../utils/format';
 import CoinIcon from '../components/common/CoinIcon';
 import SkeletonLoader from '../components/common/SkeletonLoader';
 import {
-  ClipboardList, ArrowLeftRight, Filter, ChevronDown, ChevronUp,
+  ClipboardList, ArrowLeftRight, ChevronDown, ChevronUp,
   Clock, CheckCircle2, XCircle, AlertCircle, ArrowUpDown, Search,
+  Download, Calendar, X,
 } from 'lucide-react';
 
 type Tab = 'orders' | 'trades';
@@ -23,6 +24,9 @@ export default function OrderHistoryPage() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [loading, setLoading] = useState(true);
   const [expandedOrder, setExpandedOrder] = useState<string | null>(null);
+  const [dateFrom, setDateFrom] = useState<string>('');  // YYYY-MM-DD
+  const [dateTo, setDateTo] = useState<string>('');
+  const [sideFilter, setSideFilter] = useState<'all' | 'buy' | 'sell'>('all');
 
   useEffect(() => {
     if (!user) return;
@@ -46,12 +50,22 @@ export default function OrderHistoryPage() {
 
   const allOrders = [...openOrders, ...orderHistory];
 
+  // Date range filter helper
+  const fromTs = dateFrom ? new Date(dateFrom + 'T00:00:00').getTime() : 0;
+  const toTs   = dateTo   ? new Date(dateTo   + 'T23:59:59').getTime() : Infinity;
+  const inRange = (ts: any) => {
+    const t = new Date(ts || 0).getTime();
+    return t >= fromTs && t <= toTs;
+  };
+
   const filteredOrders = allOrders
     .filter(o => {
       if (statusFilter === 'all') return true;
       if (statusFilter === 'open') return o.status === 'open' || o.status === 'partial';
       return o.status === statusFilter;
     })
+    .filter(o => sideFilter === 'all' ? true : o.side === sideFilter)
+    .filter(o => inRange(o.created_at))
     .filter(o => {
       if (!search) return true;
       const s = search.toUpperCase();
@@ -66,6 +80,8 @@ export default function OrderHistoryPage() {
     });
 
   const filteredTrades = (tradeHistory as any[])
+    .filter(tr => sideFilter === 'all' ? true : tr.side === sideFilter)
+    .filter(tr => inRange(tr.created_at || tr.time))
     .filter(tr => {
       if (!search) return true;
       const s = search.toUpperCase();
@@ -75,6 +91,72 @@ export default function OrderHistoryPage() {
       const dir = sortDir === 'desc' ? -1 : 1;
       return dir * (new Date(b.created_at || b.time || 0).getTime() - new Date(a.created_at || a.time || 0).getTime());
     });
+
+  const hasDateFilter = !!dateFrom || !!dateTo;
+
+  // Quick date presets
+  const applyPreset = (days: number) => {
+    const to = new Date();
+    const from = new Date();
+    from.setDate(from.getDate() - days);
+    setDateFrom(from.toISOString().slice(0, 10));
+    setDateTo(to.toISOString().slice(0, 10));
+  };
+
+  const clearDateFilter = () => {
+    setDateFrom('');
+    setDateTo('');
+  };
+
+  // CSV export helper
+  const exportCSV = () => {
+    const esc = (v: any) => {
+      const s = v == null ? '' : String(v);
+      if (/[,"\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+      return s;
+    };
+
+    let csv = '';
+    let filename = '';
+
+    if (tab === 'orders') {
+      csv = [
+        'Order ID,Market,Side,Type,Price,Amount,Filled,Total,Status,Time',
+        ...filteredOrders.map(o => [
+          o.id, `${o.base_coin}/${o.quote_coin}`, o.side, o.type,
+          o.price, o.amount, o.filled ?? 0,
+          (o.total ?? (o.price * o.amount)),
+          o.status,
+          o.created_at,
+        ].map(esc).join(',')),
+      ].join('\n');
+      filename = `orders_${new Date().toISOString().slice(0, 10)}.csv`;
+    } else {
+      csv = [
+        'Trade ID,Market,Side,Price,Amount,Total,Fee,Time',
+        ...filteredTrades.map((tr: any) => [
+          tr.id || '',
+          `${tr.base_coin || tr.market_symbol || '-'}/${tr.quote_coin || 'USDT'}`,
+          tr.side,
+          tr.price, tr.amount,
+          tr.total ?? (tr.price * tr.amount),
+          tr.fee ?? 0,
+          tr.created_at || tr.time,
+        ].map(esc).join(',')),
+      ].join('\n');
+      filename = `trades_${new Date().toISOString().slice(0, 10)}.csv`;
+    }
+
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
 
   const toggleSort = (field: string) => {
     if (sortField === field) setSortDir(d => d === 'desc' ? 'asc' : 'desc');
@@ -162,8 +244,8 @@ export default function OrderHistoryPage() {
         </button>
       </div>
 
-      {/* Filters */}
-      <div className="flex flex-wrap items-center gap-3 mb-4">
+      {/* Filters Row 1 */}
+      <div className="flex flex-wrap items-center gap-3 mb-3">
         {tab === 'orders' && (
           <div className="flex items-center gap-1 bg-exchange-card rounded-lg border border-exchange-border p-1">
             {(['all', 'open', 'filled', 'cancelled', 'partial'] as StatusFilter[]).map(s => (
@@ -182,7 +264,26 @@ export default function OrderHistoryPage() {
           </div>
         )}
 
-        <div className="relative flex-1 min-w-[200px] max-w-xs">
+        {/* Side filter */}
+        <div className="flex items-center gap-1 bg-exchange-card rounded-lg border border-exchange-border p-1">
+          {(['all', 'buy', 'sell'] as const).map(s => (
+            <button
+              key={s}
+              onClick={() => setSideFilter(s)}
+              className={`px-3 py-1 text-xs rounded-md transition-colors ${
+                sideFilter === s
+                  ? s === 'buy'  ? 'bg-exchange-buy/10 text-exchange-buy'
+                  : s === 'sell' ? 'bg-exchange-sell/10 text-exchange-sell'
+                  :                'bg-exchange-hover text-exchange-yellow'
+                  : 'text-exchange-text-secondary hover:text-exchange-text'
+              }`}
+            >
+              {s === 'all' ? t('common.all') : s === 'buy' ? t('trade.buy') : t('trade.sell')}
+            </button>
+          ))}
+        </div>
+
+        <div className="relative flex-1 min-w-[160px] max-w-xs">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-exchange-text-third" />
           <input
             type="text"
@@ -191,6 +292,58 @@ export default function OrderHistoryPage() {
             placeholder={t('market.searchCoin')}
             className="input-field pl-9 text-xs h-8"
           />
+        </div>
+
+        <button
+          onClick={exportCSV}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-exchange-border text-exchange-text-secondary hover:text-exchange-yellow hover:border-exchange-yellow/40 transition-colors ml-auto"
+        >
+          <Download size={13} />
+          {t('orderHistory.exportCSV')}
+        </button>
+      </div>
+
+      {/* Filters Row 2 - Date range */}
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        <div className="flex items-center gap-2 bg-exchange-card rounded-lg border border-exchange-border px-3 py-1.5">
+          <Calendar size={13} className="text-exchange-text-third" />
+          <input
+            type="date"
+            value={dateFrom}
+            onChange={e => setDateFrom(e.target.value)}
+            className="bg-transparent text-xs text-exchange-text outline-none tabular-nums"
+            aria-label="From"
+          />
+          <span className="text-exchange-text-third text-xs">→</span>
+          <input
+            type="date"
+            value={dateTo}
+            onChange={e => setDateTo(e.target.value)}
+            className="bg-transparent text-xs text-exchange-text outline-none tabular-nums"
+            aria-label="To"
+          />
+          {hasDateFilter && (
+            <button onClick={clearDateFilter} className="text-exchange-text-third hover:text-exchange-sell" aria-label="Clear">
+              <X size={12} />
+            </button>
+          )}
+        </div>
+
+        <div className="flex items-center gap-1">
+          {[
+            { label: t('orderHistory.today'), days: 0 },
+            { label: t('orderHistory.last7'), days: 7 },
+            { label: t('orderHistory.last30'), days: 30 },
+            { label: t('orderHistory.last90'), days: 90 },
+          ].map(({ label, days }) => (
+            <button
+              key={label}
+              onClick={() => applyPreset(days)}
+              className="px-2.5 py-1 text-[11px] rounded-md border border-exchange-border text-exchange-text-secondary hover:text-exchange-yellow hover:border-exchange-yellow/40 transition-colors"
+            >
+              {label}
+            </button>
+          ))}
         </div>
       </div>
 

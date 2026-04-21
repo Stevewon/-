@@ -7,6 +7,7 @@ interface ExchangeStore {
   user: User | null;
   token: string | null;
   setAuth: (user: User, token: string) => void;
+  setUser: (user: User) => void;
   logout: () => void;
   loadAuth: () => void;
 
@@ -50,6 +51,10 @@ const useStore = create<ExchangeStore>((set, get) => ({
     localStorage.setItem('token', token);
     localStorage.setItem('user', JSON.stringify(user));
     set({ user, token });
+  },
+  setUser: (user) => {
+    localStorage.setItem('user', JSON.stringify(user));
+    set({ user });
   },
   logout: () => {
     localStorage.removeItem('token');

@@ -5,12 +5,15 @@ import { useI18n } from '../i18n';
 import { formatPrice, formatAmount, timeAgo } from '../utils/format';
 import CoinIcon from '../components/common/CoinIcon';
 import SkeletonLoader from '../components/common/SkeletonLoader';
+import DepositModal from '../components/wallet/DepositModal';
+import WithdrawModal from '../components/wallet/WithdrawModal';
+import TransactionDetailModal from '../components/wallet/TransactionDetailModal';
 import api from '../utils/api';
 import {
   Wallet, Eye, EyeOff, RefreshCw, ArrowDownLeft, ArrowUpRight,
   TrendingUp, TrendingDown, Search, ChevronDown, ChevronUp,
   Clock, CheckCircle2, XCircle, AlertCircle, PieChart,
-  Copy, ExternalLink, History,
+  History,
 } from 'lucide-react';
 
 type Tab = 'assets' | 'deposits' | 'withdrawals';
@@ -27,13 +30,13 @@ export default function WalletPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Deposit/Withdraw panel state
-  const [showPanel, setShowPanel] = useState<'deposit' | 'withdraw' | null>(null);
-  const [selectedCoin, setSelectedCoin] = useState('USDT');
-  const [amount, setAmount] = useState('');
-  const [address, setAddress] = useState('');
-  const [panelMsg, setPanelMsg] = useState('');
-  const [panelLoading, setPanelLoading] = useState(false);
+  // Modals
+  const [depositOpen, setDepositOpen] = useState(false);
+  const [withdrawOpen, setWithdrawOpen] = useState(false);
+  const [selectedCoinForModal, setSelectedCoinForModal] = useState('USDT');
+  const [txModal, setTxModal] = useState<{ open: boolean; tx: any; type: 'deposit' | 'withdrawal' }>({
+    open: false, tx: null, type: 'deposit',
+  });
 
   // History
   const [deposits, setDeposits] = useState<any[]>([]);
@@ -46,7 +49,7 @@ export default function WalletPage() {
     fetchWallets().finally(() => setLoading(false));
   }, [user]);
 
-  useEffect(() => {
+  const refreshHistory = () => {
     if (!user) return;
     if (tab === 'deposits') {
       setHistoryLoading(true);
@@ -55,11 +58,14 @@ export default function WalletPage() {
       setHistoryLoading(true);
       api.get('/wallet/history/withdrawals').then(r => setWithdrawals(r.data)).finally(() => setHistoryLoading(false));
     }
-  }, [user, tab]);
+  };
+
+  useEffect(() => { refreshHistory(); }, [user, tab]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
     await fetchWallets();
+    refreshHistory();
     setRefreshing(false);
   };
 
@@ -104,53 +110,33 @@ export default function WalletPage() {
     return list;
   }, [wallets, hideZero, search, sortField, sortDir]);
 
-  const handleDeposit = async () => {
-    if (!amount || parseFloat(amount) <= 0) { setPanelMsg(t('wallet.invalidAmount')); return; }
-    setPanelLoading(true);
-    setPanelMsg('');
-    try {
-      await api.post('/wallet/deposit', { coin_symbol: selectedCoin, amount: parseFloat(amount) });
-      setPanelMsg(t('wallet.depositComplete'));
-      setAmount('');
-      fetchWallets();
-      setTimeout(() => { setPanelMsg(''); }, 2000);
-    } catch (err: any) {
-      setPanelMsg(err.response?.data?.error || t('wallet.depositFailed'));
-    } finally {
-      setPanelLoading(false);
-    }
+  const openDeposit = (coin: string = 'USDT') => {
+    setSelectedCoinForModal(coin);
+    setDepositOpen(true);
   };
-
-  const handleWithdraw = async () => {
-    if (!amount || parseFloat(amount) <= 0) { setPanelMsg(t('wallet.invalidAmount')); return; }
-    if (!address) { setPanelMsg(t('wallet.enterAddress')); return; }
-    setPanelLoading(true);
-    setPanelMsg('');
-    try {
-      await api.post('/wallet/withdraw', { coin_symbol: selectedCoin, amount: parseFloat(amount), address });
-      setPanelMsg(t('wallet.withdrawComplete'));
-      setAmount('');
-      setAddress('');
-      fetchWallets();
-      setTimeout(() => { setPanelMsg(''); }, 2000);
-    } catch (err: any) {
-      setPanelMsg(err.response?.data?.error || t('wallet.withdrawFailed'));
-    } finally {
-      setPanelLoading(false);
-    }
+  const openWithdraw = (coin: string = 'USDT') => {
+    setSelectedCoinForModal(coin);
+    setWithdrawOpen(true);
   };
 
   const statusIcon = (status: string) => {
     switch (status) {
       case 'completed': return <CheckCircle2 size={14} className="text-exchange-buy" />;
       case 'pending': return <Clock size={14} className="text-exchange-yellow" />;
-      case 'failed': return <XCircle size={14} className="text-exchange-sell" />;
+      case 'failed':
+      case 'rejected':
+        return <XCircle size={14} className="text-exchange-sell" />;
       default: return <AlertCircle size={14} className="text-exchange-text-third" />;
     }
   };
 
   const statusLabel = (status: string) => {
-    const map: Record<string, string> = { completed: t('status.completed'), pending: t('status.processing'), failed: t('status.failed') };
+    const map: Record<string, string> = {
+      completed: t('status.completed'),
+      pending: t('status.processing'),
+      failed: t('status.failed'),
+      rejected: t('status.rejected'),
+    };
     return map[status] || status;
   };
 
@@ -193,13 +179,13 @@ export default function WalletPage() {
             {/* Quick Actions */}
             <div className="flex gap-2 mt-4">
               <button
-                onClick={() => { setShowPanel('deposit'); setPanelMsg(''); }}
+                onClick={() => openDeposit()}
                 className="flex items-center gap-1.5 px-4 py-2 bg-exchange-buy/10 text-exchange-buy rounded-lg text-sm font-medium hover:bg-exchange-buy/20 transition-colors"
               >
                 <ArrowDownLeft size={16} /> {t('wallet.deposit')}
               </button>
               <button
-                onClick={() => { setShowPanel('withdraw'); setPanelMsg(''); }}
+                onClick={() => openWithdraw()}
                 className="flex items-center gap-1.5 px-4 py-2 bg-exchange-sell/10 text-exchange-sell rounded-lg text-sm font-medium hover:bg-exchange-sell/20 transition-colors"
               >
                 <ArrowUpRight size={16} /> {t('wallet.withdraw')}
@@ -260,97 +246,6 @@ export default function WalletPage() {
         </div>
       </div>
 
-      {/* Deposit/Withdraw Panel */}
-      {showPanel && (
-        <div className="bg-exchange-card rounded-xl border border-exchange-border p-5 mb-6">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-semibold text-exchange-text flex items-center gap-2">
-              {showPanel === 'deposit' ? <><ArrowDownLeft size={18} className="text-exchange-buy" /> {t('wallet.deposit')}</> : <><ArrowUpRight size={18} className="text-exchange-sell" /> {t('wallet.withdraw')}</>}
-            </h3>
-            <button onClick={() => setShowPanel(null)} className="text-exchange-text-third hover:text-exchange-text text-sm">{t('common.close')}</button>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Coin Select */}
-            <div>
-              <label className="text-xs text-exchange-text-third mb-1.5 block">{t('wallet.coinSelect')}</label>
-              <select
-                value={selectedCoin}
-                onChange={e => setSelectedCoin(e.target.value)}
-                className="input-field w-full text-sm"
-              >
-                {wallets.map(w => (
-                  <option key={w.coin_symbol} value={w.coin_symbol}>{w.coin_symbol} - {w.coin_name}</option>
-                ))}
-              </select>
-              <p className="text-[11px] text-exchange-text-third mt-1.5">
-                {t('wallet.balance')}: {formatPrice(wallets.find(w => w.coin_symbol === selectedCoin)?.available || 0)} {selectedCoin}
-              </p>
-            </div>
-
-            {/* Amount */}
-            <div>
-              <label className="text-xs text-exchange-text-third mb-1.5 block">
-                {showPanel === 'deposit' ? t('wallet.deposit') : t('wallet.withdraw')} {t('trade.amount')}
-              </label>
-              <input
-                type="number"
-                value={amount}
-                onChange={e => setAmount(e.target.value)}
-                placeholder="0.00"
-                step="any"
-                className="input-field w-full text-sm tabular-nums"
-              />
-              {showPanel === 'deposit' && (
-                <div className="flex gap-1 mt-1.5">
-                  {[100, 1000, 10000].map(v => (
-                    <button
-                      key={v}
-                      onClick={() => setAmount(String(v))}
-                      className="text-[10px] px-2 py-0.5 rounded bg-exchange-hover/50 text-exchange-text-secondary hover:text-exchange-text transition-colors"
-                    >
-                      {v.toLocaleString()}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Address (withdraw only) */}
-            {showPanel === 'withdraw' && (
-              <div className="md:col-span-2">
-                <label className="text-xs text-exchange-text-third mb-1.5 block">{t('wallet.withdrawAddress')}</label>
-                <input
-                  type="text"
-                  value={address}
-                  onChange={e => setAddress(e.target.value)}
-                  placeholder="0x..."
-                  className="input-field w-full text-sm font-mono"
-                />
-              </div>
-            )}
-          </div>
-
-          {/* Action */}
-          <div className="mt-4 flex items-center gap-3">
-            <button
-              onClick={showPanel === 'deposit' ? handleDeposit : handleWithdraw}
-              disabled={panelLoading}
-              className={`px-6 py-2.5 rounded-lg text-sm font-semibold transition-all disabled:opacity-50 ${
-                showPanel === 'deposit' ? 'btn-buy' : 'btn-sell'
-              }`}
-            >
-              {panelLoading ? t('wallet.processing') : (showPanel === 'deposit' ? t('wallet.submitDeposit') : t('wallet.submitWithdraw'))}
-            </button>
-            {panelMsg && (
-              <span className={`text-xs ${panelMsg.includes('completed') || panelMsg.includes('Complete') || panelMsg.includes('완료') ? 'text-exchange-buy' : 'text-exchange-sell'}`}>
-                {panelMsg}
-              </span>
-            )}
-          </div>
-        </div>
-      )}
-
       {/* Tabs */}
       <div className="flex items-center gap-1 mb-4 border-b border-exchange-border">
         {([
@@ -409,21 +304,22 @@ export default function WalletPage() {
               <div className="hidden md:block bg-exchange-card rounded-xl border border-exchange-border overflow-hidden">
                 <div className="flex items-center px-4 py-3 text-xs text-exchange-text-third font-medium border-b border-exchange-border bg-exchange-bg/50">
                   <span className="w-[22%]">{t('wallet.coin')}</span>
-                  <span className="w-[15%] text-right">{t('wallet.availableBalance')}</span>
-                  <span className="w-[15%] text-right">{t('wallet.frozenQty')}</span>
-                  <span className="w-[15%] text-right">{t('wallet.currentPrice')}</span>
+                  <span className="w-[13%] text-right">{t('wallet.availableBalance')}</span>
+                  <span className="w-[13%] text-right">{t('wallet.frozenQty')}</span>
+                  <span className="w-[13%] text-right">{t('wallet.currentPrice')}</span>
                   <button
                     onClick={() => { if (sortField === 'change') setSortDir(d => d === 'desc' ? 'asc' : 'desc'); else { setSortField('change'); setSortDir('desc'); }}}
-                    className="w-[13%] text-right flex items-center justify-end gap-1 hover:text-exchange-text"
+                    className="w-[12%] text-right flex items-center justify-end gap-1 hover:text-exchange-text"
                   >
                     {t('wallet.change24h')} {sortField === 'change' ? (sortDir === 'desc' ? <ChevronDown size={10} /> : <ChevronUp size={10} />) : null}
                   </button>
                   <button
                     onClick={() => { if (sortField === 'value') setSortDir(d => d === 'desc' ? 'asc' : 'desc'); else { setSortField('value'); setSortDir('desc'); }}}
-                    className="w-[20%] text-right flex items-center justify-end gap-1 hover:text-exchange-text"
+                    className="w-[15%] text-right flex items-center justify-end gap-1 hover:text-exchange-text"
                   >
                     {t('wallet.valuation')} {sortField === 'value' ? (sortDir === 'desc' ? <ChevronDown size={10} /> : <ChevronUp size={10} />) : null}
                   </button>
+                  <span className="w-[12%] text-right">{t('wallet.actions')}</span>
                 </div>
 
                 {filteredWallets.length === 0 ? (
@@ -434,7 +330,7 @@ export default function WalletPage() {
                     const change = w.change_24h || 0;
                     const isUp = change >= 0;
                     return (
-                      <div key={w.coin_symbol} className="flex items-center px-4 py-3 hover:bg-exchange-hover/30 border-b border-exchange-border/30 transition-colors">
+                      <div key={w.coin_symbol} className="flex items-center px-4 py-3 hover:bg-exchange-hover/30 border-b border-exchange-border/30 transition-colors group">
                         <div className="w-[22%] flex items-center gap-2.5">
                           <CoinIcon symbol={w.coin_symbol} size={28} />
                           <div>
@@ -442,22 +338,37 @@ export default function WalletPage() {
                             <span className="text-[11px] text-exchange-text-third ml-1.5">{w.coin_name}</span>
                           </div>
                         </div>
-                        <span className="w-[15%] text-right text-sm tabular-nums text-exchange-text">
+                        <span className="w-[13%] text-right text-sm tabular-nums text-exchange-text">
                           {hideBalance ? '••••' : formatAmount(w.available)}
                         </span>
-                        <span className="w-[15%] text-right text-sm tabular-nums text-exchange-text-secondary">
+                        <span className="w-[13%] text-right text-sm tabular-nums text-exchange-text-secondary">
                           {hideBalance ? '••••' : (w.locked > 0 ? formatAmount(w.locked) : '-')}
                         </span>
-                        <span className="w-[15%] text-right text-sm tabular-nums text-exchange-text">
+                        <span className="w-[13%] text-right text-sm tabular-nums text-exchange-text">
                           ${formatPrice(w.price_usd || 0)}
                         </span>
-                        <span className={`w-[13%] text-right text-xs tabular-nums flex items-center justify-end gap-0.5 ${isUp ? 'text-exchange-buy' : 'text-exchange-sell'}`}>
+                        <span className={`w-[12%] text-right text-xs tabular-nums flex items-center justify-end gap-0.5 ${isUp ? 'text-exchange-buy' : 'text-exchange-sell'}`}>
                           {isUp ? <TrendingUp size={11} /> : <TrendingDown size={11} />}
                           {change >= 0 ? '+' : ''}{change.toFixed(2)}%
                         </span>
-                        <span className="w-[20%] text-right text-sm tabular-nums font-medium text-exchange-text">
+                        <span className="w-[15%] text-right text-sm tabular-nums font-medium text-exchange-text">
                           {hideBalance ? '••••' : `$${formatPrice(value)}`}
                         </span>
+                        <div className="w-[12%] flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button
+                            onClick={() => openDeposit(w.coin_symbol)}
+                            className="text-[10px] px-2 py-1 rounded bg-exchange-buy/10 text-exchange-buy hover:bg-exchange-buy/20"
+                          >
+                            {t('wallet.deposit')}
+                          </button>
+                          <button
+                            onClick={() => openWithdraw(w.coin_symbol)}
+                            disabled={w.available <= 0}
+                            className="text-[10px] px-2 py-1 rounded bg-exchange-sell/10 text-exchange-sell hover:bg-exchange-sell/20 disabled:opacity-30 disabled:cursor-not-allowed"
+                          >
+                            {t('wallet.withdraw')}
+                          </button>
+                        </div>
                       </div>
                     );
                   })
@@ -484,7 +395,7 @@ export default function WalletPage() {
                           {change >= 0 ? '+' : ''}{change.toFixed(2)}%
                         </span>
                       </div>
-                      <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div className="grid grid-cols-2 gap-2 text-xs mb-2.5">
                         <div>
                           <span className="text-exchange-text-third">{t('wallet.holdings')}</span>
                           <p className="text-exchange-text tabular-nums font-medium">{hideBalance ? '••••' : formatAmount(w.available)}</p>
@@ -499,6 +410,21 @@ export default function WalletPage() {
                             <p className="text-exchange-text-secondary tabular-nums">{hideBalance ? '••••' : formatAmount(w.locked)}</p>
                           </div>
                         )}
+                      </div>
+                      <div className="flex gap-1.5 pt-2 border-t border-exchange-border/30">
+                        <button
+                          onClick={() => openDeposit(w.coin_symbol)}
+                          className="flex-1 text-[11px] py-1.5 rounded bg-exchange-buy/10 text-exchange-buy font-medium"
+                        >
+                          {t('wallet.deposit')}
+                        </button>
+                        <button
+                          onClick={() => openWithdraw(w.coin_symbol)}
+                          disabled={w.available <= 0}
+                          className="flex-1 text-[11px] py-1.5 rounded bg-exchange-sell/10 text-exchange-sell font-medium disabled:opacity-30"
+                        >
+                          {t('wallet.withdraw')}
+                        </button>
                       </div>
                     </div>
                   );
@@ -532,7 +458,11 @@ export default function WalletPage() {
                   </div>
                 ) : (
                   (tab === 'deposits' ? deposits : withdrawals).map((item: any) => (
-                    <div key={item.id} className="flex items-center px-4 py-3 text-xs hover:bg-exchange-hover/30 border-b border-exchange-border/30 transition-colors">
+                    <button
+                      key={item.id}
+                      onClick={() => setTxModal({ open: true, tx: item, type: tab === 'deposits' ? 'deposit' : 'withdrawal' })}
+                      className="w-full flex items-center px-4 py-3 text-xs hover:bg-exchange-hover/30 border-b border-exchange-border/30 transition-colors text-left"
+                    >
                       <span className="w-[15%] flex items-center gap-2">
                         <CoinIcon symbol={item.coin_symbol} size={20} />
                         <span className="text-exchange-text font-medium">{item.coin_symbol}</span>
@@ -551,7 +481,7 @@ export default function WalletPage() {
                         <span className="text-exchange-text-secondary">{statusLabel(item.status)}</span>
                       </span>
                       <span className="w-[15%] text-right text-exchange-text-third">{timeAgo(item.created_at, t)}</span>
-                    </div>
+                    </button>
                   ))
                 )}
               </div>
@@ -565,7 +495,11 @@ export default function WalletPage() {
                   </div>
                 ) : (
                   (tab === 'deposits' ? deposits : withdrawals).map((item: any) => (
-                    <div key={item.id} className="p-3 border-b border-exchange-border/30">
+                    <button
+                      key={item.id}
+                      onClick={() => setTxModal({ open: true, tx: item, type: tab === 'deposits' ? 'deposit' : 'withdrawal' })}
+                      className="w-full p-3 border-b border-exchange-border/30 text-left hover:bg-exchange-hover/20"
+                    >
                       <div className="flex items-center justify-between mb-1.5">
                         <div className="flex items-center gap-2">
                           <CoinIcon symbol={item.coin_symbol} size={22} />
@@ -590,7 +524,7 @@ export default function WalletPage() {
                         <span className="text-exchange-text-third">{t('trade.time')}</span>
                         <span className="text-exchange-text-third">{timeAgo(item.created_at, t)}</span>
                       </div>
-                    </div>
+                    </button>
                   ))
                 )}
               </div>
@@ -598,6 +532,24 @@ export default function WalletPage() {
           )}
         </div>
       )}
+
+      {/* Modals */}
+      <DepositModal
+        open={depositOpen}
+        onClose={() => setDepositOpen(false)}
+        initialCoin={selectedCoinForModal}
+      />
+      <WithdrawModal
+        open={withdrawOpen}
+        onClose={() => setWithdrawOpen(false)}
+        initialCoin={selectedCoinForModal}
+      />
+      <TransactionDetailModal
+        open={txModal.open}
+        onClose={() => setTxModal({ ...txModal, open: false })}
+        transaction={txModal.tx}
+        type={txModal.type}
+      />
     </div>
   );
 }

@@ -130,6 +130,9 @@ db.exec(`
     amount REAL NOT NULL,
     tx_hash TEXT,
     status TEXT DEFAULT 'pending',
+    network TEXT,
+    memo TEXT,
+    from_address TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -142,7 +145,34 @@ db.exec(`
     address TEXT NOT NULL,
     tx_hash TEXT,
     status TEXT DEFAULT 'pending',
+    network TEXT,
+    memo TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS notifications (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    message TEXT,
+    data TEXT,
+    is_read INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS api_keys (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    label TEXT NOT NULL,
+    api_key TEXT UNIQUE NOT NULL,
+    api_secret_hash TEXT NOT NULL,
+    permissions TEXT DEFAULT 'read',
+    ip_whitelist TEXT,
+    is_active INTEGER DEFAULT 1,
+    last_used_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    expires_at DATETIME
   );
 
   CREATE INDEX IF NOT EXISTS idx_orders_market ON orders(market_id, status, side, price);
@@ -150,6 +180,80 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_trades_market ON trades(market_id, created_at);
   CREATE INDEX IF NOT EXISTS idx_candles_market ON candles(market_id, interval, open_time);
   CREATE INDEX IF NOT EXISTS idx_wallets_user ON wallets(user_id);
+  CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, is_read, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id, is_active);
+`);
+
+// Add columns to existing tables if they don't exist (safe migration)
+function addColumnIfMissing(table, column, definition) {
+  try {
+    const columns = db.prepare(`PRAGMA table_info(${table})`).all();
+    if (!columns.some(c => c.name === column)) {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
+  } catch (e) {
+    // Table might not exist yet — ignore
+  }
+}
+
+addColumnIfMissing('deposits', 'network', 'TEXT');
+addColumnIfMissing('deposits', 'memo', 'TEXT');
+addColumnIfMissing('deposits', 'from_address', 'TEXT');
+addColumnIfMissing('withdrawals', 'network', 'TEXT');
+addColumnIfMissing('withdrawals', 'memo', 'TEXT');
+
+// Profile & security columns on users
+addColumnIfMissing('users', 'two_factor_enabled', 'INTEGER DEFAULT 0');
+addColumnIfMissing('users', 'two_factor_secret', 'TEXT');
+addColumnIfMissing('users', 'kyc_address', 'TEXT');
+addColumnIfMissing('users', 'kyc_id_document_url', 'TEXT');
+addColumnIfMissing('users', 'kyc_address_document_url', 'TEXT');
+addColumnIfMissing('users', 'kyc_submitted_at', 'DATETIME');
+addColumnIfMissing('users', 'kyc_reviewed_at', 'DATETIME');
+addColumnIfMissing('users', 'avatar_url', 'TEXT');
+
+// Login history & sessions
+db.exec(`
+  CREATE TABLE IF NOT EXISTS login_history (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    ip_address TEXT,
+    user_agent TEXT,
+    device TEXT,
+    location TEXT,
+    status TEXT DEFAULT 'success',
+    reason TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_login_history_user ON login_history(user_id, created_at DESC);
+
+  CREATE TABLE IF NOT EXISTS user_sessions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    token_id TEXT UNIQUE NOT NULL,
+    ip_address TEXT,
+    user_agent TEXT,
+    device TEXT,
+    last_active_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id, last_active_at DESC);
+
+  CREATE TABLE IF NOT EXISTS price_alerts (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    quote_coin TEXT NOT NULL DEFAULT 'USDT',
+    direction TEXT NOT NULL,
+    target_price REAL NOT NULL,
+    base_price REAL,
+    is_active INTEGER DEFAULT 1,
+    triggered_at DATETIME,
+    note TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_price_alerts_user   ON price_alerts(user_id, is_active);
+  CREATE INDEX IF NOT EXISTS idx_price_alerts_active ON price_alerts(is_active, symbol);
 `);
 
 // ===== SEED DATA =====
