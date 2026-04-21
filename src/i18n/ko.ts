@@ -38,7 +38,7 @@ const ko = {
   'auth.passwordTooShort': '비밀번호는 6자 이상이어야 합니다',
   'auth.loginFailed': '로그인에 실패했습니다',
   'auth.registerFailed': '회원가입에 실패했습니다',
-  'auth.registerBonus': '회원가입 시 10,000 USDT + 10,000,000 KRW + 0.1 BTC + 2 ETH + 1,000 QTA 지급!',
+  'auth.registerBonus': '회원가입 시 1,000 QTA 지급!',
 
   // Trade
   'trade.orderbook': '호가창',
@@ -162,7 +162,7 @@ const ko = {
   'home.whyTitle': '왜 QuantaEX인가?',
   'home.whyDesc': '전문적이고 안전한 거래 환경을 제공합니다.',
   'home.ctaTitle': '지금 바로 시작하세요',
-  'home.ctaDesc': '회원가입 시 10,000 USDT + 10,000,000 KRW 보너스를 지급합니다.',
+  'home.ctaDesc': '회원가입 시 1,000 QTA 보너스를 지급합니다.',
   'home.ctaBtn': '무료 회원가입',
 
   // Status

@@ -38,7 +38,7 @@ const en = {
   'auth.passwordTooShort': 'Password must be at least 6 characters',
   'auth.loginFailed': 'Login failed',
   'auth.registerFailed': 'Registration failed',
-  'auth.registerBonus': 'Bonus: 10,000 USDT + 10,000,000 KRW + 0.1 BTC + 2 ETH + 1,000 QTA upon registration!',
+  'auth.registerBonus': 'Bonus: 1,000 QTA upon registration!',
 
   // Trade
   'trade.orderbook': 'Order Book',
@@ -162,7 +162,7 @@ const en = {
   'home.whyTitle': 'Why QuantaEX?',
   'home.whyDesc': 'A professional and secure trading environment.',
   'home.ctaTitle': 'Start Trading Now',
-  'home.ctaDesc': 'Get 10,000 USDT + 10,000,000 KRW bonus upon registration.',
+  'home.ctaDesc': 'Get 1,000 QTA bonus upon registration.',
   'home.ctaBtn': 'Free Sign Up',
 
   // Status

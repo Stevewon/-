@@ -315,18 +315,9 @@ export default function HomePage() {
 
             {/* Bonus badges */}
             <div className="flex flex-wrap justify-center gap-2.5 sm:gap-3 lg:gap-4 mb-8 sm:mb-10">
-              {[
-                { label: '10,000 USDT', color: 'text-exchange-buy', border: 'border-exchange-buy/20' },
-                { label: '10,000,000 KRW', color: 'text-blue-400', border: 'border-blue-400/20' },
-                { label: '0.1 BTC', color: 'text-orange-400', border: 'border-orange-400/20' },
-                { label: '2 ETH', color: 'text-purple-400', border: 'border-purple-400/20' },
-                { label: '1,000 QTA', color: 'text-exchange-yellow', border: 'border-exchange-yellow/20' },
-              ].map((b) => (
-                <span key={b.label}
-                  className={`text-xs sm:text-sm font-bold px-3.5 sm:px-5 py-1.5 sm:py-2 rounded-full bg-exchange-hover/80 border ${b.border} ${b.color}`}>
-                  {b.label}
-                </span>
-              ))}
+              <span className="text-sm sm:text-base font-bold px-5 sm:px-8 py-2 sm:py-3 rounded-full bg-exchange-hover/80 border border-exchange-yellow/20 text-exchange-yellow">
+                1,000 QTA
+              </span>
             </div>
 
             <Link to="/register"
