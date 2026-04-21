@@ -238,6 +238,22 @@ db.exec(`
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
   CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id, last_active_at DESC);
+
+  CREATE TABLE IF NOT EXISTS price_alerts (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    quote_coin TEXT NOT NULL DEFAULT 'USDT',
+    direction TEXT NOT NULL,
+    target_price REAL NOT NULL,
+    base_price REAL,
+    is_active INTEGER DEFAULT 1,
+    triggered_at DATETIME,
+    note TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_price_alerts_user   ON price_alerts(user_id, is_active);
+  CREATE INDEX IF NOT EXISTS idx_price_alerts_active ON price_alerts(is_active, symbol);
 `);
 
 // ===== SEED DATA =====

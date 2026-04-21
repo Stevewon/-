@@ -26,6 +26,8 @@ const KycPage = lazy(() => import('./pages/KycPage'));
 const SecurityPage = lazy(() => import('./pages/SecurityPage'));
 const ApiKeysPage = lazy(() => import('./pages/ApiKeysPage'));
 const NotificationsPage = lazy(() => import('./pages/NotificationsPage'));
+const NotificationSettingsPage = lazy(() => import('./pages/NotificationSettingsPage'));
+const PriceAlertsPage = lazy(() => import('./pages/PriceAlertsPage'));
 const NotFoundPage = lazy(() => import('./pages/NotFoundPage'));
 
 // Loading fallback
@@ -83,6 +85,8 @@ export default function App() {
           <Route path="profile/security" element={<ProtectedRoute><SecurityPage /></ProtectedRoute>} />
           <Route path="profile/api-keys" element={<ProtectedRoute><ApiKeysPage /></ProtectedRoute>} />
           <Route path="notifications" element={<ProtectedRoute><NotificationsPage /></ProtectedRoute>} />
+          <Route path="profile/notifications" element={<ProtectedRoute><NotificationSettingsPage /></ProtectedRoute>} />
+          <Route path="profile/price-alerts" element={<ProtectedRoute><PriceAlertsPage /></ProtectedRoute>} />
           <Route path="wallet" element={<ProtectedRoute><WalletPage /></ProtectedRoute>} />
           <Route path="admin" element={<ProtectedRoute><AdminPage /></ProtectedRoute>} />
           <Route path="*" element={<NotFoundPage />} />

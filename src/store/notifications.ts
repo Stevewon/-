@@ -1,14 +1,66 @@
 import { create } from 'zustand';
 import api from '../utils/api';
+import { showToast } from '../components/common/Toast';
+import { loadPrefs, playNotificationSound, showDesktopNotification } from '../utils/notificationPrefs';
 
 export interface Notification {
   id: string;
-  type: 'order_filled' | 'deposit' | 'withdraw' | 'system' | string;
+  type: 'order_filled' | 'deposit' | 'withdraw' | 'system' | 'price' | string;
   title: string;
   message?: string;
   data?: any;
   is_read: number;
   created_at: string;
+}
+
+/**
+ * Map notification type → Toast type for the in-app popup.
+ */
+function mapNotifToToast(type: string) {
+  const m: Record<string, any> = {
+    order_filled: 'trade',
+    deposit: 'deposit',
+    withdraw: 'withdraw',
+    price: 'price',
+    system: 'info',
+  };
+  return m[type] || 'info';
+}
+
+/**
+ * Determine a relevant href for clicking the notification toast.
+ */
+function hrefFor(n: Notification): string | undefined {
+  if (n.type === 'order_filled' && n.data?.symbol) return `/trade/${n.data.symbol}`;
+  if (n.type === 'deposit' || n.type === 'withdraw') return '/wallet';
+  if (n.type === 'price' && n.data?.symbol) return `/trade/${n.data.symbol}`;
+  return '/notifications';
+}
+
+/**
+ * Side-effects when a new notification arrives:
+ * - in-app Toast
+ * - sound
+ * - desktop notification
+ */
+function fireSideEffects(n: Notification) {
+  try {
+    const prefs = loadPrefs();
+    const typeKey = (n.type in prefs.typeFilters ? n.type : 'system') as keyof typeof prefs.typeFilters;
+    if (!prefs.typeFilters[typeKey]) return; // type disabled
+
+    // Toast with action button
+    showToast(mapNotifToToast(n.type), n.title, n.message, {
+      duration: 6000,
+      action: { label: 'View', href: hrefFor(n) },
+      groupKey: `notif-${n.type}`,
+    });
+
+    if (prefs.soundEnabled) playNotificationSound(n.type);
+    if (prefs.desktopEnabled && document.visibilityState !== 'visible') {
+      showDesktopNotification(n.title, n.message);
+    }
+  } catch { /* never break store */ }
 }
 
 interface NotificationState {
@@ -81,6 +133,8 @@ const useNotifications = create<NotificationState>((set, get) => ({
       items: [n, ...state.items].slice(0, 100),
       unread: state.unread + (n.is_read ? 0 : 1),
     }));
+    // Fire side-effects (toast, sound, desktop notification)
+    fireSideEffects(n);
   },
 
   connect: (token) => {
