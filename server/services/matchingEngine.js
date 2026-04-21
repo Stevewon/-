@@ -1,5 +1,6 @@
 import db from '../database.js';
 import { v4 as uuidv4 } from 'uuid';
+import { createNotification } from './notifications.js';
 
 class MatchingEngine {
   constructor(io) {
@@ -148,6 +149,31 @@ class MatchingEngine {
 
     trade.buyer_fee = buyerFee;
     trade.seller_fee = sellerFee;
+
+    // Send notifications for trade fills
+    const symbol = `${market.base_coin}/${market.quote_coin}`;
+    try {
+      createNotification(trade.buyer_id, {
+        type: 'order_filled',
+        title: `Buy order filled: ${symbol}`,
+        message: `Bought ${trade.amount.toFixed(6)} ${market.base_coin} @ ${trade.price}`,
+        data: {
+          side: 'buy', symbol, price: trade.price, amount: trade.amount,
+          total: trade.total, fee: buyerFee, trade_id: trade.id,
+        },
+      });
+      if (trade.seller_id !== trade.buyer_id) {
+        createNotification(trade.seller_id, {
+          type: 'order_filled',
+          title: `Sell order filled: ${symbol}`,
+          message: `Sold ${trade.amount.toFixed(6)} ${market.base_coin} @ ${trade.price}`,
+          data: {
+            side: 'sell', symbol, price: trade.price, amount: trade.amount,
+            total: trade.total, fee: sellerFee, trade_id: trade.id,
+          },
+        });
+      }
+    } catch (e) { /* best-effort notifications */ }
   }
 
   _addBalance(userId, coinSymbol, amount) {

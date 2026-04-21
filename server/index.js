@@ -12,6 +12,7 @@ import marketRoutes from './routes/market.js';
 import orderRoutes from './routes/order.js';
 import walletRoutes from './routes/wallet.js';
 import adminRoutes from './routes/admin.js';
+import notificationRoutes from './routes/notifications.js';
 import MatchingEngine from './services/matchingEngine.js';
 import PriceSimulator from './services/priceSimulator.js';
 
@@ -37,6 +38,7 @@ app.use('/api/market', marketRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/wallet', walletRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

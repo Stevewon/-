@@ -130,6 +130,9 @@ db.exec(`
     amount REAL NOT NULL,
     tx_hash TEXT,
     status TEXT DEFAULT 'pending',
+    network TEXT,
+    memo TEXT,
+    from_address TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -142,7 +145,34 @@ db.exec(`
     address TEXT NOT NULL,
     tx_hash TEXT,
     status TEXT DEFAULT 'pending',
+    network TEXT,
+    memo TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS notifications (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    message TEXT,
+    data TEXT,
+    is_read INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS api_keys (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    label TEXT NOT NULL,
+    api_key TEXT UNIQUE NOT NULL,
+    api_secret_hash TEXT NOT NULL,
+    permissions TEXT DEFAULT 'read',
+    ip_whitelist TEXT,
+    is_active INTEGER DEFAULT 1,
+    last_used_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    expires_at DATETIME
   );
 
   CREATE INDEX IF NOT EXISTS idx_orders_market ON orders(market_id, status, side, price);
@@ -150,7 +180,27 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_trades_market ON trades(market_id, created_at);
   CREATE INDEX IF NOT EXISTS idx_candles_market ON candles(market_id, interval, open_time);
   CREATE INDEX IF NOT EXISTS idx_wallets_user ON wallets(user_id);
+  CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, is_read, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id, is_active);
 `);
+
+// Add columns to existing tables if they don't exist (safe migration)
+function addColumnIfMissing(table, column, definition) {
+  try {
+    const columns = db.prepare(`PRAGMA table_info(${table})`).all();
+    if (!columns.some(c => c.name === column)) {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
+  } catch (e) {
+    // Table might not exist yet — ignore
+  }
+}
+
+addColumnIfMissing('deposits', 'network', 'TEXT');
+addColumnIfMissing('deposits', 'memo', 'TEXT');
+addColumnIfMissing('deposits', 'from_address', 'TEXT');
+addColumnIfMissing('withdrawals', 'network', 'TEXT');
+addColumnIfMissing('withdrawals', 'memo', 'TEXT');
 
 // ===== SEED DATA =====
 function seedData() {

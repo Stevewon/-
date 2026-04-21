@@ -22,6 +22,7 @@ const PrivacyPage = lazy(() => import('./pages/PrivacyPage'));
 const SupportPage = lazy(() => import('./pages/SupportPage'));
 const OrderHistoryPage = lazy(() => import('./pages/OrderHistoryPage'));
 const ProfilePage = lazy(() => import('./pages/ProfilePage'));
+const NotificationsPage = lazy(() => import('./pages/NotificationsPage'));
 const NotFoundPage = lazy(() => import('./pages/NotFoundPage'));
 
 // Loading fallback
@@ -75,6 +76,7 @@ export default function App() {
           <Route path="support" element={<SupportPage />} />
           <Route path="orders" element={<ProtectedRoute><OrderHistoryPage /></ProtectedRoute>} />
           <Route path="profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
+          <Route path="notifications" element={<ProtectedRoute><NotificationsPage /></ProtectedRoute>} />
           <Route path="wallet" element={<ProtectedRoute><WalletPage /></ProtectedRoute>} />
           <Route path="admin" element={<ProtectedRoute><AdminPage /></ProtectedRoute>} />
           <Route path="*" element={<NotFoundPage />} />
