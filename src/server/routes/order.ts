@@ -8,19 +8,51 @@ function uuid() {
   return crypto.randomUUID();
 }
 
+// Floor a number to N decimal places (avoids FP drift like 0.1 + 0.2).
+function floorToDecimals(n: number, decimals: number): number {
+  if (!isFinite(n)) return 0;
+  const d = Math.max(0, Math.min(18, decimals | 0));
+  const p = Math.pow(10, d);
+  return Math.floor(n * p) / p;
+}
+
 // Place order
 app.post('/', authMiddleware, async (c) => {
   const user = c.get('user');
-  const { market_symbol, side, type, price, amount } = await c.req.json();
+  const body = await c.req.json();
+  let { market_symbol, side, type, price, amount } = body;
+  if (!market_symbol || typeof market_symbol !== 'string') {
+    return c.json({ error: 'Invalid market_symbol' }, 400);
+  }
   const [base, quote] = market_symbol.split('-');
+  if (!base || !quote) return c.json({ error: 'Invalid market_symbol' }, 400);
 
-  const market = await c.env.DB.prepare('SELECT * FROM markets WHERE base_coin = ? AND quote_coin = ?').bind(base, quote).first() as any;
+  const market = await c.env.DB.prepare('SELECT * FROM markets WHERE base_coin = ? AND quote_coin = ? AND is_active = 1').bind(base, quote).first() as any;
   if (!market) return c.json({ error: 'Market not found' }, 404);
 
   if (!['buy', 'sell'].includes(side)) return c.json({ error: 'Invalid side' }, 400);
   if (!['limit', 'market'].includes(type)) return c.json({ error: 'Invalid type' }, 400);
-  if (amount <= 0) return c.json({ error: 'Invalid amount' }, 400);
-  if (type === 'limit' && (!price || price <= 0)) return c.json({ error: 'Price required for limit order' }, 400);
+
+  // Numeric coercion (frontend may send strings)
+  amount = Number(amount);
+  if (price != null) price = Number(price);
+  if (!isFinite(amount) || amount <= 0) return c.json({ error: 'Invalid amount' }, 400);
+  if (type === 'limit' && (!isFinite(price) || price <= 0)) return c.json({ error: 'Price required for limit order' }, 400);
+
+  // -------- Decimals & minimum-order validation --------
+  amount = floorToDecimals(amount, market.amount_decimals);
+  if (type === 'limit') price = floorToDecimals(price, market.price_decimals);
+  if (amount <= 0) return c.json({ error: 'Amount too small for market precision' }, 400);
+
+  if (amount < market.min_order_amount) {
+    return c.json({ error: `Minimum order amount is ${market.min_order_amount} ${base}` }, 400);
+  }
+  if (type === 'limit') {
+    const notional = price * amount;
+    if (notional < market.min_order_total) {
+      return c.json({ error: `Minimum order total is ${market.min_order_total} ${quote}` }, 400);
+    }
+  }
 
   // ============================================================================
   // Balance check & lock
@@ -54,6 +86,10 @@ app.post('/', authMiddleware, async (c) => {
         : (refPrice?.price_usd && refPrice.price_usd > 0 ? refPrice.price_usd : 0);
       if (!estPrice || estPrice <= 0) {
         return c.json({ error: 'Market price unavailable; use a limit order' }, 400);
+      }
+      // Enforce min_order_total for market buys too (estimated notional)
+      if (estPrice * amount < market.min_order_total) {
+        return c.json({ error: `Minimum order total is ${market.min_order_total} ${quote}` }, 400);
       }
       // 20% safety buffer so slippage doesn't short-lock
       lockAmount = estPrice * amount * 1.2 * (1 + market.taker_fee);
@@ -178,9 +214,16 @@ async function matchOrder(
     ? (order.side === 'buy' ? `AND price <= ${order.price}` : `AND price >= ${order.price}`)
     : '';
 
+  // 🛡️ Self-Trade Prevention (STP): never match against the taker's own
+  // open orders. Without this filter a single user could fake volume and
+  // move price by placing buys and sells from the same account.
   const { results: matchingOrders } = await DB.prepare(
-    `SELECT * FROM orders WHERE market_id = ? AND side = ? AND status IN ('open','partial') ${priceCondition} ORDER BY price ${priceOrder}, created_at ASC LIMIT 50`
-  ).bind(market.id, oppositeSide).all();
+    `SELECT * FROM orders
+     WHERE market_id = ? AND side = ? AND status IN ('open','partial')
+       AND user_id != ?
+       ${priceCondition}
+     ORDER BY price ${priceOrder}, created_at ASC LIMIT 50`
+  ).bind(market.id, oppositeSide, order.user_id).all();
 
   let remaining = order.remaining;
 

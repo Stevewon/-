@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../index';
-import { authMiddleware } from '../middleware/auth';
+import { authMiddleware, adminMiddleware } from '../middleware/auth';
 
 const app = new Hono<AppEnv>();
 
@@ -68,28 +68,56 @@ app.get('/:symbol', authMiddleware, async (c) => {
   return c.json(wallet);
 });
 
-// Deposit (simulated)
+// 🚫 Self-service deposit REMOVED (2026-04-22)
+// --------------------------------------------------------------------------
+// The previous simulation endpoint let any authenticated user credit
+// arbitrary amounts to their own wallet — effectively allowing self-minting
+// of USDT / BTC / ETH etc.  That was the single biggest launch blocker
+// surfaced by the exchange-readiness audit (see docs/EXCHANGE_READINESS_AUDIT.md §1.1).
+//
+// Real user deposits must come from on-chain confirmations (or admin credit
+// for KRW bank rails).  Until the chain watcher is implemented, ordinary
+// users simply cannot deposit.  Admins can still credit test balances via
+// the admin-only /api/wallet/admin-credit endpoint below for QA purposes.
 app.post('/deposit', authMiddleware, async (c) => {
-  const user = c.get('user');
-  const { coin_symbol, amount } = await c.req.json();
-  if (!coin_symbol || !amount || amount <= 0) return c.json({ error: 'Invalid request' }, 400);
+  return c.json({
+    error: 'Self-service deposits are disabled. Please contact support.',
+    code: 'DEPOSIT_DISABLED',
+  }, 403);
+});
 
-  const coin = await c.env.DB.prepare('SELECT * FROM coins WHERE symbol = ?').bind(coin_symbol).first();
+// Admin-only credit (kept for QA / compensation). Requires admin role.
+app.post('/admin-credit', authMiddleware, adminMiddleware, async (c) => {
+  const { user_id, coin_symbol, amount, memo } = await c.req.json();
+  if (!user_id || !coin_symbol || !amount || amount <= 0) {
+    return c.json({ error: 'Invalid request' }, 400);
+  }
+
+  const coin = await c.env.DB.prepare('SELECT symbol FROM coins WHERE symbol = ?').bind(coin_symbol).first();
   if (!coin) return c.json({ error: 'Coin not found' }, 404);
 
-  const wallet = await c.env.DB.prepare('SELECT * FROM wallets WHERE user_id = ? AND coin_symbol = ?').bind(user.id, coin_symbol).first() as any;
+  const wallet = await c.env.DB.prepare('SELECT id FROM wallets WHERE user_id = ? AND coin_symbol = ?').bind(user_id, coin_symbol).first() as any;
   if (wallet) {
     await c.env.DB.prepare('UPDATE wallets SET available = available + ? WHERE id = ?').bind(amount, wallet.id).run();
   } else {
-    await c.env.DB.prepare('INSERT INTO wallets (id, user_id, coin_symbol, available) VALUES (?,?,?,?)').bind(uuid(), user.id, coin_symbol, amount).run();
+    await c.env.DB.prepare('INSERT INTO wallets (id, user_id, coin_symbol, available) VALUES (?,?,?,?)').bind(uuid(), user_id, coin_symbol, amount).run();
   }
 
   const depositId = uuid();
-  const txHash = `0x${depositId.replace(/-/g, '')}`;
-  await c.env.DB.prepare("INSERT INTO deposits (id, user_id, coin_symbol, amount, status, tx_hash) VALUES (?,?,?,?,'completed',?)")
-    .bind(depositId, user.id, coin_symbol, amount, txHash).run();
+  const txHash = `admin-${depositId.replace(/-/g, '').slice(0, 16)}`;
+  await c.env.DB.prepare(
+    "INSERT INTO deposits (id, user_id, coin_symbol, amount, status, tx_hash) VALUES (?,?,?,?,'completed',?)"
+  ).bind(depositId, user_id, coin_symbol, amount, txHash).run();
 
-  return c.json({ message: 'Deposit successful', deposit_id: depositId });
+  // Best-effort audit log
+  try {
+    await c.env.DB.prepare(
+      `INSERT INTO admin_audit_logs (id, admin_id, action, target_type, target_id, payload)
+       VALUES (?, ?, 'admin_credit', 'user', ?, ?)`
+    ).bind(uuid(), c.get('user').id, user_id, JSON.stringify({ coin_symbol, amount, memo: memo || null })).run();
+  } catch { /* table may not exist in older DBs; ignore */ }
+
+  return c.json({ message: 'Credit applied', deposit_id: depositId, tx_hash: txHash });
 });
 
 // Withdraw

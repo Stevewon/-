@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { AppEnv } from '../index';
 import { authMiddleware } from '../middleware/auth';
 import bcrypt from 'bcryptjs';
+import { generateTotpSecret, otpauthUrl, verifyTotp } from '../utils/totp';
 
 const app = new Hono<AppEnv>();
 
@@ -80,11 +81,112 @@ app.post('/password', authMiddleware, async (c) => {
   return c.json({ ok: true, message: 'Password changed successfully' });
 });
 
-// GET /api/profile/sessions - active sessions (placeholder: last logins)
+// ============================================================================
+// 2FA (TOTP - RFC 6238)
+// ----------------------------------------------------------------------------
+// Flow:
+//   1) POST /api/profile/2fa/setup   -> creates a *pending* secret and returns
+//      the Base32 secret + otpauth:// URL. No effect on login yet.
+//   2) POST /api/profile/2fa/enable  -> body: { code } — verifies the pending
+//      secret and promotes it to the active secret + flips the flag.
+//   3) POST /api/profile/2fa/disable -> body: { password, code } — requires
+//      BOTH the current password and a valid current TOTP.
+// ============================================================================
+app.post('/2fa/setup', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const row = await c.env.DB.prepare(
+    'SELECT email, two_factor_enabled FROM users WHERE id = ?'
+  ).bind(user.id).first<{ email: string; two_factor_enabled: number }>();
+  if (!row) return c.json({ error: 'User not found' }, 404);
+  if (row.two_factor_enabled) {
+    return c.json({ error: '2FA is already enabled. Disable it first to regenerate.' }, 400);
+  }
+
+  const secret = generateTotpSecret();
+  // Store as pending. If the user never confirms, it gets overwritten the
+  // next time they hit setup.
+  await c.env.DB.prepare(
+    `UPDATE users SET two_factor_pending_secret = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+  ).bind(secret, user.id).run();
+
+  const uri = otpauthUrl({
+    issuer: 'QuantaEX',
+    accountName: row.email,
+    secret,
+  });
+
+  return c.json({ secret, otpauth_url: uri });
+});
+
+app.post('/2fa/enable', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const { code } = await c.req.json().catch(() => ({ code: '' }));
+  if (!code) return c.json({ error: 'Code required' }, 400);
+
+  const row = await c.env.DB.prepare(
+    'SELECT two_factor_pending_secret, two_factor_enabled FROM users WHERE id = ?'
+  ).bind(user.id).first<{ two_factor_pending_secret: string | null; two_factor_enabled: number }>();
+  if (!row?.two_factor_pending_secret) {
+    return c.json({ error: 'No pending 2FA setup — call /2fa/setup first' }, 400);
+  }
+  if (row.two_factor_enabled) {
+    return c.json({ error: '2FA already enabled' }, 400);
+  }
+
+  const ok = await verifyTotp(row.two_factor_pending_secret, String(code));
+  if (!ok) return c.json({ error: 'Invalid code' }, 401);
+
+  await c.env.DB.prepare(
+    `UPDATE users
+     SET two_factor_enabled = 1,
+         two_factor_secret = two_factor_pending_secret,
+         two_factor_pending_secret = NULL,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`
+  ).bind(user.id).run();
+
+  return c.json({ ok: true, message: '2FA enabled' });
+});
+
+app.post('/2fa/disable', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const { password, code } = await c.req.json().catch(() => ({}));
+  if (!password || !code) {
+    return c.json({ error: 'Password and 2FA code required' }, 400);
+  }
+
+  const row = await c.env.DB.prepare(
+    'SELECT password, two_factor_enabled, two_factor_secret FROM users WHERE id = ?'
+  ).bind(user.id).first<{ password: string; two_factor_enabled: number; two_factor_secret: string | null }>();
+  if (!row) return c.json({ error: 'User not found' }, 404);
+  if (!row.two_factor_enabled || !row.two_factor_secret) {
+    return c.json({ error: '2FA is not enabled' }, 400);
+  }
+
+  if (!bcrypt.compareSync(String(password), row.password)) {
+    return c.json({ error: 'Invalid password' }, 401);
+  }
+  const ok = await verifyTotp(row.two_factor_secret, String(code));
+  if (!ok) return c.json({ error: 'Invalid 2FA code' }, 401);
+
+  await c.env.DB.prepare(
+    `UPDATE users
+     SET two_factor_enabled = 0,
+         two_factor_secret = NULL,
+         two_factor_pending_secret = NULL,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`
+  ).bind(user.id).run();
+
+  return c.json({ ok: true, message: '2FA disabled' });
+});
+
+// GET /api/profile/sessions - recent login history (audit trail)
 app.get('/sessions', authMiddleware, async (c) => {
   const user = c.get('user');
   const { results } = await c.env.DB.prepare(
-    `SELECT * FROM login_history WHERE user_id = ? ORDER BY logged_in_at DESC LIMIT 20`
+    `SELECT id, ip_address, user_agent, device, location, status, reason, created_at
+     FROM login_history WHERE user_id = ? ORDER BY created_at DESC LIMIT 20`
   ).bind(user.id).all().catch(() => ({ results: [] as any[] }));
   return c.json(results);
 });
