@@ -1,15 +1,9 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../index';
 import { authMiddleware } from '../middleware/auth';
+import bcrypt from 'bcryptjs';
 
 const app = new Hono<AppEnv>();
-
-// Helper: hash password with Web Crypto (same approach as auth.ts should use)
-async function hashPassword(password: string): Promise<string> {
-  const enc = new TextEncoder().encode(password);
-  const digest = await crypto.subtle.digest('SHA-256', enc);
-  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
-}
 
 // PATCH /api/profile - update nickname / avatar
 app.patch('/', authMiddleware, async (c) => {
@@ -43,32 +37,47 @@ app.patch('/', authMiddleware, async (c) => {
 });
 
 // POST /api/profile/password - change password
+// 🔒 Accepts both `current_password`/`new_password` and legacy
+// `old_password`/`password` field names for client compatibility.
+// 🚨 CRITICAL FIX: Uses bcrypt to match auth.ts register/login hashing.
+//   Previously used SHA-256 which never matched the bcrypt-hashed stored
+//   password, making password changes impossible and corrupting the hash
+//   if it had ever "succeeded".
 app.post('/password', authMiddleware, async (c) => {
   const user = c.get('user');
   const body = await c.req.json();
-  const { current_password, new_password } = body;
+  const currentPw = (body.current_password || body.old_password || '').toString();
+  const newPw = (body.new_password || body.password || '').toString();
 
-  if (!current_password || !new_password) {
+  if (!currentPw || !newPw) {
     return c.json({ error: 'Current and new password are required' }, 400);
   }
-  if (new_password.length < 8) {
+  if (newPw.length < 8) {
     return c.json({ error: 'New password must be at least 8 characters' }, 400);
+  }
+  if (!/[A-Za-z]/.test(newPw) || !/[0-9]/.test(newPw)) {
+    return c.json({ error: 'New password must contain both letters and numbers' }, 400);
+  }
+  if (currentPw === newPw) {
+    return c.json({ error: 'New password must differ from current password' }, 400);
   }
 
   const row = await c.env.DB.prepare('SELECT password FROM users WHERE id = ?').bind(user.id).first<{ password: string }>();
   if (!row) return c.json({ error: 'User not found' }, 404);
 
-  const currentHash = await hashPassword(current_password);
-  if (currentHash !== row.password) {
+  // bcrypt.compareSync works with both bcrypt $2a$/$2b$ hashes.
+  let ok = false;
+  try { ok = bcrypt.compareSync(currentPw, row.password); } catch { ok = false; }
+  if (!ok) {
     return c.json({ error: 'Current password is incorrect' }, 401);
   }
 
-  const newHash = await hashPassword(new_password);
+  const newHash = bcrypt.hashSync(newPw, 10);
   await c.env.DB.prepare(
     'UPDATE users SET password = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
   ).bind(newHash, user.id).run();
 
-  return c.json({ ok: true });
+  return c.json({ ok: true, message: 'Password changed successfully' });
 });
 
 // GET /api/profile/sessions - active sessions (placeholder: last logins)
