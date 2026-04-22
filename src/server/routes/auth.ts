@@ -1,6 +1,8 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../index';
 import { generateToken, authMiddleware } from '../middleware/auth';
+import { rateLimit } from '../middleware/rateLimit';
+import { sendMail, templateBasic } from '../utils/mailer';
 import bcrypt from 'bcryptjs';
 
 const app = new Hono<AppEnv>();
@@ -39,8 +41,14 @@ async function recordLogin(
   }
 }
 
+// Rate limits
+const rlRegister  = rateLimit({ key: 'auth:register',  max: 5,  windowSec: 3600 });   // 5/h per IP
+const rlLogin     = rateLimit({ key: 'auth:login',     max: 10, windowSec: 300 });    // 10/5min per IP
+const rlForgotPw  = rateLimit({ key: 'auth:forgot-pw', max: 5,  windowSec: 3600 });   // 5/h per IP
+const rlReqVerify = rateLimit({ key: 'auth:req-verif', max: 5,  windowSec: 3600 });   // 5/h per IP
+
 // Register
-app.post('/register', async (c) => {
+app.post('/register', rlRegister, async (c) => {
   const body = await c.req.json();
   const email = (body.email || '').toString().trim().toLowerCase();
   const password = (body.password || '').toString();
@@ -94,13 +102,41 @@ app.post('/register', async (c) => {
   );
   await c.env.DB.batch(batch);
 
-  const user = { id, email, nickname, role: 'user', kyc_status: 'none' };
+  // Fire off a verification email in the background (non-blocking)
+  try {
+    const verifTok = randomToken(32);
+    const verifHash = await sha256Hex(verifTok);
+    const verifExpires = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
+    await c.env.DB.prepare(
+      `INSERT INTO email_verifications (id, user_id, email, token_hash, expires_at)
+       VALUES (?, ?, ?, ?, ?)`
+    ).bind(uuid(), id, email, verifHash, verifExpires).run();
+
+    const ctx = c.executionCtx as any;
+    const appUrl = (c.env as any).APP_URL || 'https://quantaex.io';
+    const link = `${appUrl}/verify-email?token=${verifTok}`;
+    const send = sendMail(c.env as any, {
+      to: email,
+      subject: 'Welcome to QuantaEX — verify your email',
+      html: templateBasic(
+        'Welcome to QuantaEX',
+        `Thanks for joining! Please verify your email to unlock deposits, trading, and withdrawals. The link expires in 24 hours.`,
+        { label: 'Verify email', url: link },
+      ),
+      text: `Verify: ${link}`,
+    });
+    if (ctx?.waitUntil) ctx.waitUntil(send); else await send;
+  } catch (e) {
+    console.warn('[register] sending verification email failed:', e);
+  }
+
+  const user = { id, email, nickname, role: 'user', kyc_status: 'none', token_version: 0 };
   const token = await generateToken(user, c.env.JWT_SECRET);
   return c.json({ token, user });
 });
 
 // Login
-app.post('/login', async (c) => {
+app.post('/login', rlLogin, async (c) => {
   const body = await c.req.json();
   const email = (body.email || '').toString().trim().toLowerCase();
   const password = (body.password || '').toString();
@@ -133,8 +169,8 @@ app.post('/login', async (c) => {
   }
 
   await recordLogin(c, user.id, 'success');
-  const token = await generateToken(user, c.env.JWT_SECRET);
-  const { password: _, two_factor_secret: __, ...safeUser } = user;
+  const token = await generateToken({ ...user, token_version: user.token_version || 0 }, c.env.JWT_SECRET);
+  const { password: _, two_factor_secret: __, two_factor_pending_secret: ___, ...safeUser } = user;
   return c.json({ token, user: safeUser });
 });
 
@@ -176,7 +212,7 @@ async function sha256Hex(input: string): Promise<string> {
 // 🚧 TODO: plug in a real mail service (Resend/SES/Postmark). For now the
 // endpoint returns `dev_token` so QA can complete the flow.
 // ============================================================================
-app.post('/request-verification', async (c) => {
+app.post('/request-verification', rlReqVerify, async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const rawEmail = (body.email || '').toString().trim().toLowerCase();
   if (!rawEmail) return c.json({ error: 'Email required' }, 400);
@@ -200,8 +236,27 @@ app.post('/request-verification', async (c) => {
       console.error('[request-verification] insert failed:', e);
       return c.json({ error: 'Service temporarily unavailable' }, 500);
     }
-    // TODO: await sendEmail(user.email, 'Verify your email', `https://quantaex.io/verify-email?token=${token}`);
-    return c.json({ ok: true, message: 'Verification email sent', dev_token: token });
+
+    const appUrl = (c.env as any).APP_URL || 'https://quantaex.io';
+    const link = `${appUrl}/verify-email?token=${token}`;
+    const mail = await sendMail(c.env as any, {
+      to: user.email,
+      subject: 'Verify your QuantaEX email',
+      html: templateBasic(
+        'Verify your email',
+        `Click the button below to confirm this is your email address. The link expires in 24 hours.`,
+        { label: 'Verify email', url: link },
+      ),
+      text: `Verify: ${link}`,
+    });
+
+    // Only surface dev_token when the real mail provider is NOT wired up.
+    return c.json({
+      ok: true,
+      message: 'Verification email sent',
+      sent: mail.sent,
+      ...(mail.sent ? {} : { dev_token: token, dev_url: link }),
+    });
   }
   return c.json({ ok: true, message: 'If the email exists, a verification link was sent.' });
 });
@@ -239,7 +294,7 @@ app.post('/verify-email', async (c) => {
 // POST /api/auth/forgot-password { email } -> always 200 (no user enumeration)
 // POST /api/auth/reset-password   { token, new_password }
 // ============================================================================
-app.post('/forgot-password', async (c) => {
+app.post('/forgot-password', rlForgotPw, async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const rawEmail = (body.email || '').toString().trim().toLowerCase();
   if (!rawEmail) return c.json({ error: 'Email required' }, 400);
@@ -261,8 +316,24 @@ app.post('/forgot-password', async (c) => {
       console.error('[forgot-password] insert failed:', e);
       return c.json({ error: 'Service temporarily unavailable' }, 500);
     }
-    // TODO: await sendEmail(rawEmail, 'Reset your password', `https://quantaex.io/reset-password?token=${token}`);
-    return c.json({ ok: true, message: 'Password reset email sent', dev_token: token });
+    const appUrl = (c.env as any).APP_URL || 'https://quantaex.io';
+    const link = `${appUrl}/reset-password?token=${token}`;
+    const mail = await sendMail(c.env as any, {
+      to: rawEmail,
+      subject: 'Reset your QuantaEX password',
+      html: templateBasic(
+        'Reset your password',
+        `We received a request to reset your password. This link expires in 1 hour. If it wasn't you, you can ignore this email.`,
+        { label: 'Reset password', url: link },
+      ),
+      text: `Reset: ${link}`,
+    });
+    return c.json({
+      ok: true,
+      message: 'Password reset email sent',
+      sent: mail.sent,
+      ...(mail.sent ? {} : { dev_token: token, dev_url: link }),
+    });
   }
   return c.json({ ok: true, message: 'If the email exists, a reset link was sent.' });
 });
@@ -290,7 +361,11 @@ app.post('/reset-password', async (c) => {
   const hashed = bcrypt.hashSync(newPw, 10);
   await c.env.DB.batch([
     c.env.DB.prepare(
-      `UPDATE users SET password = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+      `UPDATE users
+       SET password = ?,
+           token_version = COALESCE(token_version, 0) + 1,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`
     ).bind(hashed, row.user_id),
     c.env.DB.prepare(
       `UPDATE password_resets SET used_at = CURRENT_TIMESTAMP WHERE id = ?`

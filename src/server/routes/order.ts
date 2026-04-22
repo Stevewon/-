@@ -1,8 +1,14 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../index';
 import { authMiddleware } from '../middleware/auth';
+import { requireKyc } from '../middleware/kyc';
+import { rateLimit } from '../middleware/rateLimit';
 
 const app = new Hono<AppEnv>();
+
+// 100 orders / minute / IP — tight enough to stop order-book spam,
+// loose enough for real usage.
+const rlPlaceOrder = rateLimit({ key: 'order:place', max: 100, windowSec: 60 });
 
 function uuid() {
   return crypto.randomUUID();
@@ -16,8 +22,8 @@ function floorToDecimals(n: number, decimals: number): number {
   return Math.floor(n * p) / p;
 }
 
-// Place order
-app.post('/', authMiddleware, async (c) => {
+// Place order — requires approved KYC (gates all trading)
+app.post('/', authMiddleware, rlPlaceOrder, requireKyc('approved'), async (c) => {
   const user = c.get('user');
   const body = await c.req.json();
   let { market_symbol, side, type, price, amount } = body;

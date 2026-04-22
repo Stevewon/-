@@ -10,6 +10,7 @@ export interface User {
   kyc_submitted_at?: string;
   kyc_reviewed_at?: string;
   two_factor_enabled?: number;
+  email_verified_at?: string | null;
   avatar_url?: string;
   created_at: string;
 }

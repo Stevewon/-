@@ -75,10 +75,14 @@ app.post('/password', authMiddleware, async (c) => {
 
   const newHash = bcrypt.hashSync(newPw, 10);
   await c.env.DB.prepare(
-    'UPDATE users SET password = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+    `UPDATE users
+     SET password = ?,
+         token_version = COALESCE(token_version, 0) + 1,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`
   ).bind(newHash, user.id).run();
 
-  return c.json({ ok: true, message: 'Password changed successfully' });
+  return c.json({ ok: true, message: 'Password changed successfully — please login again' });
 });
 
 // ============================================================================
@@ -181,15 +185,17 @@ app.post('/2fa/disable', authMiddleware, async (c) => {
   return c.json({ ok: true, message: '2FA disabled' });
 });
 
-// GET /api/profile/sessions - recent login history (audit trail)
-app.get('/sessions', authMiddleware, async (c) => {
+// GET /api/profile/sessions or /api/profile/login-history - recent login history (audit trail)
+async function loginHistoryHandler(c: any) {
   const user = c.get('user');
   const { results } = await c.env.DB.prepare(
     `SELECT id, ip_address, user_agent, device, location, status, reason, created_at
      FROM login_history WHERE user_id = ? ORDER BY created_at DESC LIMIT 20`
   ).bind(user.id).all().catch(() => ({ results: [] as any[] }));
   return c.json(results);
-});
+}
+app.get('/sessions', authMiddleware, loginHistoryHandler);
+app.get('/login-history', authMiddleware, loginHistoryHandler);
 
 // GET /api/profile/api-keys - list API keys
 app.get('/api-keys', authMiddleware, async (c) => {

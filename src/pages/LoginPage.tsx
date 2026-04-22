@@ -33,8 +33,12 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [focused, setFocused] = useState<string>('');
 
+  // 2FA challenge state
+  const [needs2fa, setNeeds2fa] = useState(false);
+  const [totp, setTotp] = useState('');
+
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-  const canSubmit = emailValid && password.length >= 1 && !loading;
+  const canSubmit = emailValid && password.length >= 1 && !loading && (!needs2fa || totp.length === 6);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,16 +46,27 @@ export default function LoginPage() {
     if (mode === 'phone') return setError(t('auth.phoneComingSoon'));
     if (!emailValid) return setError(t('auth.invalidEmail'));
     if (!password) return setError(t('auth.enterPassword'));
+    if (needs2fa && !/^\d{6}$/.test(totp)) return setError(t('auth.totpDigits') || 'Enter 6-digit code');
 
     setLoading(true);
     try {
-      const res = await api.post('/auth/login', { email, password });
+      const payload: any = { email, password };
+      if (needs2fa) payload.totp_code = totp;
+      const res = await api.post('/auth/login', payload);
       setAuth(res.data.user, res.data.token);
       if (remember) localStorage.setItem('quantaex_last_email', email);
       else localStorage.removeItem('quantaex_last_email');
       navigate(redirect);
     } catch (err: any) {
-      setError(err.response?.data?.error || t('auth.loginFailed'));
+      const data = err.response?.data;
+      if (data?.requires_2fa) {
+        // Move to 2FA step
+        setNeeds2fa(true);
+        setTotp('');
+        setError('');
+      } else {
+        setError(data?.error || t('auth.loginFailed'));
+      }
     } finally {
       setLoading(false);
     }
@@ -158,7 +173,7 @@ export default function LoginPage() {
                   {t('auth.password')}
                 </label>
                 <Link
-                  to="/support"
+                  to="/forgot-password"
                   className="text-[12px] text-exchange-yellow hover:underline"
                 >
                   {t('auth.forgotPw')}
@@ -210,13 +225,38 @@ export default function LoginPage() {
               <span className="text-xs text-exchange-text-secondary">{t('auth.rememberMe')}</span>
             </label>
 
+            {/* 2FA challenge */}
+            {needs2fa && (
+              <div className="bg-exchange-yellow/10 border border-exchange-yellow/30 rounded-lg p-4 space-y-3">
+                <div>
+                  <p className="text-[13px] font-semibold text-exchange-yellow mb-1">
+                    {t('auth.twoFactorTitle') || 'Two-Factor Authentication'}
+                  </p>
+                  <p className="text-[11px] text-exchange-text-secondary">
+                    {t('auth.twoFactorDesc') || 'Enter the 6-digit code from your authenticator app.'}
+                  </p>
+                </div>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={totp}
+                  onChange={(e) => setTotp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  placeholder="123456"
+                  maxLength={6}
+                  autoFocus
+                  className="auth-input text-center text-xl tracking-[0.5em] font-mono"
+                />
+              </div>
+            )}
+
             {/* Desktop inline submit */}
             <button
               type="submit"
               disabled={!canSubmit}
               className="hidden sm:block w-full !py-3.5 text-sm font-semibold rounded-lg bg-exchange-yellow text-black hover:bg-[#d9a60a] disabled:bg-exchange-border disabled:text-exchange-text-third disabled:cursor-not-allowed transition-colors"
             >
-              {loading ? t('auth.loggingIn') : t('auth.loginBtn')}
+              {loading ? t('auth.loggingIn') : (needs2fa ? (t('auth.verify') || 'Verify') : t('auth.loginBtn'))}
             </button>
 
             {/* Divider */}
