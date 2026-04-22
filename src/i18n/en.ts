@@ -804,6 +804,37 @@ const en = {
   'admin.priceAlertCheckDone': 'Price alert check complete',
   'admin.priceAlertCheckSummary': 'Checked {checked} alerts, triggered {triggered}',
 
+  // Register/Login revamp (Binance/Upbit style)
+  'auth.tabEmail': 'Email',
+  'auth.tabPhone': 'Phone',
+  'auth.soon': 'SOON',
+  'auth.phoneComingSoon': 'Phone sign-up coming soon. Please use email.',
+  'auth.bonusHeadline': 'Welcome Bonus: 1,000 QTA',
+  'auth.bonusSubline': 'Credited to your wallet instantly on sign-up',
+  'auth.invalidEmail': 'Please enter a valid email address',
+  'auth.invalidNickname': 'Nickname must be 2-20 characters',
+  'auth.nicknameRule': 'Nickname must be 2-20 characters',
+  'auth.passwordPlaceholderNew': 'Create a strong password',
+  'auth.passwordRulesFail': 'Password does not meet all requirements',
+  'auth.pwRule8': 'At least 8 characters',
+  'auth.pwRuleLetter': 'Contains a letter',
+  'auth.pwRuleNumber': 'Contains a number',
+  'auth.referralCode': 'Referral code',
+  'auth.referralPlaceholder': 'Enter referral code',
+  'auth.optional': 'optional',
+  'auth.agreeTermsPre': 'I have read and agree to the',
+  'auth.termsOfService': 'Terms of Service',
+  'auth.privacyPolicy': 'Privacy Policy',
+  'auth.and': 'and',
+  'auth.agreeMarketing': 'I would like to receive marketing emails and promotions',
+  'auth.or': 'OR',
+  'auth.forgotPw': 'Forgot password?',
+  'auth.enterPassword': 'Please enter your password',
+  'auth.rememberMe': 'Keep me signed in',
+  'auth.capsLockOn': 'Caps Lock is on',
+  'auth.secure256': '256-bit SSL',
+  'auth.trustedBy': 'Trusted by 4,000+ users',
+
 };
 
 export default en;

@@ -795,6 +795,37 @@ const ko = {
   'admin.priceAlertCheckDone': '가격알림 체크 완료',
   'admin.priceAlertCheckSummary': '{checked}건 확인, {triggered}건 발송',
 
+  // 회원가입/로그인 리디자인 (바이낸스/업비트 스타일)
+  'auth.tabEmail': '이메일',
+  'auth.tabPhone': '휴대폰',
+  'auth.soon': '준비중',
+  'auth.phoneComingSoon': '휴대폰 가입은 곧 제공됩니다. 이메일로 가입해 주세요.',
+  'auth.bonusHeadline': '가입 즉시 1,000 QTA 지급',
+  'auth.bonusSubline': '회원가입 완료 시 지갑에 바로 입금됩니다',
+  'auth.invalidEmail': '올바른 이메일 주소를 입력해 주세요',
+  'auth.invalidNickname': '닉네임은 2~20자여야 합니다',
+  'auth.nicknameRule': '닉네임은 2~20자여야 합니다',
+  'auth.passwordPlaceholderNew': '안전한 비밀번호를 입력하세요',
+  'auth.passwordRulesFail': '비밀번호 조건을 모두 만족해야 합니다',
+  'auth.pwRule8': '8자 이상',
+  'auth.pwRuleLetter': '영문 포함',
+  'auth.pwRuleNumber': '숫자 포함',
+  'auth.referralCode': '추천인 코드',
+  'auth.referralPlaceholder': '추천인 코드 입력',
+  'auth.optional': '선택',
+  'auth.agreeTermsPre': '본인은',
+  'auth.termsOfService': '이용약관',
+  'auth.privacyPolicy': '개인정보 처리방침',
+  'auth.and': '및',
+  'auth.agreeMarketing': '마케팅·프로모션 정보 수신에 동의합니다',
+  'auth.or': '또는',
+  'auth.forgotPw': '비밀번호를 잊으셨나요?',
+  'auth.enterPassword': '비밀번호를 입력해 주세요',
+  'auth.rememberMe': '로그인 상태 유지',
+  'auth.capsLockOn': 'Caps Lock이 켜져 있습니다',
+  'auth.secure256': '256비트 SSL',
+  'auth.trustedBy': '4,000+ 사용자의 선택',
+
 };
 
 export default ko;

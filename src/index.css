@@ -148,6 +148,36 @@ select.input-field {
   border-radius: 0.5rem;
 }
 
+/* Auth input - Binance/Upbit style, larger touch target for mobile */
+.auth-input {
+  background: var(--color-exchange-card);
+  border: 1px solid var(--color-exchange-border);
+  color: var(--color-exchange-text);
+  border-radius: 0.625rem;
+  padding: 0.875rem 1rem;
+  width: 100%;
+  font-size: 0.9375rem;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s, background-color 0.15s;
+  min-height: 48px; /* iOS recommended touch target */
+}
+.auth-input:focus {
+  border-color: var(--color-exchange-yellow);
+  box-shadow: 0 0 0 3px rgba(240, 185, 11, 0.12);
+  background: var(--color-exchange-bg);
+}
+.auth-input::placeholder {
+  color: var(--color-exchange-text-third);
+}
+/* Chrome/Safari autofill background override */
+.auth-input:-webkit-autofill,
+.auth-input:-webkit-autofill:hover,
+.auth-input:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--color-exchange-text);
+  -webkit-box-shadow: 0 0 0 1000px var(--color-exchange-card) inset;
+  caret-color: var(--color-exchange-text);
+}
+
 /* Text helpers */
 .text-up { color: var(--color-exchange-buy); }
 .text-down { color: var(--color-exchange-sell); }

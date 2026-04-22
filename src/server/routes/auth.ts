@@ -11,8 +11,22 @@ function uuid() {
 
 // Register
 app.post('/register', async (c) => {
-  const { email, password, nickname } = await c.req.json();
+  const body = await c.req.json();
+  const email = (body.email || '').toString().trim().toLowerCase();
+  const password = (body.password || '').toString();
+  const nickname = (body.nickname || '').toString().trim();
+  const refCode = body.ref_code ? String(body.ref_code).trim().toUpperCase() : null;
+  // agree_marketing accepted for future use; currently logged only.
+  // const agreeMarketing = !!body.agree_marketing;
+
+  // ---- Validation (matches frontend rules) ----
   if (!email || !password || !nickname) return c.json({ error: 'All fields required' }, 400);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return c.json({ error: 'Invalid email format' }, 400);
+  if (nickname.length < 2 || nickname.length > 20) return c.json({ error: 'Nickname must be 2-20 characters' }, 400);
+  if (password.length < 8) return c.json({ error: 'Password must be at least 8 characters' }, 400);
+  if (!/[A-Za-z]/.test(password) || !/[0-9]/.test(password)) {
+    return c.json({ error: 'Password must contain both letters and numbers' }, 400);
+  }
 
   const existing = await c.env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first();
   if (existing) return c.json({ error: 'Email already registered' }, 400);
@@ -25,6 +39,15 @@ app.post('/register', async (c) => {
 
   await c.env.DB.prepare('INSERT INTO users (id, email, password, nickname) VALUES (?,?,?,?)')
     .bind(id, email, hashedPw, nickname).run();
+
+  // Referral code: record for future reward system (silent if column not present)
+  if (refCode) {
+    try {
+      await c.env.DB.prepare(
+        "INSERT INTO user_meta (user_id, key, value) VALUES (?, 'ref_code', ?) ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value"
+      ).bind(id, refCode).run();
+    } catch { /* table may not exist yet; ignore */ }
+  }
 
   // Default wallets with bonus (1,000 QTA only)
   const defaults = [
@@ -48,10 +71,14 @@ app.post('/register', async (c) => {
 
 // Login
 app.post('/login', async (c) => {
-  const { email, password } = await c.req.json();
+  const body = await c.req.json();
+  const email = (body.email || '').toString().trim().toLowerCase();
+  const password = (body.password || '').toString();
+  if (!email || !password) return c.json({ error: 'Email and password required' }, 400);
+
   const user = await c.env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(email).first() as any;
   if (!user || !bcrypt.compareSync(password, user.password)) {
-    return c.json({ error: 'Invalid credentials' }, 401);
+    return c.json({ error: 'Invalid email or password' }, 401);
   }
   if (!user.is_active) return c.json({ error: 'Account disabled' }, 403);
 
