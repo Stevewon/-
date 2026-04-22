@@ -25,8 +25,16 @@ async function verify(token: string, secret: string): Promise<any> {
   return payload;
 }
 
-export async function generateToken(user: { id: string; email: string; role: string }, secret: string): Promise<string> {
-  return sign({ id: user.id, email: user.email, role: user.role }, secret);
+export async function generateToken(
+  user: { id: string; email: string; role: string; token_version?: number },
+  secret: string,
+): Promise<string> {
+  return sign({
+    id: user.id,
+    email: user.email,
+    role: user.role,
+    tv: user.token_version || 0,
+  }, secret);
 }
 
 export async function authMiddleware(c: Context<AppEnv>, next: Next) {
@@ -35,6 +43,18 @@ export async function authMiddleware(c: Context<AppEnv>, next: Next) {
 
   try {
     const payload = await verify(token, c.env.JWT_SECRET);
+    // Check token_version for forced-logout / revocation. Best-effort:
+    // if the column doesn't exist yet (pre-migration), skip the check.
+    try {
+      const row = await c.env.DB.prepare(
+        'SELECT token_version, is_active FROM users WHERE id = ?'
+      ).bind(payload.id).first<{ token_version: number; is_active: number }>();
+      if (!row) return c.json({ error: 'User not found' }, 401);
+      if (!row.is_active) return c.json({ error: 'Account disabled' }, 403);
+      if ((row.token_version || 0) !== (payload.tv || 0)) {
+        return c.json({ error: 'Session expired — please login again' }, 401);
+      }
+    } catch { /* migration pending — fail open */ }
     c.set('user', payload);
     await next();
   } catch {

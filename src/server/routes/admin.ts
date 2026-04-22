@@ -378,8 +378,16 @@ app.post('/withdrawals/:id/approve', async (c) => {
   if (!w) return c.json({ error: 'Not found' }, 404);
   if (w.status !== 'pending') return c.json({ error: 'Not pending' }, 400);
 
+  // Finalise: the amount was moved to `locked` at submission time.
+  // `w.amount` stores NET (after fee); gross lock = w.amount + w.fee.
+  const gross = Number(w.amount) + Number(w.fee || 0);
   const tx = `0x${Date.now().toString(16)}${Math.random().toString(16).slice(2, 10)}`;
-  await db.prepare("UPDATE withdrawals SET status = 'completed', tx_hash = ? WHERE id = ?").bind(tx, w.id).run();
+  await db.batch([
+    db.prepare(
+      `UPDATE wallets SET locked = MAX(0, locked - ?) WHERE user_id = ? AND coin_symbol = ?`
+    ).bind(gross, w.user_id, w.coin_symbol),
+    db.prepare("UPDATE withdrawals SET status = 'completed', tx_hash = ? WHERE id = ?").bind(tx, w.id),
+  ]);
 
   try {
     await createNotification(db, w.user_id, {
@@ -401,10 +409,16 @@ app.post('/withdrawals/:id/reject', async (c) => {
   if (!w) return c.json({ error: 'Not found' }, 404);
   if (w.status !== 'pending') return c.json({ error: 'Not pending' }, 400);
 
-  // Refund available balance (amount + fee)
-  await db.prepare('UPDATE wallets SET available = available + ? WHERE user_id = ? AND coin_symbol = ?')
-    .bind(w.amount + (w.fee || 0), w.user_id, w.coin_symbol).run();
-  await db.prepare("UPDATE withdrawals SET status = 'rejected' WHERE id = ?").bind(w.id).run();
+  // Refund: gross = net (w.amount) + fee. Move from `locked` back to `available`.
+  const gross = Number(w.amount) + Number(w.fee || 0);
+  await db.batch([
+    db.prepare(
+      `UPDATE wallets
+       SET available = available + ?, locked = MAX(0, locked - ?)
+       WHERE user_id = ? AND coin_symbol = ?`
+    ).bind(gross, gross, w.user_id, w.coin_symbol),
+    db.prepare("UPDATE withdrawals SET status = 'rejected' WHERE id = ?").bind(w.id),
+  ]);
 
   try {
     await createNotification(db, w.user_id, {

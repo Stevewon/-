@@ -7,6 +7,7 @@ import LangSwitch from '../common/LangSwitch';
 import TickerBar from '../common/TickerBar';
 import Footer from '../common/Footer';
 import NotificationBell from '../common/NotificationBell';
+import EmailVerifyBanner from '../common/EmailVerifyBanner';
 
 export default function Layout() {
   const { user, logout } = useStore();
@@ -97,6 +98,9 @@ export default function Layout() {
           )}
         </div>
       </header>
+
+      {/* Global email-verify banner (auto-hides when verified or dismissed) */}
+      <EmailVerifyBanner />
 
       {/* Content */}
       <main className="flex-1">

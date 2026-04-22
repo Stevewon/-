@@ -16,9 +16,24 @@ api.interceptors.response.use(
   (res) => res,
   (err) => {
     if (err.response?.status === 401) {
+      const data = err.response?.data || {};
+      // Do NOT force-logout on auth challenges that are part of normal flows:
+      //   - 2FA required on login
+      //   - 2FA required on withdrawal / whitelist add
+      //   - bad current-password (change-password form should show inline error)
+      const url = err.config?.url || '';
+      const isLoginCall = url.includes('/auth/login');
+      const isPasswordChange = url.includes('/profile/password');
+      const isWithdrawFlow = url.includes('/wallet/withdraw');
+      const isChallenge = data.requires_2fa === true || data.code === 'KYC_REQUIRED';
+      if (isLoginCall || isPasswordChange || isWithdrawFlow || isChallenge) {
+        return Promise.reject(err);
+      }
       localStorage.removeItem('token');
       localStorage.removeItem('user');
-      window.location.href = '/login';
+      if (!window.location.pathname.startsWith('/login')) {
+        window.location.href = '/login';
+      }
     }
     return Promise.reject(err);
   }
