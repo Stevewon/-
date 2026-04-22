@@ -1,38 +1,38 @@
-name: Build & Deploy to Cloudflare Pages
-
+name: Build, Migrate & Deploy to Cloudflare Pages
 on:
-  push:
-    branches: [main]
+  push: { branches: [main] }
   workflow_dispatch:
-
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      deployments: write
+    permissions: { contents: read, deployments: write }
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20', cache: 'npm' }
+      - run: npm ci --ignore-scripts
 
-      - name: Setup Node.js 20
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build client bundle
-        run: npx vite build --mode client
-
-      - name: Build Hono worker
-        run: npx vite build
-
-      - name: Deploy to Cloudflare Pages
+      - name: Apply D1 migration 0007
+        continue-on-error: true
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy dist --project-name=quantaex --branch=main --commit-dirty=true --commit-message="auto deploy"
+          command: d1 execute quantaex-production --remote --file=./migrations/0007_sprint1_hardening.sql
+
+      - name: Apply D1 migration 0008
+        continue-on-error: true
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: d1 execute quantaex-production --remote --file=./migrations/0008_sprint2_hardening.sql
+
+      - run: npx vite build --mode client
+      - run: npx vite build
+
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=quantaex --branch=main --commit-dirty=true
