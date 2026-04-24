@@ -88,7 +88,7 @@ export default function ResetPasswordPage() {
                     type={show ? 'text' : 'password'}
                     value={pw}
                     onChange={(e) => setPw(e.target.value)}
-                    className="auth-input pl-10 pr-11"
+                    className="auth-input py-3.5 pl-10 pr-11"
                     autoComplete="new-password"
                     required
                   />
@@ -115,7 +115,7 @@ export default function ResetPasswordPage() {
                     type={show ? 'text' : 'password'}
                     value={pw2}
                     onChange={(e) => setPw2(e.target.value)}
-                    className="auth-input pl-10"
+                    className="auth-input py-3.5 pl-10 pr-4"
                     autoComplete="new-password"
                     required
                   />
