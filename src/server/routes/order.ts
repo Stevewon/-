@@ -27,7 +27,7 @@ function floorToDecimals(n: number, decimals: number): number {
 app.post('/', authMiddleware, rlPlaceOrder, requireKyc('approved'), async (c) => {
   const user = c.get('user');
   const body = await c.req.json();
-  let { market_symbol, side, type, price, amount, time_in_force } = body;
+  let { market_symbol, side, type, price, amount, time_in_force, stop_price } = body;
   if (!market_symbol || typeof market_symbol !== 'string') {
     return c.json({ error: 'Invalid market_symbol' }, 400);
   }
@@ -38,7 +38,17 @@ app.post('/', authMiddleware, rlPlaceOrder, requireKyc('approved'), async (c) =>
   if (!market) return c.json({ error: 'Market not found' }, 404);
 
   if (!['buy', 'sell'].includes(side)) return c.json({ error: 'Invalid side' }, 400);
-  if (!['limit', 'market'].includes(type)) return c.json({ error: 'Invalid type' }, 400);
+  if (!['limit', 'market', 'stop_limit'].includes(type)) return c.json({ error: 'Invalid type' }, 400);
+
+  // S3-3: Stop-Limit validation. `price` is the limit price once triggered,
+  // `stop_price` is the trigger level. Both required, both positive.
+  let stopPriceVal: number | null = null;
+  if (type === 'stop_limit') {
+    stopPriceVal = Number(stop_price);
+    if (!isFinite(stopPriceVal) || stopPriceVal <= 0) {
+      return c.json({ error: 'stop_price required for stop_limit order' }, 400);
+    }
+  }
 
   // S3-4 Time-In-Force. Default GTC for backward-compat. Market orders are
   // always IOC semantics by nature, so normalise any explicit value here.
@@ -62,17 +72,24 @@ app.post('/', authMiddleware, rlPlaceOrder, requireKyc('approved'), async (c) =>
   amount = Number(amount);
   if (price != null) price = Number(price);
   if (!isFinite(amount) || amount <= 0) return c.json({ error: 'Invalid amount' }, 400);
-  if (type === 'limit' && (!isFinite(price) || price <= 0)) return c.json({ error: 'Price required for limit order' }, 400);
+  const isPricedOrder = type === 'limit' || type === 'stop_limit';
+  if (isPricedOrder && (!isFinite(price) || price <= 0)) {
+    return c.json({ error: 'Price required for limit/stop_limit order' }, 400);
+  }
 
   // -------- Decimals & minimum-order validation --------
   amount = floorToDecimals(amount, market.amount_decimals);
-  if (type === 'limit') price = floorToDecimals(price, market.price_decimals);
+  if (isPricedOrder) price = floorToDecimals(price, market.price_decimals);
+  if (type === 'stop_limit' && stopPriceVal != null) {
+    stopPriceVal = floorToDecimals(stopPriceVal, market.price_decimals);
+    if (stopPriceVal <= 0) return c.json({ error: 'Invalid stop_price precision' }, 400);
+  }
   if (amount <= 0) return c.json({ error: 'Amount too small for market precision' }, 400);
 
   if (amount < market.min_order_amount) {
     return c.json({ error: `Minimum order amount is ${market.min_order_amount} ${base}` }, 400);
   }
-  if (type === 'limit') {
+  if (isPricedOrder) {
     const notional = price * amount;
     if (notional < market.min_order_total) {
       return c.json({ error: `Minimum order total is ${market.min_order_total} ${quote}` }, 400);
@@ -99,7 +116,9 @@ app.post('/', authMiddleware, rlPlaceOrder, requireKyc('approved'), async (c) =>
 
   if (side === 'buy') {
     lockSymbol = quote;
-    if (type === 'limit') {
+    if (isPricedOrder) {
+      // For stop_limit we lock on the limit price (what we'll actually pay
+      // once triggered), not on the stop trigger price.
       lockAmount = price * amount * (1 + takerTier.taker_fee);
     } else {
       // Market buy: estimate using best-ask (+20% safety cushion) and coin
@@ -145,20 +164,61 @@ app.post('/', authMiddleware, rlPlaceOrder, requireKyc('approved'), async (c) =>
   const orderId = uuid();
   const orderPrice = type === 'market' ? null : price;
 
+  // S3-3: Stop-limit orders start in 'pending' status until their trigger
+  // level is crossed by a subsequent trade. Funds are still locked so the
+  // user can't double-spend the balance.
+  const initialStatus = type === 'stop_limit' ? 'pending' : 'open';
+
   await c.env.DB.prepare(
     `INSERT INTO orders
        (id, user_id, market_id, side, type, price, amount, remaining, total,
-        time_in_force, taker_fee_locked, maker_fee_locked)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
+        time_in_force, taker_fee_locked, maker_fee_locked,
+        stop_price, status)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
   ).bind(
     orderId, user.id, market.id, side, type, orderPrice,
     amount, amount, (orderPrice || 0) * amount, tif,
     takerTier.taker_fee, takerTier.maker_fee,
+    stopPriceVal, initialStatus,
   ).run();
+
+  if (type === 'stop_limit') {
+    // No immediate match. Return the pending order. Check for immediate
+    // trigger against the last trade price in case the stop is already
+    // crossed at submission time.
+    const lastTrade = await c.env.DB.prepare(
+      'SELECT price FROM trades WHERE market_id = ? ORDER BY created_at DESC LIMIT 1'
+    ).bind(market.id).first<{ price: number }>().catch(() => null);
+    if (lastTrade?.price && stopPriceVal != null) {
+      const shouldTrigger =
+        (side === 'buy'  && Number(lastTrade.price) >= stopPriceVal) ||
+        (side === 'sell' && Number(lastTrade.price) <= stopPriceVal);
+      if (shouldTrigger) {
+        const triggered = await triggerAndMatch(c.env.DB, orderId, market, { lockAmount, lockSymbol, tif });
+        return c.json({
+          order: triggered.order,
+          trades: triggered.trades.map((t: any) => ({ id: t.id, price: t.price, amount: t.amount, total: t.total })),
+          tif_rejected: triggered.tifRejected || undefined,
+          triggered: true,
+        });
+      }
+    }
+    const pending = await c.env.DB.prepare('SELECT * FROM orders WHERE id = ?').bind(orderId).first();
+    return c.json({ order: pending, trades: [], pending: true });
+  }
 
   // Match order (passes lockAmount so unused funds are refunded).
   // `tif` drives FOK preflight / POST_ONLY guard / IOC cancel-on-remain.
   const result = await matchOrder(c.env.DB, orderId, market, { lockAmount, lockSymbol, tif });
+
+  // S3-3: after any real trade we may have crossed pending stop-limits on
+  // this market. Trigger them (lock info unknown here → use stored snapshot).
+  if (result.trades.length > 0) {
+    const lastPrice = result.trades[result.trades.length - 1].price;
+    try {
+      await checkAndTriggerStops(c.env.DB, market, lastPrice);
+    } catch (e) { console.warn('[stop-trigger] failed:', e); }
+  }
 
   return c.json({
     order: result.order,
@@ -172,7 +232,7 @@ app.delete('/:id', authMiddleware, async (c) => {
   const user = c.get('user');
   const order = await c.env.DB.prepare('SELECT * FROM orders WHERE id = ? AND user_id = ?').bind(c.req.param('id'), user.id).first() as any;
   if (!order) return c.json({ error: 'Order not found' }, 404);
-  if (!['open', 'partial'].includes(order.status)) return c.json({ error: 'Order cannot be cancelled' }, 400);
+  if (!['open', 'partial', 'pending'].includes(order.status)) return c.json({ error: 'Order cannot be cancelled' }, 400);
 
   const market = await c.env.DB.prepare('SELECT * FROM markets WHERE id = ?').bind(order.market_id).first() as any;
 
@@ -208,7 +268,8 @@ app.get('/my', authMiddleware, async (c) => {
   const params: any[] = [user.id];
 
   if (status === 'open') {
-    sql += ` AND o.status IN ('open','partial')`;
+    // S3-3: pending = stop order waiting for its trigger. Show alongside open/partial.
+    sql += ` AND o.status IN ('open','partial','pending')`;
   } else if (status === 'closed') {
     sql += ` AND o.status IN ('filled','cancelled')`;
   }
@@ -532,6 +593,83 @@ async function updateCandles(DB: D1Database, marketId: string, trades: any[]) {
         .bind(marketId, interval, openTime, openPrice, highPrice, lowPrice, lastPrice, totalVolume).run();
     }
   }
+}
+
+// ============================================================================
+// S3-3: Stop-limit trigger helpers
+// ----------------------------------------------------------------------------
+// After every successful trade the matching engine calls checkAndTriggerStops
+// to see whether the new market price (last trade price) has crossed any
+// pending stop-limit orders in the same market. Triggered orders are flipped
+// to 'open' and immediately run through matchOrder.
+//
+// IMPORTANT: triggered orders reuse their already-locked balance (locked at
+// placement time). We reconstruct the lock info from the order row so refund
+// accounting stays symmetric.
+// ============================================================================
+async function checkAndTriggerStops(DB: D1Database, market: any, lastPrice: number): Promise<void> {
+  // Pull candidate pending stops in this market that just became actionable.
+  // Buy stop:   trigger when lastPrice >= stop_price
+  // Sell stop:  trigger when lastPrice <= stop_price
+  let candidates: any[] = [];
+  try {
+    const { results } = await DB.prepare(
+      `SELECT * FROM orders
+        WHERE market_id = ?
+          AND status = 'pending'
+          AND type = 'stop_limit'
+          AND (
+            (side = 'buy'  AND stop_price <= ?) OR
+            (side = 'sell' AND stop_price >= ?)
+          )
+        ORDER BY created_at ASC
+        LIMIT 100`
+    ).bind(market.id, lastPrice, lastPrice).all<any>();
+    candidates = (results || []) as any[];
+  } catch (e) {
+    // stop_price column missing → migration not applied yet. Silently no-op.
+    console.warn('[stop-trigger] query failed (migration pending?):', e);
+    return;
+  }
+
+  for (const stop of candidates) {
+    try {
+      // Reconstruct lock info from the stored row: for buys the lock was in
+      // quote with the (1+taker_fee_locked) cushion; for sells the lock is
+      // simply `amount` of base. This mirrors the placement-time math so
+      // refunds after fills stay balanced.
+      const lockSymbol = stop.side === 'buy' ? market.quote_coin : market.base_coin;
+      const takerFee = stop.taker_fee_locked != null ? Number(stop.taker_fee_locked) : Number(market.taker_fee);
+      const lockAmount = stop.side === 'buy'
+        ? Number(stop.price) * Number(stop.remaining) * (1 + takerFee)
+        : Number(stop.remaining);
+      await triggerAndMatch(DB, stop.id, market, {
+        lockAmount,
+        lockSymbol,
+        tif: (stop.time_in_force as any) || 'GTC',
+      });
+    } catch (e) {
+      console.warn('[stop-trigger] order', stop.id, 'failed to match:', e);
+    }
+  }
+}
+
+async function triggerAndMatch(
+  DB: D1Database,
+  orderId: string,
+  market: any,
+  lockInfo: { lockAmount: number; lockSymbol: string; tif: 'GTC' | 'IOC' | 'FOK' | 'POST_ONLY' },
+) {
+  // Flip pending → open, stamp triggered_at, then run the matcher.
+  await DB.prepare(
+    `UPDATE orders
+        SET status = 'open',
+            type = 'limit',
+            triggered_at = datetime('now'),
+            updated_at = datetime('now')
+      WHERE id = ? AND status = 'pending'`
+  ).bind(orderId).run();
+  return matchOrder(DB, orderId, market, lockInfo);
 }
 
 export default app;
