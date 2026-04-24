@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { AppEnv } from '../index';
 import { authMiddleware, adminMiddleware } from '../middleware/auth';
 import { createNotification } from './notifications';
+import { logAdminAction } from '../utils/audit';
 
 const app = new Hono<AppEnv>();
 
@@ -246,6 +247,13 @@ app.post('/users/:id/toggle-active', async (c) => {
     });
   } catch { /* ignore */ }
 
+  await logAdminAction(c, {
+    action: 'user.toggle_active',
+    targetType: 'user',
+    targetId: u.id,
+    payload: { email: u.email, from: u.is_active ? 1 : 0, to: newVal },
+  });
+
   return c.json({ is_active: newVal });
 });
 
@@ -263,6 +271,12 @@ app.post('/users/:id/role', async (c) => {
     return c.json({ error: 'Cannot demote yourself' }, 400);
   }
   await db.prepare('UPDATE users SET role = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(role, u.id).run();
+  await logAdminAction(c, {
+    action: 'user.change_role',
+    targetType: 'user',
+    targetId: u.id,
+    payload: { role },
+  });
   return c.json({ role });
 });
 
@@ -279,6 +293,11 @@ app.post('/users/:id/reset-2fa', async (c) => {
       message: 'Your two-factor authentication has been reset by an administrator. Please set it up again.',
     });
   } catch { /* ignore */ }
+  await logAdminAction(c, {
+    action: 'user.reset_2fa',
+    targetType: 'user',
+    targetId: u.id,
+  });
   return c.json({ ok: true });
 });
 
@@ -290,6 +309,12 @@ app.post('/users/:userId/toggle', async (c) => {
   if (!user) return c.json({ error: 'User not found' }, 404);
   const newStatus = user.is_active ? 0 : 1;
   await db.prepare('UPDATE users SET is_active = ? WHERE id = ?').bind(newStatus, userId).run();
+  await logAdminAction(c, {
+    action: 'user.toggle_active',
+    targetType: 'user',
+    targetId: userId,
+    payload: { from: user.is_active ? 1 : 0, to: newStatus, legacy: true },
+  });
   return c.json({ message: `User ${newStatus ? 'activated' : 'deactivated'}`, is_active: newStatus });
 });
 
@@ -322,6 +347,11 @@ app.post('/kyc/:userId/approve', async (c) => {
       message: 'Your identity verification has been approved. You now have full trading access.',
     });
   } catch { /* ignore */ }
+  await logAdminAction(c, {
+    action: 'kyc.approve',
+    targetType: 'kyc',
+    targetId: u.id,
+  });
   return c.json({ message: 'KYC approved' });
 });
 
@@ -343,6 +373,12 @@ app.post('/kyc/:userId/reject', async (c) => {
         : 'Your KYC was rejected. Please resubmit with correct information.',
     });
   } catch { /* ignore */ }
+  await logAdminAction(c, {
+    action: 'kyc.reject',
+    targetType: 'kyc',
+    targetId: u.id,
+    payload: { reason: reason || null },
+  });
   return c.json({ message: 'KYC rejected' });
 });
 
@@ -398,6 +434,19 @@ app.post('/withdrawals/:id/approve', async (c) => {
     });
   } catch { /* ignore */ }
 
+  await logAdminAction(c, {
+    action: 'withdrawal.approve',
+    targetType: 'withdrawal',
+    targetId: w.id,
+    payload: {
+      user_id: w.user_id,
+      coin: w.coin_symbol,
+      amount: w.amount,
+      fee: w.fee,
+      tx_hash: tx,
+    },
+  });
+
   return c.json({ message: 'Withdrawal approved', tx_hash: tx });
 });
 
@@ -430,6 +479,19 @@ app.post('/withdrawals/:id/reject', async (c) => {
       data: { withdrawal_id: w.id },
     });
   } catch { /* ignore */ }
+
+  await logAdminAction(c, {
+    action: 'withdrawal.reject',
+    targetType: 'withdrawal',
+    targetId: w.id,
+    payload: {
+      user_id: w.user_id,
+      coin: w.coin_symbol,
+      amount: w.amount,
+      fee: w.fee,
+      reason: reason || null,
+    },
+  });
 
   return c.json({ message: 'Withdrawal rejected and refunded' });
 });
@@ -510,6 +572,13 @@ app.post('/deposits/manual', async (c) => {
     });
   } catch { /* ignore */ }
 
+  await logAdminAction(c, {
+    action: 'deposit.manual',
+    targetType: 'deposit',
+    targetId: id,
+    payload: { user_id, coin: coin_symbol, amount: amt, tx_hash: tx, note: note || null },
+  });
+
   return c.json({ id, tx_hash: tx, amount: amt });
 });
 
@@ -589,6 +658,16 @@ app.put('/coins/:symbol', async (c) => {
 
   params.push(symbol);
   await db.prepare(`UPDATE coins SET ${sets.join(', ')} WHERE symbol = ?`).bind(...params).run();
+  await logAdminAction(c, {
+    action: 'coin.update',
+    targetType: 'coin',
+    targetId: symbol,
+    payload: {
+      price_usd: price_usd ?? null,
+      is_active: is_active ?? null,
+      sort_order: sort_order ?? null,
+    },
+  });
   return c.json({ message: 'Coin updated' });
 });
 
@@ -636,6 +715,17 @@ app.post('/broadcast', async (c) => {
       sent += slice.length;
     } catch { /* continue */ }
   }
+
+  await logAdminAction(c, {
+    action: 'broadcast.send',
+    targetType: 'broadcast',
+    payload: {
+      title,
+      target: Array.isArray(target) ? `array(${target.length})` : (target || 'all'),
+      sent,
+      total: userIds.length,
+    },
+  });
 
   return c.json({ sent, total: userIds.length });
 });
@@ -690,6 +780,43 @@ app.get('/activity', async (c) => {
     .slice(0, limit);
 
   return c.json(merged);
+});
+
+// ============================================================================
+// Admin audit log viewer (Sprint 3 — S3-2)
+// Read-only. Supports filtering by admin_id, action, target_type, target_id.
+// ============================================================================
+app.get('/audit-logs', async (c) => {
+  const db = c.env.DB;
+  const limit = Math.min(parseInt(c.req.query('limit') || '100'), 500);
+  const adminId = c.req.query('admin_id') || '';
+  const action = c.req.query('action') || '';
+  const targetType = c.req.query('target_type') || '';
+  const targetId = c.req.query('target_id') || '';
+
+  let sql = 'SELECT * FROM admin_audit_logs WHERE 1=1';
+  const params: any[] = [];
+  if (adminId) { sql += ' AND admin_id = ?'; params.push(adminId); }
+  if (action) { sql += ' AND action = ?'; params.push(action); }
+  if (targetType) { sql += ' AND target_type = ?'; params.push(targetType); }
+  if (targetId) { sql += ' AND target_id = ?'; params.push(targetId); }
+  sql += ' ORDER BY created_at DESC LIMIT ?';
+  params.push(limit);
+
+  try {
+    const { results } = await db.prepare(sql).bind(...params).all<any>();
+    // Parse payload JSON for UI convenience
+    const parsed = (results || []).map((r: any) => ({
+      ...r,
+      payload: r.payload
+        ? (() => { try { return JSON.parse(r.payload); } catch { return r.payload; } })()
+        : null,
+    }));
+    return c.json(parsed);
+  } catch (e: any) {
+    // Table may not exist yet if migration has not been applied
+    return c.json({ error: 'audit log unavailable', detail: String(e?.message || e) }, 503);
+  }
 });
 
 export default app;
