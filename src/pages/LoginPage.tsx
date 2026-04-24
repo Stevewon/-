@@ -154,7 +154,7 @@ export default function LoginPage() {
               onChange={(e) => setEmail(e.target.value.trim())}
               onFocus={() => setFocused('email')}
               onBlur={() => setFocused('')}
-              className="auth-input pl-10"
+              className="auth-input py-3.5 pl-10 pr-4"
               placeholder={t('auth.emailPlaceholder')}
               required
               autoComplete="email"
@@ -192,7 +192,7 @@ export default function LoginPage() {
                 setFocused('');
                 setCapsOn(false);
               }}
-              className="auth-input pl-10 pr-11"
+              className="auth-input py-3.5 pl-10 pr-11"
               placeholder={t('auth.passwordPlaceholder')}
               required
               autoComplete="current-password"
@@ -250,7 +250,7 @@ export default function LoginPage() {
               placeholder="123456"
               maxLength={6}
               autoFocus
-              className="auth-input text-center text-xl tracking-[0.5em] font-mono"
+              className="auth-input py-3.5 px-4 text-center text-xl tracking-[0.5em] font-mono"
             />
           </div>
         )}

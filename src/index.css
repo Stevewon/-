@@ -148,20 +148,17 @@ select.input-field {
   border-radius: 0.5rem;
 }
 
-/* Auth input - Binance/Upbit style, larger touch target for mobile
-   NOTE: we use longhand padding properties so Tailwind utilities like
-   `pl-10` / `pr-11` (for left/right icons) can still override them.
-   A `padding` shorthand would win over Tailwind's longhand no matter
-   the class order, which caused icons to overlap placeholder text. */
+/* Auth input - Binance/Upbit style, larger touch target for mobile.
+   IMPORTANT: NO `padding` property here. PostCSS/Tailwind would
+   combine longhand padding-* declarations back into a shorthand
+   that always wins over pl-10 / pr-11 utility classes used on
+   inputs with left/right icons. Each input MUST declare its own
+   padding via Tailwind utilities (e.g. `py-3.5 pl-10 pr-3`). */
 .auth-input {
   background: var(--color-exchange-card);
   border: 1px solid var(--color-exchange-border);
   color: var(--color-exchange-text);
   border-radius: 0.625rem;
-  padding-top: 0.875rem;
-  padding-right: 1rem;
-  padding-bottom: 0.875rem;
-  padding-left: 1rem;
   width: 100%;
   font-size: 0.9375rem;
   outline: none;

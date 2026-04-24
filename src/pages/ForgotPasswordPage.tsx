@@ -84,7 +84,7 @@ export default function ForgotPasswordPage() {
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value.trim().toLowerCase())}
-                className="auth-input pl-10"
+                className="auth-input py-3.5 pl-10 pr-4"
                 placeholder={t('auth.emailPlaceholder')}
                 required
                 autoComplete="email"

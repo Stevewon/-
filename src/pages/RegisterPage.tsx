@@ -182,7 +182,7 @@ export default function RegisterPage() {
               onChange={(e) => setEmail(e.target.value.trim())}
               onFocus={() => setFocused('email')}
               onBlur={() => setFocused('')}
-              className="auth-input pl-10"
+              className="auth-input py-3.5 pl-10 pr-4"
               placeholder={t('auth.emailPlaceholder')}
               required
               autoComplete="email"
@@ -209,7 +209,7 @@ export default function RegisterPage() {
               onChange={(e) => setNickname(e.target.value)}
               onFocus={() => setFocused('nick')}
               onBlur={() => setFocused('')}
-              className="auth-input pl-10"
+              className="auth-input py-3.5 pl-10 pr-4"
               placeholder={t('auth.nicknamePlaceholder')}
               required
               autoComplete="username"
@@ -227,7 +227,7 @@ export default function RegisterPage() {
               onChange={(e) => setPassword(e.target.value)}
               onFocus={() => setFocused('pw')}
               onBlur={() => setFocused('')}
-              className="auth-input pr-11"
+              className="auth-input py-3.5 pl-4 pr-11"
               placeholder={t('auth.passwordPlaceholderNew')}
               required
               autoComplete="new-password"
@@ -302,7 +302,7 @@ export default function RegisterPage() {
               onChange={(e) => setConfirmPw(e.target.value)}
               onFocus={() => setFocused('pw2')}
               onBlur={() => setFocused('')}
-              className="auth-input pr-11"
+              className="auth-input py-3.5 pl-4 pr-11"
               placeholder={t('auth.confirmPasswordPlaceholder')}
               required
               autoComplete="new-password"
@@ -345,7 +345,7 @@ export default function RegisterPage() {
               type="text"
               value={refCode}
               onChange={(e) => setRefCode(e.target.value.toUpperCase())}
-              className="auth-input mt-2"
+              className="auth-input py-3.5 px-4 mt-2"
               placeholder={t('auth.referralPlaceholder')}
               maxLength={12}
             />
