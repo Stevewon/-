@@ -26,7 +26,7 @@ function floorToDecimals(n: number, decimals: number): number {
 app.post('/', authMiddleware, rlPlaceOrder, requireKyc('approved'), async (c) => {
   const user = c.get('user');
   const body = await c.req.json();
-  let { market_symbol, side, type, price, amount } = body;
+  let { market_symbol, side, type, price, amount, time_in_force } = body;
   if (!market_symbol || typeof market_symbol !== 'string') {
     return c.json({ error: 'Invalid market_symbol' }, 400);
   }
@@ -38,6 +38,24 @@ app.post('/', authMiddleware, rlPlaceOrder, requireKyc('approved'), async (c) =>
 
   if (!['buy', 'sell'].includes(side)) return c.json({ error: 'Invalid side' }, 400);
   if (!['limit', 'market'].includes(type)) return c.json({ error: 'Invalid type' }, 400);
+
+  // S3-4 Time-In-Force. Default GTC for backward-compat. Market orders are
+  // always IOC semantics by nature, so normalise any explicit value here.
+  const tifRaw = (time_in_force == null ? 'GTC' : String(time_in_force)).toUpperCase();
+  if (!['GTC', 'IOC', 'FOK', 'POST_ONLY'].includes(tifRaw)) {
+    return c.json({ error: 'Invalid time_in_force (GTC|IOC|FOK|POST_ONLY)' }, 400);
+  }
+  if (type === 'market' && (tifRaw === 'POST_ONLY' || tifRaw === 'GTC' || tifRaw === 'FOK')) {
+    // Market orders inherently cannot rest in the book or require atomic
+    // fill against an unknown price. Only IOC is meaningful.
+    if (tifRaw !== 'GTC') {
+      return c.json({ error: 'Market orders only support IOC time_in_force' }, 400);
+    }
+    // Upgrade implicit GTC for market → IOC (existing behaviour already
+    // cancels any unfilled market remainder, this just names it).
+  }
+  const tif: 'GTC' | 'IOC' | 'FOK' | 'POST_ONLY' =
+    type === 'market' ? 'IOC' : (tifRaw as any);
 
   // Numeric coercion (frontend may send strings)
   amount = Number(amount);
@@ -120,15 +138,22 @@ app.post('/', authMiddleware, rlPlaceOrder, requireKyc('approved'), async (c) =>
   const orderPrice = type === 'market' ? null : price;
 
   await c.env.DB.prepare(
-    'INSERT INTO orders (id, user_id, market_id, side, type, price, amount, remaining, total) VALUES (?,?,?,?,?,?,?,?,?)'
-  ).bind(orderId, user.id, market.id, side, type, orderPrice, amount, amount, (orderPrice || 0) * amount).run();
+    `INSERT INTO orders
+       (id, user_id, market_id, side, type, price, amount, remaining, total, time_in_force)
+     VALUES (?,?,?,?,?,?,?,?,?,?)`
+  ).bind(
+    orderId, user.id, market.id, side, type, orderPrice,
+    amount, amount, (orderPrice || 0) * amount, tif,
+  ).run();
 
-  // Match order (passes lockAmount so unused funds are refunded)
-  const result = await matchOrder(c.env.DB, orderId, market, { lockAmount, lockSymbol });
+  // Match order (passes lockAmount so unused funds are refunded).
+  // `tif` drives FOK preflight / POST_ONLY guard / IOC cancel-on-remain.
+  const result = await matchOrder(c.env.DB, orderId, market, { lockAmount, lockSymbol, tif });
 
   return c.json({
     order: result.order,
     trades: result.trades.map((t: any) => ({ id: t.id, price: t.price, amount: t.amount, total: t.total })),
+    tif_rejected: result.tifRejected || undefined,
   });
 });
 
@@ -209,10 +234,13 @@ async function matchOrder(
   DB: D1Database,
   orderId: string,
   market: any,
-  lockInfo?: { lockAmount: number; lockSymbol: string }
+  lockInfo?: { lockAmount: number; lockSymbol: string; tif?: 'GTC' | 'IOC' | 'FOK' | 'POST_ONLY' }
 ) {
   const order = await DB.prepare('SELECT * FROM orders WHERE id = ?').bind(orderId).first() as any;
   const trades: any[] = [];
+  const tif: 'GTC' | 'IOC' | 'FOK' | 'POST_ONLY' =
+    (lockInfo?.tif as any) || order.time_in_force || 'GTC';
+  let tifRejected: string | null = null;
 
   const oppositeSide = order.side === 'buy' ? 'sell' : 'buy';
   const priceOrder = order.side === 'buy' ? 'ASC' : 'DESC';
@@ -230,6 +258,47 @@ async function matchOrder(
        ${priceCondition}
      ORDER BY price ${priceOrder}, created_at ASC LIMIT 50`
   ).bind(market.id, oppositeSide, order.user_id).all();
+
+  // S3-4 POST_ONLY: maker-only. If any order on the opposite side would cross
+  // (ie. the book has liquidity at our limit price or better), cancel without
+  // trading so the order never becomes a taker. POST_ONLY is limit-only.
+  if (tif === 'POST_ONLY' && order.type === 'limit' && (matchingOrders as any[]).length > 0) {
+    tifRejected = 'POST_ONLY: order would cross the book';
+    await DB.prepare(
+      "UPDATE orders SET status = 'cancelled', remaining = 0, updated_at = datetime('now') WHERE id = ?"
+    ).bind(order.id).run();
+    // Refund the whole lock (no trade happened).
+    if (lockInfo && lockInfo.lockAmount > 0) {
+      await DB.prepare(
+        'UPDATE wallets SET available = available + ?, locked = MAX(0, locked - ?) WHERE user_id = ? AND coin_symbol = ?'
+      ).bind(lockInfo.lockAmount, lockInfo.lockAmount, order.user_id, lockInfo.lockSymbol).run();
+    }
+    const updated = await DB.prepare('SELECT * FROM orders WHERE id = ?').bind(orderId).first();
+    return { order: updated, trades, tifRejected };
+  }
+
+  // S3-4 FOK: Fill-Or-Kill. Walk the book without mutating to see whether we
+  // could fully fill right now; if not, cancel the whole order atomically.
+  if (tif === 'FOK') {
+    let available = 0;
+    for (const m of matchingOrders as any[]) {
+      available += Number(m.remaining);
+      if (available >= order.amount) break;
+    }
+    if (available < order.amount) {
+      tifRejected = 'FOK: insufficient liquidity to fully fill';
+      await DB.prepare(
+        "UPDATE orders SET status = 'cancelled', remaining = 0, updated_at = datetime('now') WHERE id = ?"
+      ).bind(order.id).run();
+      if (lockInfo && lockInfo.lockAmount > 0) {
+        await DB.prepare(
+          'UPDATE wallets SET available = available + ?, locked = MAX(0, locked - ?) WHERE user_id = ? AND coin_symbol = ?'
+        ).bind(lockInfo.lockAmount, lockInfo.lockAmount, order.user_id, lockInfo.lockSymbol).run();
+      }
+      const updated = await DB.prepare('SELECT * FROM orders WHERE id = ?').bind(orderId).first();
+      return { order: updated, trades, tifRejected };
+    }
+  }
 
   let remaining = order.remaining;
 
@@ -278,9 +347,23 @@ async function matchOrder(
     remaining -= tradeAmount;
   }
 
-  // Update taker order
+  // Update taker order.
+  // S3-4: IOC cancels any leftover after matching (never rests in book).
+  // Market orders have always behaved this way; IOC extends the semantics
+  // to limit orders too. GTC keeps the previous "open / partial" behaviour.
   const filled = order.amount - remaining;
-  const status = remaining <= 0 ? 'filled' : filled > 0 ? 'partial' : (order.type === 'market' ? 'cancelled' : 'open');
+  const iocUnfilled = tif === 'IOC' && remaining > 0;
+  let status: string;
+  if (remaining <= 0) {
+    status = 'filled';
+  } else if (order.type === 'market' || iocUnfilled) {
+    status = 'cancelled';
+  } else if (filled > 0) {
+    status = 'partial';
+  } else {
+    status = 'open';
+  }
+  if (iocUnfilled && filled === 0) tifRejected = 'IOC: no liquidity at limit price';
   await DB.prepare("UPDATE orders SET filled = ?, remaining = ?, status = ?, updated_at = datetime('now') WHERE id = ?")
     .bind(filled, remaining, status, order.id).run();
 
@@ -328,7 +411,7 @@ async function matchOrder(
   }
 
   const updatedOrder = await DB.prepare('SELECT * FROM orders WHERE id = ?').bind(orderId).first();
-  return { order: updatedOrder, trades };
+  return { order: updatedOrder, trades, tifRejected };
 }
 
 async function addBalance(DB: D1Database, userId: string, coinSymbol: string, amount: number) {
