@@ -83,11 +83,19 @@ export default function LoginPage() {
 
   return (
     <AuthLayout variant="login">
-      {/* Headline */}
+      {/* Headline + inline register link (Binance mobile pattern) */}
       <div className="mb-7">
-        <h1 className="text-2xl lg:text-3xl font-bold text-exchange-text leading-tight">
-          {t('auth.welcome')}
-        </h1>
+        <div className="flex items-start justify-between gap-3">
+          <h1 className="text-2xl lg:text-3xl font-bold text-exchange-text leading-tight">
+            {t('auth.welcome')}
+          </h1>
+          <Link
+            to="/register"
+            className="text-[13px] text-exchange-yellow hover:underline font-semibold whitespace-nowrap mt-1"
+          >
+            {t('nav.register')} →
+          </Link>
+        </div>
         <p className="text-exchange-text-secondary mt-2 text-sm">
           {t('auth.loginTo')}
         </p>
@@ -280,16 +288,6 @@ export default function LoginPage() {
         </div>
       </form>
 
-      <p className="text-center text-sm text-exchange-text-secondary mt-8">
-        {t('auth.noAccount')}{' '}
-        <Link
-          to="/register"
-          className="text-exchange-yellow hover:underline font-semibold"
-        >
-          {t('nav.register')}
-        </Link>
-      </p>
-
       {/* Trust row */}
       <div className="mt-10 flex items-center justify-center gap-4 text-[11px] text-exchange-text-third">
         <span className="flex items-center gap-1">
@@ -325,7 +323,7 @@ function SocialBtn({ label, icon }: { label: string; icon: React.ReactNode }) {
       type="button"
       disabled
       title={`${label} (coming soon)`}
-      className="flex items-center justify-center gap-2 py-2.5 rounded-lg border border-exchange-border bg-exchange-card hover:bg-exchange-hover disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+      className="flex items-center justify-center gap-2 h-12 rounded-lg border border-exchange-border bg-exchange-card hover:bg-exchange-hover disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
     >
       {icon}
       <span className="text-xs text-exchange-text-secondary hidden sm:inline">
