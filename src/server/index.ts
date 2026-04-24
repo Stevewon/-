@@ -8,11 +8,17 @@ import adminRoutes from './routes/admin';
 import notificationRoutes from './routes/notifications';
 import priceAlertRoutes from './routes/priceAlerts';
 import profileRoutes from './routes/profile';
+import { installObservability, captureError } from './utils/observability';
 
 export type Env = {
   DB: D1Database;
   JWT_SECRET: string;
   CORS_ORIGIN: string;
+  // Sprint 3+ observability (all optional)
+  SENTRY_DSN?: string;
+  LOGFLARE_API_KEY?: string;
+  LOGFLARE_SOURCE?: string;
+  ENVIRONMENT?: string;
 };
 
 export type AppVars = {
@@ -22,6 +28,10 @@ export type AppVars = {
 export type AppEnv = { Bindings: Env; Variables: AppVars };
 
 const app = new Hono<AppEnv>();
+
+// Sprint 3+ #3: global error / 404 handler + Sentry/Logflare forwarding.
+// Install FIRST so any middleware/route that throws is captured.
+installObservability(app as any);
 
 // CORS for API routes
 app.use('/api/*', cors());
@@ -78,7 +88,7 @@ app.use('/api/*', async (c, next) => {
             const result = await checkPriceAlerts(c.env);
             console.log('[self-scheduler] price-alert check:', result);
           } catch (e) {
-            console.error('[self-scheduler] failed:', e);
+            captureError(c as any, e, { where: 'self-scheduler' });
             // On failure, allow next request to retry sooner by rolling
             // back the in-memory throttle
             lastSelfScheduleAttempt = 0;
@@ -101,8 +111,48 @@ app.route('/api/notifications', notificationRoutes);
 app.route('/api/price-alerts', priceAlertRoutes);
 app.route('/api/profile', profileRoutes);
 
-// Health
-app.get('/api/health', (c) => c.json({ status: 'ok', timestamp: new Date().toISOString() }));
+// ============================================================================
+// Health checks (Sprint 3+ #3)
+// ----------------------------------------------------------------------------
+// /api/health         — liveness: fast, no dependencies, always 200 when up.
+// /api/health/ready   — readiness: pings D1 + reports the most recent
+//                       price-alert cron tick so monitors can alarm on stale
+//                       workers. Returns 503 if DB is unreachable.
+// ============================================================================
+app.get('/api/health', (c) => c.json({
+  status: 'ok',
+  service: 'quantaex-api',
+  environment: (c.env as any).ENVIRONMENT || 'production',
+  timestamp: new Date().toISOString(),
+}));
+
+app.get('/api/health/ready', async (c) => {
+  const started = Date.now();
+  const report: any = {
+    status: 'ok',
+    service: 'quantaex-api',
+    environment: (c.env as any).ENVIRONMENT || 'production',
+    timestamp: new Date().toISOString(),
+    checks: {} as Record<string, any>,
+  };
+  // 1. D1 ping — read a single row from system_state (cheap, indexed by PK).
+  try {
+    const row = await c.env.DB.prepare(
+      "SELECT value FROM system_state WHERE key = 'price_alert_last_run'"
+    ).first<{ value: string }>();
+    report.checks.db = { ok: true, last_cron: row?.value || null };
+  } catch (e: any) {
+    report.status = 'degraded';
+    report.checks.db = { ok: false, error: String(e?.message || e) };
+  }
+  // 2. Observability sinks configured?
+  report.checks.sentry = !!(c.env as any).SENTRY_DSN ? 'configured' : 'disabled';
+  report.checks.logflare = !!(c.env as any).LOGFLARE_API_KEY ? 'configured' : 'disabled';
+  report.checks.mailer = !!(c.env as any).RESEND_API_KEY ? 'configured' : 'disabled';
+
+  report.elapsed_ms = Date.now() - started;
+  return c.json(report, report.status === 'ok' ? 200 : 503);
+});
 
 // ===== COIN BASE PRICES (source of truth) =====
 const COIN_PRICES: Record<string, number> = {
