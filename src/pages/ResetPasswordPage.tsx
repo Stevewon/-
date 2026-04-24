@@ -1,10 +1,9 @@
 import { useState } from 'react';
 import { Link, useSearchParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Lock, Eye, EyeOff, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Lock, Eye, EyeOff, CheckCircle2, AlertCircle } from 'lucide-react';
 import api from '../utils/api';
 import { useI18n } from '../i18n';
-import QuantaLogo from '../components/common/QuantaLogo';
-import LangSwitch from '../components/common/LangSwitch';
+import AuthLayout from '../components/common/AuthLayout';
 
 export default function ResetPasswordPage() {
   const { t } = useI18n();
@@ -41,42 +40,37 @@ export default function ResetPasswordPage() {
 
   if (!token) {
     return (
-      <div className="min-h-screen bg-exchange-bg flex items-center justify-center p-4">
-        <div className="bg-exchange-card border border-exchange-border rounded-xl p-6 max-w-sm text-center">
+      <AuthLayout variant="recover">
+        <div className="bg-exchange-card border border-exchange-border rounded-xl p-6 text-center">
           <AlertCircle className="mx-auto text-exchange-sell mb-2" size={32} />
-          <p className="text-sm text-exchange-text-secondary mb-4">{t('auth.resetInvalid')}</p>
-          <Link to="/forgot-password" className="text-exchange-yellow hover:underline text-sm">
+          <p className="text-sm text-exchange-text-secondary mb-4">
+            {t('auth.resetInvalid')}
+          </p>
+          <Link
+            to="/forgot-password"
+            className="text-exchange-yellow hover:underline text-sm"
+          >
             {t('auth.forgotTitle')}
           </Link>
         </div>
-      </div>
+      </AuthLayout>
     );
   }
 
   return (
-    <div className="min-h-screen bg-exchange-bg flex flex-col">
-      <header className="sticky top-0 z-30 bg-exchange-bg/95 backdrop-blur border-b border-exchange-border/40">
-        <div className="max-w-md mx-auto px-4 py-3 flex items-center justify-between">
-          <Link to="/login" className="p-1 -ml-1 hover:bg-exchange-hover rounded-md transition-colors">
-            <ArrowLeft size={22} />
-          </Link>
-          <QuantaLogo size={24} />
-          <LangSwitch />
-        </div>
-      </header>
+    <AuthLayout variant="recover">
+      <h1 className="text-2xl lg:text-3xl font-bold mb-2">{t('auth.resetTitle')}</h1>
+      <p className="text-sm text-exchange-text-secondary mb-6">
+        {t('auth.resetDesc')}
+      </p>
 
-      <main className="flex-1 flex items-center justify-center px-4 py-8">
-        <div className="w-full max-w-md">
-          <h1 className="text-2xl font-bold mb-2">{t('auth.resetTitle')}</h1>
-          <p className="text-sm text-exchange-text-secondary mb-6">{t('auth.resetDesc')}</p>
-
-          {done ? (
+      {done ? (
             <div className="bg-exchange-buy/10 border border-exchange-buy/30 text-exchange-buy rounded-lg px-4 py-3 text-sm flex gap-2">
               <CheckCircle2 size={18} className="shrink-0 mt-0.5" />
               <span>{t('auth.resetSuccess')}</span>
             </div>
-          ) : (
-            <form onSubmit={submit} className="space-y-4">
+      ) : (
+        <form onSubmit={submit} className="space-y-4">
               {error && (
                 <div className="bg-exchange-sell/10 border border-exchange-sell/30 text-exchange-sell rounded-lg px-3 py-2.5 text-sm flex gap-2">
                   <AlertCircle size={16} className="shrink-0 mt-0.5" />
@@ -131,17 +125,15 @@ export default function ResetPasswordPage() {
                 )}
               </div>
 
-              <button
-                type="submit"
-                disabled={!strong || !match || loading}
-                className="w-full !py-3.5 text-sm font-semibold rounded-lg bg-exchange-yellow text-black hover:bg-[#d9a60a] disabled:bg-exchange-border disabled:text-exchange-text-third transition-colors"
-              >
-                {loading ? '…' : t('auth.resetPwCta')}
-              </button>
-            </form>
-          )}
-        </div>
-      </main>
-    </div>
+          <button
+            type="submit"
+            disabled={!strong || !match || loading}
+            className="w-full !py-3.5 text-sm font-semibold rounded-lg bg-exchange-yellow text-black hover:bg-[#d9a60a] disabled:bg-exchange-border disabled:text-exchange-text-third transition-colors"
+          >
+            {loading ? '…' : t('auth.resetPwCta')}
+          </button>
+        </form>
+      )}
+    </AuthLayout>
   );
 }
