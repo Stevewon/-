@@ -12,15 +12,18 @@ export default function VerifyEmailPage() {
   const token = params.get('token') || '';
   const [status, setStatus] = useState<'idle' | 'loading' | 'ok' | 'err'>('idle');
   const [message, setMessage] = useState('');
+  const [bonusUnlocked, setBonusUnlocked] = useState(0);
   const user = useStore((s) => s.user);
 
   useEffect(() => {
     if (!token) return;
     setStatus('loading');
     api.post('/auth/verify-email', { token })
-      .then(() => {
+      .then((res) => {
         setStatus('ok');
         setMessage(t('auth.verifyEmailSuccess'));
+        const unlocked = Number(res.data?.bonus_unlocked || 0);
+        if (unlocked > 0) setBonusUnlocked(unlocked);
         // Refresh user in store
         api.get('/auth/me').then((r) => {
           const u = useStore.getState().user;
@@ -62,10 +65,23 @@ export default function VerifyEmailPage() {
           </div>
         )}
         {status === 'ok' && (
-          <div className="bg-exchange-buy/10 border border-exchange-buy/30 text-exchange-buy rounded-lg px-4 py-3 text-sm flex items-start gap-2 my-4">
-            <CheckCircle2 className="shrink-0 mt-0.5" size={18} />
-            <span className="text-left">{message}</span>
-          </div>
+          <>
+            <div className="bg-exchange-buy/10 border border-exchange-buy/30 text-exchange-buy rounded-lg px-4 py-3 text-sm flex items-start gap-2 my-4">
+              <CheckCircle2 className="shrink-0 mt-0.5" size={18} />
+              <span className="text-left">{message}</span>
+            </div>
+            {bonusUnlocked > 0 && (
+              <div className="bg-exchange-yellow/10 border border-exchange-yellow/30 rounded-lg px-4 py-3 my-4 text-left">
+                <p className="text-sm font-semibold text-exchange-yellow mb-1">
+                  🎉 {bonusUnlocked.toLocaleString()} QTA unlocked
+                </p>
+                <p className="text-[12px] text-exchange-text-secondary">
+                  Your sign-up bonus is now available for trading and
+                  withdrawals.
+                </p>
+              </div>
+            )}
+          </>
         )}
         {status === 'err' && (
           <div className="bg-exchange-sell/10 border border-exchange-sell/30 text-exchange-sell rounded-lg px-4 py-3 text-sm flex items-start gap-2 my-4">

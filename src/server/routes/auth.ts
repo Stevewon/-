@@ -87,18 +87,22 @@ app.post('/register', rlRegister, async (c) => {
     } catch { /* table may not exist yet; ignore */ }
   }
 
-  // Default wallets with bonus (1,000 QTA only)
+  // Default wallets. QTA sign-up bonus (1,000) is credited to `locked`
+  // so it cannot be traded or withdrawn until the user verifies their
+  // email. This prevents multi-account abuse where throwaway addresses
+  // farm the bonus. Unlock happens in POST /verify-email below.
   const defaults = [
-    { symbol: 'USDT', amount: 0 },
-    { symbol: 'KRW', amount: 0 },
-    { symbol: 'BTC', amount: 0 },
-    { symbol: 'ETH', amount: 0 },
-    { symbol: 'QTA', amount: 1000 },
+    { symbol: 'USDT', available: 0, locked: 0 },
+    { symbol: 'KRW',  available: 0, locked: 0 },
+    { symbol: 'BTC',  available: 0, locked: 0 },
+    { symbol: 'ETH',  available: 0, locked: 0 },
+    { symbol: 'QTA',  available: 0, locked: 1000 },
   ];
 
   const batch = defaults.map(d =>
-    c.env.DB.prepare('INSERT INTO wallets (id, user_id, coin_symbol, available) VALUES (?,?,?,?)')
-      .bind(uuid(), id, d.symbol, d.amount)
+    c.env.DB.prepare(
+      'INSERT INTO wallets (id, user_id, coin_symbol, available, locked) VALUES (?,?,?,?,?)'
+    ).bind(uuid(), id, d.symbol, d.available, d.locked),
   );
   await c.env.DB.batch(batch);
 
@@ -276,6 +280,14 @@ app.post('/verify-email', async (c) => {
     return c.json({ error: 'Token expired' }, 400);
   }
 
+  // Was this the first successful verification for this user?
+  // Only unlock the sign-up bonus on the first verify to prevent repeat
+  // unlocks if the user gets a new verification email later.
+  const userRow = await c.env.DB.prepare(
+    `SELECT email_verified_at FROM users WHERE id = ?`
+  ).bind(row.user_id).first<any>();
+  const firstVerification = !userRow?.email_verified_at;
+
   await c.env.DB.batch([
     c.env.DB.prepare(
       `UPDATE users SET email_verified_at = CURRENT_TIMESTAMP WHERE id = ?`
@@ -285,7 +297,33 @@ app.post('/verify-email', async (c) => {
     ).bind(row.id),
   ]);
 
-  return c.json({ ok: true, message: 'Email verified' });
+  // Unlock the QTA sign-up bonus: move any `locked` QTA (up to 1000)
+  // into `available`. Idempotent because we run it only on first verify.
+  let bonusUnlocked = 0;
+  if (firstVerification) {
+    try {
+      const qta = await c.env.DB.prepare(
+        `SELECT id, available, locked FROM wallets
+         WHERE user_id = ? AND coin_symbol = 'QTA'`
+      ).bind(row.user_id).first<any>();
+      if (qta && qta.locked > 0) {
+        bonusUnlocked = Math.min(qta.locked, 1000);
+        await c.env.DB.prepare(
+          `UPDATE wallets
+           SET available = available + ?, locked = locked - ?
+           WHERE id = ?`
+        ).bind(bonusUnlocked, bonusUnlocked, qta.id).run();
+      }
+    } catch (e) {
+      console.warn('[verify-email] bonus unlock failed:', e);
+    }
+  }
+
+  return c.json({
+    ok: true,
+    message: 'Email verified',
+    bonus_unlocked: bonusUnlocked,
+  });
 });
 
 // ============================================================================
