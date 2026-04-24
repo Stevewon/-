@@ -5,7 +5,9 @@
   "compatibility_date": "2026-04-20",
   "compatibility_flags": ["nodejs_compat"],
   "triggers": {
-    "crons": ["*/5 * * * *"]
+    // Price-alert tick every 5 min + daily D1 backup at 03:00 UTC.
+    // Worker's scheduled() handler inspects event.cron to route.
+    "crons": ["*/5 * * * *", "0 3 * * *"]
   },
   "d1_databases": [
     {
@@ -14,5 +16,13 @@
       "database_id": "5eb4f183-1dfc-4310-8872-07b014078dbc"
     }
   ],
-  "vars": {}
+  "r2_buckets": [
+    {
+      "binding": "BACKUPS",
+      "bucket_name": "quantaex-backups"
+    }
+  ],
+  "vars": {
+    "BACKUP_RETENTION_DAYS": "30"
+  }
 }
