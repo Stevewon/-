@@ -47,8 +47,8 @@ export default function AuthLayout({ children, variant = 'login' }: AuthLayoutPr
         <div className="absolute -top-32 -left-20 w-[420px] h-[420px] rounded-full bg-exchange-yellow/10 blur-3xl pointer-events-none" />
         <div className="absolute -bottom-40 right-0 w-[520px] h-[520px] rounded-full bg-exchange-buy/10 blur-3xl pointer-events-none" />
 
-        {/* Inner column — right-aligned so hero content sits close to the form */}
-        <div className="relative w-full flex flex-col ml-auto max-w-[600px] pr-8 xl:pr-16 pl-10 xl:pl-14 py-8">
+        {/* Inner column — centered inside the left pane */}
+        <div className="relative w-full flex flex-col mx-auto max-w-[560px] px-10 xl:px-14 py-8">
           {/* Top brand row */}
           <div className="flex items-center justify-between z-10">
             <Link to="/home" className="flex items-center group">
@@ -115,13 +115,10 @@ export default function AuthLayout({ children, variant = 'login' }: AuthLayoutPr
           <LangSwitch />
         </div>
 
-        {/* Form body — vertically centered; on lg the form is anchored
-            near the hero divider (left side of the right pane) instead
-            of floating in the far-right edge. */}
-        <main className="flex-1 flex lg:items-center justify-center lg:justify-start">
+        {/* Form body — centered inside the right pane */}
+        <main className="flex-1 flex lg:items-center justify-center">
           <div
-            className="w-full max-w-md px-5
-                       lg:max-w-[440px] lg:pl-14 xl:pl-24 lg:pr-0
+            className="w-full max-w-md px-5 lg:px-0 lg:max-w-[440px]
                        pt-6 lg:pt-12 pb-28 lg:pb-12"
           >
             {children}
