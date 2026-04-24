@@ -3,6 +3,7 @@ import type { AppEnv } from '../index';
 import { authMiddleware } from '../middleware/auth';
 import { requireKyc } from '../middleware/kyc';
 import { rateLimit } from '../middleware/rateLimit';
+import { getUserFeeTier, recordFeeLedger, type FeeTier } from '../utils/fees';
 
 const app = new Hono<AppEnv>();
 
@@ -86,13 +87,20 @@ app.post('/', authMiddleware, rlPlaceOrder, requireKyc('approved'), async (c) =>
   // current best ask (buy) / best bid (sell) so the user can't over-commit.
   // Any un-used locked funds are refunded by matchOrder() after execution.
   // ============================================================================
+  // S3-5: resolve the taker's current fee tier once, so the lock calculation
+  // uses the actual discounted rate instead of the market default.
+  const takerTier = await getUserFeeTier(c.env.DB, user.id, {
+    maker_fee: market.maker_fee,
+    taker_fee: market.taker_fee,
+  });
+
   let lockAmount = 0;
   let lockSymbol = '';
 
   if (side === 'buy') {
     lockSymbol = quote;
     if (type === 'limit') {
-      lockAmount = price * amount * (1 + market.taker_fee);
+      lockAmount = price * amount * (1 + takerTier.taker_fee);
     } else {
       // Market buy: estimate using best-ask (+20% safety cushion) and coin
       // reference price as fallback. This prevents locking the entire wallet
@@ -116,7 +124,7 @@ app.post('/', authMiddleware, rlPlaceOrder, requireKyc('approved'), async (c) =>
         return c.json({ error: `Minimum order total is ${market.min_order_total} ${quote}` }, 400);
       }
       // 20% safety buffer so slippage doesn't short-lock
-      lockAmount = estPrice * amount * 1.2 * (1 + market.taker_fee);
+      lockAmount = estPrice * amount * 1.2 * (1 + takerTier.taker_fee);
     }
 
     const wallet = await c.env.DB.prepare('SELECT available FROM wallets WHERE user_id = ? AND coin_symbol = ?').bind(user.id, quote).first() as any;
@@ -139,11 +147,13 @@ app.post('/', authMiddleware, rlPlaceOrder, requireKyc('approved'), async (c) =>
 
   await c.env.DB.prepare(
     `INSERT INTO orders
-       (id, user_id, market_id, side, type, price, amount, remaining, total, time_in_force)
-     VALUES (?,?,?,?,?,?,?,?,?,?)`
+       (id, user_id, market_id, side, type, price, amount, remaining, total,
+        time_in_force, taker_fee_locked, maker_fee_locked)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
   ).bind(
     orderId, user.id, market.id, side, type, orderPrice,
     amount, amount, (orderPrice || 0) * amount, tif,
+    takerTier.taker_fee, takerTier.maker_fee,
   ).run();
 
   // Match order (passes lockAmount so unused funds are refunded).
@@ -173,7 +183,10 @@ app.delete('/:id', authMiddleware, async (c) => {
     if (!order.price || order.price <= 0) {
       return c.json({ error: 'Cannot cancel: invalid order price' }, 400);
     }
-    const unlockAmount = order.remaining * order.price * (1 + market.taker_fee);
+    // S3-5: use the fee rate snapshotted at placement so we refund exactly
+    // what was locked, even if the user's tier has since changed.
+    const lockedRate = order.taker_fee_locked != null ? order.taker_fee_locked : market.taker_fee;
+    const unlockAmount = order.remaining * order.price * (1 + lockedRate);
     await c.env.DB.prepare('UPDATE wallets SET available = available + ?, locked = MAX(0, locked - ?) WHERE user_id = ? AND coin_symbol = ?')
       .bind(unlockAmount, unlockAmount, user.id, market.quote_coin).run();
   } else {
@@ -306,20 +319,54 @@ async function matchOrder(
   // (only relevant for buy orders, where the lock is in quote currency).
   let quoteConsumed = 0;
 
+  // S3-5: Cache fee-tier lookups per user for this single match pass so
+  // we don't hit the DB once per opposite order.
+  const tierCache = new Map<string, FeeTier>();
+  async function tierFor(userId: string): Promise<FeeTier> {
+    const cached = tierCache.get(userId);
+    if (cached) return cached;
+    const t = await getUserFeeTier(DB, userId, {
+      maker_fee: market.maker_fee,
+      taker_fee: market.taker_fee,
+    });
+    tierCache.set(userId, t);
+    return t;
+  }
+
+  // Snapshot of coin USD prices for ledger's fee_usd column (best-effort).
+  const baseUsd = await DB.prepare('SELECT price_usd FROM coins WHERE symbol = ?')
+    .bind(market.base_coin).first<{ price_usd: number }>().catch(() => null);
+  const quoteUsd = await DB.prepare('SELECT price_usd FROM coins WHERE symbol = ?')
+    .bind(market.quote_coin).first<{ price_usd: number }>().catch(() => null);
+
   for (const match of matchingOrders as any[]) {
     if (remaining <= 0) break;
 
     const tradeAmount = Math.min(remaining, match.remaining);
     const tradePrice = match.price;
     const tradeTotal = tradePrice * tradeAmount;
-    const buyerFee = tradeTotal * market.taker_fee;
-    const sellerFee = tradeTotal * market.maker_fee;
+
+    // Taker = the newly placed `order`; maker = the resting `match`.
+    // Use the fee rates snapshotted when each order was placed (falling
+    // back to the market default for pre-S3-5 orders that predate the
+    // *_fee_locked columns). This keeps refund/charge symmetric.
+    const takerTaker = order.taker_fee_locked != null
+      ? Number(order.taker_fee_locked)
+      : (await tierFor(order.user_id)).taker_fee;
+    const makerMaker = match.maker_fee_locked != null
+      ? Number(match.maker_fee_locked)
+      : (await tierFor(match.user_id)).maker_fee;
+
+    const buyerFeeRate  = order.side === 'buy' ? takerTaker : makerMaker;
+    const sellerFeeRate = order.side === 'sell' ? takerTaker : makerMaker;
+    const buyerFee  = tradeTotal * buyerFeeRate;
+    const sellerFee = tradeTotal * sellerFeeRate;
 
     const tradeId = uuid();
-    const buyOrderId = order.side === 'buy' ? order.id : match.id;
+    const buyOrderId  = order.side === 'buy'  ? order.id : match.id;
     const sellOrderId = order.side === 'sell' ? order.id : match.id;
-    const buyerId = order.side === 'buy' ? order.user_id : match.user_id;
-    const sellerId = order.side === 'sell' ? order.user_id : match.user_id;
+    const buyerId     = order.side === 'buy'  ? order.user_id : match.user_id;
+    const sellerId    = order.side === 'sell' ? order.user_id : match.user_id;
 
     // Insert trade
     await DB.prepare(
@@ -345,7 +392,41 @@ async function matchOrder(
 
     trades.push({ id: tradeId, price: tradePrice, amount: tradeAmount, total: tradeTotal });
     remaining -= tradeAmount;
+
+    // S3-5: append fee-ledger rows for BOTH sides. Best-effort — never
+    // rolls back the trade on failure (helper swallows its own errors).
+    const buyerTier  = order.side === 'buy'  ? await tierFor(buyerId)  : await tierFor(buyerId);
+    const sellerTier = order.side === 'sell' ? await tierFor(sellerId) : await tierFor(sellerId);
+    await recordFeeLedger(DB, [
+      {
+        trade_id: tradeId,
+        user_id: buyerId,
+        role: order.side === 'buy' ? 'taker' : 'maker',
+        side: 'buy',
+        market_id: market.id,
+        fee_coin: market.quote_coin,        // buyer pays fee in quote
+        fee_amount: buyerFee,
+        fee_rate: buyerFeeRate,
+        fee_usd: (quoteUsd?.price_usd || 0) > 0 ? buyerFee * Number(quoteUsd!.price_usd) : null,
+        tier: buyerTier.tier,
+      },
+      {
+        trade_id: tradeId,
+        user_id: sellerId,
+        role: order.side === 'sell' ? 'taker' : 'maker',
+        side: 'sell',
+        market_id: market.id,
+        fee_coin: market.quote_coin,        // seller's fee is deducted from quote payout
+        fee_amount: sellerFee,
+        fee_rate: sellerFeeRate,
+        fee_usd: (quoteUsd?.price_usd || 0) > 0 ? sellerFee * Number(quoteUsd!.price_usd) : null,
+        tier: sellerTier.tier,
+      },
+    ]);
   }
+  // Touch-up: keep linter happy — baseUsd is captured above purely for
+  // future extension (e.g. sellers paying fee in base). Reference it.
+  void baseUsd;
 
   // Update taker order.
   // S3-4: IOC cancels any leftover after matching (never rests in book).

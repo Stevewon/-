@@ -10,6 +10,7 @@ import {
   fireAndForgetMail,
   metaFromReq,
 } from '../utils/mailer';
+import { getUserFeeTier } from '../utils/fees';
 
 const app = new Hono<AppEnv>();
 
@@ -286,6 +287,52 @@ app.delete('/api-keys/:id', authMiddleware, async (c) => {
     'DELETE FROM api_keys WHERE id = ? AND user_id = ?'
   ).bind(id, user.id).run();
   return c.json({ ok: true });
+});
+
+// ============================================================================
+// S3-5: Fee tier info. Returns the user's 30-day USD volume, current tier,
+// and both their maker/taker fee rate + the ladder so the UI can render a
+// "next tier at $X" hint. Falls back to conservative defaults when the
+// fee_tiers table has not been migrated yet.
+// ============================================================================
+app.get('/fee-tier', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const tier = await getUserFeeTier(c.env.DB, user.id, { maker_fee: 0.001, taker_fee: 0.001 });
+  let ladder: Array<{ tier: number; name: string; min_volume_usd: number; maker_fee: number; taker_fee: number }> = [];
+  try {
+    const { results } = await c.env.DB.prepare(
+      'SELECT tier, name, min_volume_usd, maker_fee, taker_fee FROM fee_tiers ORDER BY tier ASC'
+    ).all<any>();
+    ladder = (results || []) as any;
+  } catch { /* table not yet migrated */ }
+
+  return c.json({
+    tier: tier.tier,
+    name: tier.name,
+    volume_usd_30d: tier.volume_usd_30d,
+    maker_fee: tier.maker_fee,
+    taker_fee: tier.taker_fee,
+    ladder,
+  });
+});
+
+// GET /api/profile/fee-ledger — my fee history (S3-5)
+app.get('/fee-ledger', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const limit = Math.min(parseInt(c.req.query('limit') || '100'), 500);
+  try {
+    const { results } = await c.env.DB.prepare(
+      `SELECT l.*, m.base_coin, m.quote_coin
+         FROM fee_ledger l
+         LEFT JOIN markets m ON m.id = l.market_id
+        WHERE l.user_id = ?
+        ORDER BY l.created_at DESC
+        LIMIT ?`
+    ).bind(user.id, limit).all<any>();
+    return c.json(results || []);
+  } catch (e: any) {
+    return c.json({ error: 'fee_ledger not available', detail: String(e?.message || e) }, 503);
+  }
 });
 
 export default app;
