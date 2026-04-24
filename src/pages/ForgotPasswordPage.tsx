@@ -78,13 +78,13 @@ export default function ForgotPasswordPage() {
             <div className="relative">
               <Mail
                 size={18}
-                className="absolute left-3.5 top-1/2 -translate-y-1/2 text-exchange-text-third"
+                className="absolute left-4 top-1/2 -translate-y-1/2 text-exchange-text-third"
               />
               <input
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value.trim().toLowerCase())}
-                className="auth-input py-3.5 pl-10 pr-4"
+                className="auth-input py-3.5 pl-12 pr-4"
                 placeholder={t('auth.emailPlaceholder')}
                 required
                 autoComplete="email"

@@ -146,7 +146,7 @@ export default function LoginPage() {
           <div className="relative">
             <Mail
               size={18}
-              className="absolute left-3.5 top-1/2 -translate-y-1/2 text-exchange-text-third pointer-events-none"
+              className="absolute left-4 top-1/2 -translate-y-1/2 text-exchange-text-third pointer-events-none"
             />
             <input
               type="email"
@@ -154,7 +154,7 @@ export default function LoginPage() {
               onChange={(e) => setEmail(e.target.value.trim())}
               onFocus={() => setFocused('email')}
               onBlur={() => setFocused('')}
-              className="auth-input py-3.5 pl-10 pr-4"
+              className="auth-input py-3.5 pl-12 pr-4"
               placeholder={t('auth.emailPlaceholder')}
               required
               autoComplete="email"
@@ -179,7 +179,7 @@ export default function LoginPage() {
           <div className="relative">
             <Lock
               size={18}
-              className="absolute left-3.5 top-1/2 -translate-y-1/2 text-exchange-text-third pointer-events-none"
+              className="absolute left-4 top-1/2 -translate-y-1/2 text-exchange-text-third pointer-events-none"
             />
             <input
               type={showPw ? 'text' : 'password'}
@@ -192,7 +192,7 @@ export default function LoginPage() {
                 setFocused('');
                 setCapsOn(false);
               }}
-              className="auth-input py-3.5 pl-10 pr-11"
+              className="auth-input py-3.5 pl-12 pr-12"
               placeholder={t('auth.passwordPlaceholder')}
               required
               autoComplete="current-password"
