@@ -143,18 +143,16 @@ export default function LoginPage() {
           <label className="text-[13px] font-medium text-exchange-text-secondary mb-1.5 block">
             {t('auth.email')}
           </label>
-          <div className="relative">
-            <Mail
-              size={18}
-              className="absolute left-4 top-1/2 -translate-y-1/2 text-exchange-text-third pointer-events-none"
-            />
+          <div className="auth-field">
+            <span className="auth-icon">
+              <Mail size={18} />
+            </span>
             <input
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value.trim())}
               onFocus={() => setFocused('email')}
               onBlur={() => setFocused('')}
-              className="auth-input py-3.5 pl-12 pr-4"
               placeholder={t('auth.emailPlaceholder')}
               required
               autoComplete="email"
@@ -176,11 +174,10 @@ export default function LoginPage() {
               {t('auth.forgotPw')}
             </Link>
           </div>
-          <div className="relative">
-            <Lock
-              size={18}
-              className="absolute left-4 top-1/2 -translate-y-1/2 text-exchange-text-third pointer-events-none"
-            />
+          <div className="auth-field">
+            <span className="auth-icon">
+              <Lock size={18} />
+            </span>
             <input
               type={showPw ? 'text' : 'password'}
               value={password}
@@ -192,7 +189,6 @@ export default function LoginPage() {
                 setFocused('');
                 setCapsOn(false);
               }}
-              className="auth-input py-3.5 pl-12 pr-12"
               placeholder={t('auth.passwordPlaceholder')}
               required
               autoComplete="current-password"
@@ -200,7 +196,7 @@ export default function LoginPage() {
             <button
               type="button"
               onClick={() => setShowPw(!showPw)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-exchange-text-third hover:text-exchange-text transition-colors"
+              className="auth-trailing"
               tabIndex={-1}
               aria-label={showPw ? 'Hide password' : 'Show password'}
             >
@@ -250,7 +246,7 @@ export default function LoginPage() {
               placeholder="123456"
               maxLength={6}
               autoFocus
-              className="auth-input py-3.5 px-4 text-center text-xl tracking-[0.5em] font-mono"
+              className="auth-input-plain text-center text-xl tracking-[0.5em] font-mono"
             />
           </div>
         )}
