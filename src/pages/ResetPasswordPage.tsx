@@ -82,20 +82,21 @@ export default function ResetPasswordPage() {
                 <label className="text-[13px] font-medium text-exchange-text-secondary mb-1.5 block">
                   {t('auth.newPassword')}
                 </label>
-                <div className="relative">
-                  <Lock size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-exchange-text-third" />
+                <div className="auth-field">
+                  <span className="auth-icon">
+                    <Lock size={18} />
+                  </span>
                   <input
                     type={show ? 'text' : 'password'}
                     value={pw}
                     onChange={(e) => setPw(e.target.value)}
-                    className="auth-input py-3.5 pl-12 pr-12"
                     autoComplete="new-password"
                     required
                   />
                   <button
                     type="button"
                     onClick={() => setShow(!show)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-exchange-text-third hover:text-exchange-text"
+                    className="auth-trailing"
                   >
                     {show ? <EyeOff size={18} /> : <Eye size={18} />}
                   </button>
@@ -109,13 +110,14 @@ export default function ResetPasswordPage() {
                 <label className="text-[13px] font-medium text-exchange-text-secondary mb-1.5 block">
                   {t('auth.confirmPassword')}
                 </label>
-                <div className="relative">
-                  <Lock size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-exchange-text-third" />
+                <div className="auth-field">
+                  <span className="auth-icon">
+                    <Lock size={18} />
+                  </span>
                   <input
                     type={show ? 'text' : 'password'}
                     value={pw2}
                     onChange={(e) => setPw2(e.target.value)}
-                    className="auth-input py-3.5 pl-12 pr-4"
                     autoComplete="new-password"
                     required
                   />

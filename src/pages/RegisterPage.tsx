@@ -171,18 +171,16 @@ export default function RegisterPage() {
           hint={email.length > 0 && !emailValid ? t('auth.invalidEmail') : ''}
           focused={focused === 'email'}
         >
-          <div className="relative">
-            <Mail
-              size={18}
-              className="absolute left-4 top-1/2 -translate-y-1/2 text-exchange-text-third pointer-events-none"
-            />
+          <div className="auth-field">
+            <span className="auth-icon">
+              <Mail size={18} />
+            </span>
             <input
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value.trim())}
               onFocus={() => setFocused('email')}
               onBlur={() => setFocused('')}
-              className="auth-input py-3.5 pl-12 pr-4"
               placeholder={t('auth.emailPlaceholder')}
               required
               autoComplete="email"
@@ -198,18 +196,16 @@ export default function RegisterPage() {
           hint={nickname.length > 0 && !nickValid ? t('auth.nicknameRule') : ''}
           focused={focused === 'nick'}
         >
-          <div className="relative">
-            <UserIcon
-              size={18}
-              className="absolute left-4 top-1/2 -translate-y-1/2 text-exchange-text-third pointer-events-none"
-            />
+          <div className="auth-field">
+            <span className="auth-icon">
+              <UserIcon size={18} />
+            </span>
             <input
               type="text"
               value={nickname}
               onChange={(e) => setNickname(e.target.value)}
               onFocus={() => setFocused('nick')}
               onBlur={() => setFocused('')}
-              className="auth-input py-3.5 pl-12 pr-4"
               placeholder={t('auth.nicknamePlaceholder')}
               required
               autoComplete="username"
@@ -220,14 +216,13 @@ export default function RegisterPage() {
 
         {/* Password */}
         <FieldWrap label={t('auth.password')} focused={focused === 'pw'}>
-          <div className="relative">
+          <div className="auth-field">
             <input
               type={showPw ? 'text' : 'password'}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               onFocus={() => setFocused('pw')}
               onBlur={() => setFocused('')}
-              className="auth-input py-3.5 pl-4 pr-12"
               placeholder={t('auth.passwordPlaceholderNew')}
               required
               autoComplete="new-password"
@@ -235,7 +230,7 @@ export default function RegisterPage() {
             <button
               type="button"
               onClick={() => setShowPw(!showPw)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-exchange-text-third hover:text-exchange-text transition-colors"
+              className="auth-trailing"
               tabIndex={-1}
               aria-label={showPw ? 'Hide password' : 'Show password'}
             >
@@ -295,14 +290,13 @@ export default function RegisterPage() {
           }
           focused={focused === 'pw2'}
         >
-          <div className="relative">
+          <div className="auth-field">
             <input
               type={showPw2 ? 'text' : 'password'}
               value={confirmPw}
               onChange={(e) => setConfirmPw(e.target.value)}
               onFocus={() => setFocused('pw2')}
               onBlur={() => setFocused('')}
-              className="auth-input py-3.5 pl-4 pr-12"
               placeholder={t('auth.confirmPasswordPlaceholder')}
               required
               autoComplete="new-password"
@@ -310,7 +304,7 @@ export default function RegisterPage() {
             <button
               type="button"
               onClick={() => setShowPw2(!showPw2)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-exchange-text-third hover:text-exchange-text transition-colors"
+              className="auth-trailing"
               tabIndex={-1}
               aria-label={showPw2 ? 'Hide password' : 'Show password'}
             >
@@ -345,7 +339,7 @@ export default function RegisterPage() {
               type="text"
               value={refCode}
               onChange={(e) => setRefCode(e.target.value.toUpperCase())}
-              className="auth-input py-3.5 px-4 mt-2"
+              className="auth-input-plain mt-2"
               placeholder={t('auth.referralPlaceholder')}
               maxLength={12}
             />

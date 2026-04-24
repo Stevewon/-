@@ -148,38 +148,100 @@ select.input-field {
   border-radius: 0.5rem;
 }
 
-/* Auth input - Binance/Upbit style, larger touch target for mobile.
-   IMPORTANT: NO `padding` property here. PostCSS/Tailwind would
-   combine longhand padding-* declarations back into a shorthand
-   that always wins over pl-10 / pr-11 utility classes used on
-   inputs with left/right icons. Each input MUST declare its own
-   padding via Tailwind utilities (e.g. `py-3.5 pl-10 pr-3`). */
-.auth-input {
+/* Auth field wrapper - FLEX LAYOUT so icon + input never overlap.
+   Structure:
+     <div class="auth-field">
+       <Icon />      (flex item, shrink-0)
+       <input />     (flex-1, transparent, no border)
+       <button />    (optional, shrink-0)
+     </div>
+   The wrapper itself carries background/border/height, and flex gap
+   guarantees horizontal spacing between icon and text. Unlike the
+   previous absolute-positioning approach this is immune to any CSS
+   padding shorthand/longhand conflicts. */
+.auth-field {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
   background: var(--color-exchange-card);
   border: 1px solid var(--color-exchange-border);
   color: var(--color-exchange-text);
   border-radius: 0.625rem;
+  padding-left: 1rem;
+  padding-right: 1rem;
+  min-height: 48px;
   width: 100%;
-  font-size: 0.9375rem;
-  outline: none;
   transition: border-color 0.15s, box-shadow 0.15s, background-color 0.15s;
-  min-height: 48px; /* iOS recommended touch target */
 }
-.auth-input:focus {
+.auth-field:focus-within {
   border-color: var(--color-exchange-yellow);
   box-shadow: 0 0 0 3px rgba(240, 185, 11, 0.12);
   background: var(--color-exchange-bg);
 }
-.auth-input::placeholder {
+.auth-field > input {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: inherit;
+  font-size: 0.9375rem;
+  padding: 0.875rem 0;
+  width: 100%;
+}
+.auth-field > input::placeholder {
   color: var(--color-exchange-text-third);
 }
+.auth-field > .auth-icon {
+  flex-shrink: 0;
+  color: var(--color-exchange-text-third);
+  display: flex;
+  align-items: center;
+  pointer-events: none;
+}
+.auth-field > button.auth-trailing {
+  flex-shrink: 0;
+  background: transparent;
+  border: 0;
+  padding: 0.25rem;
+  color: var(--color-exchange-text-third);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+}
+.auth-field > button.auth-trailing:hover {
+  color: var(--color-exchange-text);
+}
 /* Chrome/Safari autofill background override */
-.auth-input:-webkit-autofill,
-.auth-input:-webkit-autofill:hover,
-.auth-input:-webkit-autofill:focus {
+.auth-field > input:-webkit-autofill,
+.auth-field > input:-webkit-autofill:hover,
+.auth-field > input:-webkit-autofill:focus {
   -webkit-text-fill-color: var(--color-exchange-text);
   -webkit-box-shadow: 0 0 0 1000px var(--color-exchange-card) inset;
   caret-color: var(--color-exchange-text);
+}
+
+/* Plain auth input (no icon) - simple field for OTP/2FA/referral codes */
+.auth-input-plain {
+  display: block;
+  width: 100%;
+  background: var(--color-exchange-card);
+  border: 1px solid var(--color-exchange-border);
+  color: var(--color-exchange-text);
+  border-radius: 0.625rem;
+  padding: 0.875rem 1rem;
+  min-height: 48px;
+  font-size: 0.9375rem;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s, background-color 0.15s;
+}
+.auth-input-plain:focus {
+  border-color: var(--color-exchange-yellow);
+  box-shadow: 0 0 0 3px rgba(240, 185, 11, 0.12);
+  background: var(--color-exchange-bg);
+}
+.auth-input-plain::placeholder {
+  color: var(--color-exchange-text-third);
 }
 
 /* Text helpers */

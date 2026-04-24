@@ -75,16 +75,14 @@ export default function ForgotPasswordPage() {
             <label className="text-[13px] font-medium text-exchange-text-secondary mb-1.5 block">
               {t('auth.email')}
             </label>
-            <div className="relative">
-              <Mail
-                size={18}
-                className="absolute left-4 top-1/2 -translate-y-1/2 text-exchange-text-third"
-              />
+            <div className="auth-field">
+              <span className="auth-icon">
+                <Mail size={18} />
+              </span>
               <input
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value.trim().toLowerCase())}
-                className="auth-input py-3.5 pl-12 pr-4"
                 placeholder={t('auth.emailPlaceholder')}
                 required
                 autoComplete="email"
