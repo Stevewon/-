@@ -3,6 +3,22 @@ import type { AppEnv } from '../index';
 import { authMiddleware, adminMiddleware } from '../middleware/auth';
 import { createNotification } from './notifications';
 import { logAdminAction } from '../utils/audit';
+import {
+  tmplWithdrawApproved,
+  tmplWithdrawRejected,
+  tmplDepositCredited,
+  tmplKycApproved,
+  tmplKycRejected,
+  fireAndForgetMail,
+} from '../utils/mailer';
+
+// Small helper: look up an email by user id, returning null on any failure.
+async function lookupEmail(db: any, userId: string): Promise<string | null> {
+  try {
+    const row = await db.prepare('SELECT email FROM users WHERE id = ?').bind(userId).first<{ email: string }>();
+    return row?.email || null;
+  } catch { return null; }
+}
 
 const app = new Hono<AppEnv>();
 
@@ -352,6 +368,16 @@ app.post('/kyc/:userId/approve', async (c) => {
     targetType: 'kyc',
     targetId: u.id,
   });
+
+  // S3-6 user-facing email
+  try {
+    const to = await lookupEmail(db, u.id);
+    if (to) {
+      const appUrl = (c.env as any).APP_URL || 'https://quantaex.io';
+      fireAndForgetMail(c.env as any, to, tmplKycApproved(appUrl), c.executionCtx as any);
+    }
+  } catch (e) { console.warn('[kyc.approve] mail failed:', e); }
+
   return c.json({ message: 'KYC approved' });
 });
 
@@ -379,6 +405,16 @@ app.post('/kyc/:userId/reject', async (c) => {
     targetId: u.id,
     payload: { reason: reason || null },
   });
+
+  // S3-6 user-facing email
+  try {
+    const to = await lookupEmail(db, u.id);
+    if (to) {
+      const appUrl = (c.env as any).APP_URL || 'https://quantaex.io';
+      fireAndForgetMail(c.env as any, to, tmplKycRejected(appUrl, reason || null), c.executionCtx as any);
+    }
+  } catch (e) { console.warn('[kyc.reject] mail failed:', e); }
+
   return c.json({ message: 'KYC rejected' });
 });
 
@@ -447,6 +483,20 @@ app.post('/withdrawals/:id/approve', async (c) => {
     },
   });
 
+  // S3-6 user-facing email
+  try {
+    const to = await lookupEmail(db, w.user_id);
+    if (to) {
+      const appUrl = (c.env as any).APP_URL || 'https://quantaex.io';
+      fireAndForgetMail(
+        c.env as any,
+        to,
+        tmplWithdrawApproved(appUrl, { amount: w.amount, coin: w.coin_symbol, txHash: tx }),
+        c.executionCtx as any,
+      );
+    }
+  } catch (e) { console.warn('[withdrawal.approve] mail failed:', e); }
+
   return c.json({ message: 'Withdrawal approved', tx_hash: tx });
 });
 
@@ -492,6 +542,20 @@ app.post('/withdrawals/:id/reject', async (c) => {
       reason: reason || null,
     },
   });
+
+  // S3-6 user-facing email
+  try {
+    const to = await lookupEmail(db, w.user_id);
+    if (to) {
+      const appUrl = (c.env as any).APP_URL || 'https://quantaex.io';
+      fireAndForgetMail(
+        c.env as any,
+        to,
+        tmplWithdrawRejected(appUrl, { amount: w.amount, coin: w.coin_symbol, reason: reason || null }),
+        c.executionCtx as any,
+      );
+    }
+  } catch (e) { console.warn('[withdrawal.reject] mail failed:', e); }
 
   return c.json({ message: 'Withdrawal rejected and refunded' });
 });
@@ -578,6 +642,20 @@ app.post('/deposits/manual', async (c) => {
     targetId: id,
     payload: { user_id, coin: coin_symbol, amount: amt, tx_hash: tx, note: note || null },
   });
+
+  // S3-6 user-facing email
+  try {
+    const to = await lookupEmail(db, user_id);
+    if (to) {
+      const appUrl = (c.env as any).APP_URL || 'https://quantaex.io';
+      fireAndForgetMail(
+        c.env as any,
+        to,
+        tmplDepositCredited(appUrl, { amount: amt, coin: coin_symbol, txHash: tx, note: note || null }),
+        c.executionCtx as any,
+      );
+    }
+  } catch (e) { console.warn('[deposit.manual] mail failed:', e); }
 
   return c.json({ id, tx_hash: tx, amount: amt });
 });

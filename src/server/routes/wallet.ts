@@ -4,6 +4,7 @@ import { authMiddleware, adminMiddleware } from '../middleware/auth';
 import { requireKyc } from '../middleware/kyc';
 import { rateLimit } from '../middleware/rateLimit';
 import { verifyTotp } from '../utils/totp';
+import { tmplWithdrawSubmitted, fireAndForgetMail, metaFromReq } from '../utils/mailer';
 
 const app = new Hono<AppEnv>();
 
@@ -269,6 +270,25 @@ app.post('/withdraw', authMiddleware, rlWithdraw, requireKyc('approved'), async 
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')`
     ).bind(withdrawalId, user.id, coin_symbol, amount - fee, fee, address, network || null, memo || null),
   ]);
+
+  // S3-6: withdrawal-submitted confirmation email
+  try {
+    const em = await c.env.DB.prepare('SELECT email FROM users WHERE id = ?')
+      .bind(user.id).first<{ email: string }>();
+    if (em?.email) {
+      const appUrl = (c.env as any).APP_URL || 'https://quantaex.io';
+      fireAndForgetMail(
+        c.env as any,
+        em.email,
+        tmplWithdrawSubmitted(
+          appUrl,
+          { amount: amount - fee, coin: coin_symbol, address, network: network || null, fee },
+          metaFromReq(c.req),
+        ),
+        c.executionCtx as any,
+      );
+    }
+  } catch (e) { console.warn('[withdraw] submit mail failed:', e); }
 
   return c.json({ message: 'Withdrawal submitted — awaiting admin approval', withdrawal_id: withdrawalId });
 });

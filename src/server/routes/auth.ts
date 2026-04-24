@@ -2,7 +2,13 @@ import { Hono } from 'hono';
 import type { AppEnv } from '../index';
 import { generateToken, authMiddleware } from '../middleware/auth';
 import { rateLimit } from '../middleware/rateLimit';
-import { sendMail, templateBasic } from '../utils/mailer';
+import {
+  sendMail,
+  templateBasic,
+  tmplLoginAlert,
+  fireAndForgetMail,
+  metaFromReq,
+} from '../utils/mailer';
 import bcrypt from 'bcryptjs';
 
 const app = new Hono<AppEnv>();
@@ -173,6 +179,18 @@ app.post('/login', rlLogin, async (c) => {
   }
 
   await recordLogin(c, user.id, 'success');
+
+  // S3-6: login-alert email (fire-and-forget, never blocks login).
+  try {
+    const appUrl = (c.env as any).APP_URL || 'https://quantaex.io';
+    fireAndForgetMail(
+      c.env as any,
+      user.email,
+      tmplLoginAlert(appUrl, metaFromReq(c.req)),
+      c.executionCtx as any,
+    );
+  } catch (e) { console.warn('[login] alert mail failed:', e); }
+
   const token = await generateToken({ ...user, token_version: user.token_version || 0 }, c.env.JWT_SECRET);
   const { password: _, two_factor_secret: __, two_factor_pending_secret: ___, ...safeUser } = user;
   return c.json({ token, user: safeUser });
