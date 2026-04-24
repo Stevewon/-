@@ -32,7 +32,7 @@ export default function AuthLayout({ children, variant = 'login' }: AuthLayoutPr
       {/* LEFT PANE — Brand hero (desktop only)                             */}
       {/* ================================================================ */}
       <aside
-        className="hidden lg:flex lg:w-[55%] xl:w-[58%] relative overflow-hidden
+        className="hidden lg:flex lg:w-1/2 relative overflow-hidden
                    bg-gradient-to-br from-[#0B0E11] via-[#13171D] to-[#1E2329]"
       >
         {/* Decorative grid + glow */}
@@ -47,37 +47,40 @@ export default function AuthLayout({ children, variant = 'login' }: AuthLayoutPr
         <div className="absolute -top-32 -left-20 w-[420px] h-[420px] rounded-full bg-exchange-yellow/10 blur-3xl pointer-events-none" />
         <div className="absolute -bottom-40 right-0 w-[520px] h-[520px] rounded-full bg-exchange-buy/10 blur-3xl pointer-events-none" />
 
-        {/* Top brand row */}
-        <div className="absolute top-0 inset-x-0 px-10 xl:px-14 py-7 flex items-center justify-between z-10">
-          <Link to="/home" className="flex items-center group">
-            <QuantaLogo size={32} />
-          </Link>
-          <Link
-            to="/home"
-            className="text-sm text-exchange-text-secondary hover:text-exchange-yellow transition-colors"
-          >
-            ← {t('common.home')}
-          </Link>
-        </div>
-
-        {/* Hero content */}
-        <div className="relative z-10 flex flex-col justify-center px-10 xl:px-16 w-full max-w-[620px] mx-auto">
-          <HeroContent variant={variant} />
-        </div>
-
-        {/* Bottom trust row */}
-        <div className="absolute bottom-0 inset-x-0 px-10 xl:px-14 py-6 flex items-center justify-between text-[12px] text-exchange-text-third z-10">
-          <div className="flex items-center gap-5">
-            <span className="flex items-center gap-1.5">
-              <ShieldCheck size={14} className="text-exchange-buy" />
-              {t('auth.heroBadgeSecure')}
-            </span>
-            <span className="flex items-center gap-1.5">
-              <Globe2 size={14} className="text-exchange-yellow" />
-              {t('auth.heroBadgeGlobal')}
-            </span>
+        {/* Inner column — right-aligned so hero content sits close to the form */}
+        <div className="relative w-full flex flex-col ml-auto max-w-[600px] pr-8 xl:pr-16 pl-10 xl:pl-14 py-8">
+          {/* Top brand row */}
+          <div className="flex items-center justify-between z-10">
+            <Link to="/home" className="flex items-center group">
+              <QuantaLogo size={32} />
+            </Link>
+            <Link
+              to="/home"
+              className="text-sm text-exchange-text-secondary hover:text-exchange-yellow transition-colors"
+            >
+              ← {t('common.home')}
+            </Link>
           </div>
-          <span>© {new Date().getFullYear()} QuantaEX</span>
+
+          {/* Hero content — vertically centered in the remaining space */}
+          <div className="flex-1 flex flex-col justify-center z-10 py-10">
+            <HeroContent variant={variant} />
+          </div>
+
+          {/* Bottom trust row */}
+          <div className="flex items-center justify-between text-[12px] text-exchange-text-third z-10">
+            <div className="flex items-center gap-5">
+              <span className="flex items-center gap-1.5">
+                <ShieldCheck size={14} className="text-exchange-buy" />
+                {t('auth.heroBadgeSecure')}
+              </span>
+              <span className="flex items-center gap-1.5">
+                <Globe2 size={14} className="text-exchange-yellow" />
+                {t('auth.heroBadgeGlobal')}
+              </span>
+            </div>
+            <span>© {new Date().getFullYear()} QuantaEX</span>
+          </div>
         </div>
       </aside>
 
@@ -112,10 +115,13 @@ export default function AuthLayout({ children, variant = 'login' }: AuthLayoutPr
           <LangSwitch />
         </div>
 
-        {/* Form body — always vertically centered on lg */}
-        <main className="flex-1 flex lg:items-center justify-center">
+        {/* Form body — vertically centered; on lg the form is anchored
+            near the hero divider (left side of the right pane) instead
+            of floating in the far-right edge. */}
+        <main className="flex-1 flex lg:items-center justify-center lg:justify-start">
           <div
-            className="w-full max-w-md px-5 lg:px-0 lg:max-w-[440px]
+            className="w-full max-w-md px-5
+                       lg:max-w-[440px] lg:pl-14 xl:pl-24 lg:pr-0
                        pt-6 lg:pt-12 pb-28 lg:pb-12"
           >
             {children}
