@@ -49,11 +49,8 @@ export default function AuthLayout({ children, variant = 'login' }: AuthLayoutPr
 
         {/* Top brand row */}
         <div className="absolute top-0 inset-x-0 px-10 xl:px-14 py-7 flex items-center justify-between z-10">
-          <Link to="/home" className="flex items-center gap-2.5 group">
+          <Link to="/home" className="flex items-center group">
             <QuantaLogo size={32} />
-            <span className="text-xl font-extrabold text-exchange-text tracking-tight">
-              QuantaEX
-            </span>
           </Link>
           <Link
             to="/home"
