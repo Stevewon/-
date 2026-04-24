@@ -94,11 +94,19 @@ export default function RegisterPage() {
 
   return (
     <AuthLayout variant="register">
-      {/* Headline */}
+      {/* Headline + inline login link (Binance mobile pattern) */}
       <div className="mb-6">
-        <h1 className="text-2xl lg:text-3xl font-bold text-exchange-text leading-tight">
-          {t('auth.createAccount')}
-        </h1>
+        <div className="flex items-start justify-between gap-3">
+          <h1 className="text-2xl lg:text-3xl font-bold text-exchange-text leading-tight">
+            {t('auth.createAccount')}
+          </h1>
+          <Link
+            to="/login"
+            className="text-[13px] text-exchange-yellow hover:underline font-semibold whitespace-nowrap mt-1"
+          >
+            {t('nav.login')} →
+          </Link>
+        </div>
         <p className="text-exchange-text-secondary mt-2 text-sm">
           {t('auth.startTrading')}
         </p>
@@ -354,17 +362,17 @@ export default function RegisterPage() {
               className="mt-0.5 w-4 h-4 rounded border-exchange-border accent-exchange-yellow shrink-0"
             />
             <span className="text-xs text-exchange-text-secondary leading-relaxed">
-              {t('auth.agreeTermsPre')}
+              {t('auth.agreeTermsPre')}{' '}
               <Link
                 to="/terms"
-                className="text-exchange-yellow hover:underline mx-0.5"
+                className="text-exchange-yellow hover:underline"
               >
                 {t('auth.termsOfService')}
               </Link>
-              {t('auth.and')}
+              {' '}{t('auth.and')}{' '}
               <Link
                 to="/privacy"
-                className="text-exchange-yellow hover:underline mx-0.5"
+                className="text-exchange-yellow hover:underline"
               >
                 {t('auth.privacyPolicy')}
               </Link>
@@ -415,16 +423,6 @@ export default function RegisterPage() {
           <SocialBtn label="Kakao" icon={<KakaoIcon />} />
         </div>
       </form>
-
-      <p className="text-center text-sm text-exchange-text-secondary mt-8">
-        {t('auth.hasAccount')}{' '}
-        <Link
-          to="/login"
-          className="text-exchange-yellow hover:underline font-semibold"
-        >
-          {t('nav.login')}
-        </Link>
-      </p>
 
       {/* Sticky bottom CTA - mobile only */}
       <div className="sm:hidden fixed bottom-0 inset-x-0 z-40 px-4 py-3 bg-exchange-bg/95 backdrop-blur border-t border-exchange-border/60 pb-[max(12px,env(safe-area-inset-bottom))]">
@@ -506,7 +504,7 @@ function SocialBtn({ label, icon }: { label: string; icon: React.ReactNode }) {
       type="button"
       disabled
       title={`${label} (coming soon)`}
-      className="flex items-center justify-center gap-2 py-2.5 rounded-lg border border-exchange-border bg-exchange-card hover:bg-exchange-hover disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+      className="flex items-center justify-center gap-2 h-12 rounded-lg border border-exchange-border bg-exchange-card hover:bg-exchange-hover disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
     >
       {icon}
       <span className="text-xs text-exchange-text-secondary hidden sm:inline">
