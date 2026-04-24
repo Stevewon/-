@@ -3,6 +3,13 @@ import type { AppEnv } from '../index';
 import { authMiddleware } from '../middleware/auth';
 import bcrypt from 'bcryptjs';
 import { generateTotpSecret, otpauthUrl, verifyTotp } from '../utils/totp';
+import {
+  tmplPasswordChanged,
+  tmpl2faEnabled,
+  tmpl2faDisabled,
+  fireAndForgetMail,
+  metaFromReq,
+} from '../utils/mailer';
 
 const app = new Hono<AppEnv>();
 
@@ -82,6 +89,21 @@ app.post('/password', authMiddleware, async (c) => {
      WHERE id = ?`
   ).bind(newHash, user.id).run();
 
+  // S3-6: password-changed alert mail
+  try {
+    const email = await c.env.DB.prepare('SELECT email FROM users WHERE id = ?')
+      .bind(user.id).first<{ email: string }>();
+    if (email?.email) {
+      const appUrl = (c.env as any).APP_URL || 'https://quantaex.io';
+      fireAndForgetMail(
+        c.env as any,
+        email.email,
+        tmplPasswordChanged(appUrl, metaFromReq(c.req)),
+        c.executionCtx as any,
+      );
+    }
+  } catch (e) { console.warn('[profile.password] alert mail failed:', e); }
+
   return c.json({ ok: true, message: 'Password changed successfully — please login again' });
 });
 
@@ -149,6 +171,16 @@ app.post('/2fa/enable', authMiddleware, async (c) => {
      WHERE id = ?`
   ).bind(user.id).run();
 
+  // S3-6: 2FA-enabled alert mail
+  try {
+    const em = await c.env.DB.prepare('SELECT email FROM users WHERE id = ?')
+      .bind(user.id).first<{ email: string }>();
+    if (em?.email) {
+      const appUrl = (c.env as any).APP_URL || 'https://quantaex.io';
+      fireAndForgetMail(c.env as any, em.email, tmpl2faEnabled(appUrl, metaFromReq(c.req)), c.executionCtx as any);
+    }
+  } catch (e) { console.warn('[2fa/enable] alert mail failed:', e); }
+
   return c.json({ ok: true, message: '2FA enabled' });
 });
 
@@ -181,6 +213,16 @@ app.post('/2fa/disable', authMiddleware, async (c) => {
          updated_at = CURRENT_TIMESTAMP
      WHERE id = ?`
   ).bind(user.id).run();
+
+  // S3-6: 2FA-disabled alert mail (security-critical)
+  try {
+    const em = await c.env.DB.prepare('SELECT email FROM users WHERE id = ?')
+      .bind(user.id).first<{ email: string }>();
+    if (em?.email) {
+      const appUrl = (c.env as any).APP_URL || 'https://quantaex.io';
+      fireAndForgetMail(c.env as any, em.email, tmpl2faDisabled(appUrl, metaFromReq(c.req)), c.executionCtx as any);
+    }
+  } catch (e) { console.warn('[2fa/disable] alert mail failed:', e); }
 
   return c.json({ ok: true, message: '2FA disabled' });
 });
