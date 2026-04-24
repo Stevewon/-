@@ -836,6 +836,43 @@ const en = {
   'auth.secure256': '256-bit SSL',
   'auth.trustedBy': 'Trusted by 4,000+ users',
 
+  // ── PC 2-column hero (left pane) ───────────────────────────────────
+  'auth.heroBadgeSecure': 'Bank-grade security',
+  'auth.heroBadgeGlobal': '180+ countries',
+  // Register hero
+  'auth.heroRegisterBadge': 'NEW · WELCOME BONUS',
+  'auth.heroRegisterTitleA': 'Trade crypto',
+  'auth.heroRegisterTitleB': 'in seconds.',
+  'auth.heroRegisterDesc':
+    'Join 4,000+ traders. Buy, sell and store 350+ digital assets with the lowest fees and institutional-grade security.',
+  'auth.heroBenefit1Title': 'Zero-fee spot trading',
+  'auth.heroBenefit1Sub': 'First 30 days on selected pairs.',
+  'auth.heroBenefit2Title': 'Cold storage + 2FA',
+  'auth.heroBenefit2Sub': '95% of assets stored offline, insured.',
+  'auth.heroBenefit3Title': 'Advanced charting',
+  'auth.heroBenefit3Sub': 'TradingView-powered, real-time order book.',
+  // Login hero
+  'auth.heroLoginBadge': 'LIVE MARKETS · 24/7',
+  'auth.heroLoginTitleA': 'Welcome back',
+  'auth.heroLoginTitleB': "to the world's fastest exchange.",
+  'auth.heroLoginDesc':
+    'Pick up where you left off. Check your portfolio, place orders and track the markets in one place.',
+  'auth.heroLoginBenefit1Title': 'Real-time markets',
+  'auth.heroLoginBenefit1Sub': '350+ pairs, sub-millisecond matching.',
+  'auth.heroLoginBenefit2Title': 'Protected by 2FA',
+  'auth.heroLoginBenefit2Sub': 'TOTP, device history, IP whitelist.',
+  'auth.heroLoginBenefit3Title': 'Instant withdrawals',
+  'auth.heroLoginBenefit3Sub': 'Fast fiat & on-chain transfers.',
+  // Recover hero
+  'auth.heroRecoverBadge': 'ACCOUNT RECOVERY',
+  'auth.heroRecoverTitle': "Let's get you back in.",
+  'auth.heroRecoverDesc':
+    'Reset your password or verify your email in a few clicks. Your funds and trade history stay safe.',
+  'auth.heroRecoverBenefit1Title': 'Encrypted reset links',
+  'auth.heroRecoverBenefit1Sub': 'Single-use, expires in 30 minutes.',
+  'auth.heroRecoverBenefit2Title': '24/7 support',
+  'auth.heroRecoverBenefit2Sub': 'Human agents, average reply < 10 min.',
+
   // Sprint 2 additions — 2FA / email / reset
   'auth.twoFactorTitle': 'Two-Factor Authentication',
   'auth.twoFactorDesc': 'Enter the 6-digit code from your authenticator app.',

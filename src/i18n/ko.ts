@@ -827,6 +827,43 @@ const ko = {
   'auth.secure256': '256비트 SSL',
   'auth.trustedBy': '4,000+ 사용자의 선택',
 
+  // ── PC 2-컬럼 히어로 (좌측 패널) ─────────────────────────────
+  'auth.heroBadgeSecure': '금융권 수준의 보안',
+  'auth.heroBadgeGlobal': '180개국 이상 서비스',
+  // Register hero
+  'auth.heroRegisterBadge': 'NEW · 신규 가입 보너스',
+  'auth.heroRegisterTitleA': '몇 초 만에',
+  'auth.heroRegisterTitleB': '암호화폐 거래.',
+  'auth.heroRegisterDesc':
+    '4,000명 이상의 트레이더와 함께하세요. 350개 이상의 디지털 자산을 업계 최저 수수료와 기관급 보안으로 거래할 수 있습니다.',
+  'auth.heroBenefit1Title': '현물 수수료 0%',
+  'auth.heroBenefit1Sub': '가입 후 30일, 선정된 페어 한정.',
+  'auth.heroBenefit2Title': '콜드 스토리지 + 2FA',
+  'auth.heroBenefit2Sub': '자산의 95%를 오프라인에 보관하며 보험 가입.',
+  'auth.heroBenefit3Title': '전문가 차트',
+  'auth.heroBenefit3Sub': 'TradingView 기반, 실시간 호가창 제공.',
+  // Login hero
+  'auth.heroLoginBadge': '실시간 시세 · 24/7',
+  'auth.heroLoginTitleA': '돌아오신 것을 환영합니다,',
+  'auth.heroLoginTitleB': '세상에서 가장 빠른 거래소.',
+  'auth.heroLoginDesc':
+    '멈췄던 곳에서 바로 이어가세요. 포트폴리오 확인, 주문 접수, 시세 추적을 한 곳에서.',
+  'auth.heroLoginBenefit1Title': '실시간 마켓',
+  'auth.heroLoginBenefit1Sub': '350+ 페어, 밀리초 단위 매칭 엔진.',
+  'auth.heroLoginBenefit2Title': '2FA로 보호',
+  'auth.heroLoginBenefit2Sub': 'TOTP · 접속 기록 · IP 화이트리스트.',
+  'auth.heroLoginBenefit3Title': '빠른 출금',
+  'auth.heroLoginBenefit3Sub': '원화 · 온체인 전송 모두 신속 처리.',
+  // Recover hero
+  'auth.heroRecoverBadge': '계정 복구',
+  'auth.heroRecoverTitle': '다시 로그인하실 수 있게 도와드려요.',
+  'auth.heroRecoverDesc':
+    '비밀번호 재설정 또는 이메일 인증을 몇 번의 클릭으로 완료하세요. 자산과 거래 이력은 안전하게 보관됩니다.',
+  'auth.heroRecoverBenefit1Title': '암호화된 재설정 링크',
+  'auth.heroRecoverBenefit1Sub': '1회용 · 30분 후 만료.',
+  'auth.heroRecoverBenefit2Title': '24/7 고객지원',
+  'auth.heroRecoverBenefit2Sub': '실제 상담원 응답, 평균 10분 이내.',
+
   // Sprint 2 — 2FA / email / reset
   'auth.twoFactorTitle': '이중 인증 (2FA)',
   'auth.twoFactorDesc': '인증 앱에서 6자리 코드를 입력하세요.',
