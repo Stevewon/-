@@ -174,7 +174,7 @@ export default function RegisterPage() {
           <div className="relative">
             <Mail
               size={18}
-              className="absolute left-3.5 top-1/2 -translate-y-1/2 text-exchange-text-third pointer-events-none"
+              className="absolute left-4 top-1/2 -translate-y-1/2 text-exchange-text-third pointer-events-none"
             />
             <input
               type="email"
@@ -182,7 +182,7 @@ export default function RegisterPage() {
               onChange={(e) => setEmail(e.target.value.trim())}
               onFocus={() => setFocused('email')}
               onBlur={() => setFocused('')}
-              className="auth-input py-3.5 pl-10 pr-4"
+              className="auth-input py-3.5 pl-12 pr-4"
               placeholder={t('auth.emailPlaceholder')}
               required
               autoComplete="email"
@@ -201,7 +201,7 @@ export default function RegisterPage() {
           <div className="relative">
             <UserIcon
               size={18}
-              className="absolute left-3.5 top-1/2 -translate-y-1/2 text-exchange-text-third pointer-events-none"
+              className="absolute left-4 top-1/2 -translate-y-1/2 text-exchange-text-third pointer-events-none"
             />
             <input
               type="text"
@@ -209,7 +209,7 @@ export default function RegisterPage() {
               onChange={(e) => setNickname(e.target.value)}
               onFocus={() => setFocused('nick')}
               onBlur={() => setFocused('')}
-              className="auth-input py-3.5 pl-10 pr-4"
+              className="auth-input py-3.5 pl-12 pr-4"
               placeholder={t('auth.nicknamePlaceholder')}
               required
               autoComplete="username"
@@ -227,7 +227,7 @@ export default function RegisterPage() {
               onChange={(e) => setPassword(e.target.value)}
               onFocus={() => setFocused('pw')}
               onBlur={() => setFocused('')}
-              className="auth-input py-3.5 pl-4 pr-11"
+              className="auth-input py-3.5 pl-4 pr-12"
               placeholder={t('auth.passwordPlaceholderNew')}
               required
               autoComplete="new-password"
@@ -302,7 +302,7 @@ export default function RegisterPage() {
               onChange={(e) => setConfirmPw(e.target.value)}
               onFocus={() => setFocused('pw2')}
               onBlur={() => setFocused('')}
-              className="auth-input py-3.5 pl-4 pr-11"
+              className="auth-input py-3.5 pl-4 pr-12"
               placeholder={t('auth.confirmPasswordPlaceholder')}
               required
               autoComplete="new-password"

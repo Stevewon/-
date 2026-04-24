@@ -83,12 +83,12 @@ export default function ResetPasswordPage() {
                   {t('auth.newPassword')}
                 </label>
                 <div className="relative">
-                  <Lock size={18} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-exchange-text-third" />
+                  <Lock size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-exchange-text-third" />
                   <input
                     type={show ? 'text' : 'password'}
                     value={pw}
                     onChange={(e) => setPw(e.target.value)}
-                    className="auth-input py-3.5 pl-10 pr-11"
+                    className="auth-input py-3.5 pl-12 pr-12"
                     autoComplete="new-password"
                     required
                   />
@@ -110,12 +110,12 @@ export default function ResetPasswordPage() {
                   {t('auth.confirmPassword')}
                 </label>
                 <div className="relative">
-                  <Lock size={18} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-exchange-text-third" />
+                  <Lock size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-exchange-text-third" />
                   <input
                     type={show ? 'text' : 'password'}
                     value={pw2}
                     onChange={(e) => setPw2(e.target.value)}
-                    className="auth-input py-3.5 pl-10 pr-4"
+                    className="auth-input py-3.5 pl-12 pr-4"
                     autoComplete="new-password"
                     required
                   />
