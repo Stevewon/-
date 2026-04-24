@@ -295,6 +295,10 @@ app.get('/api/stream/ticker', async (c) => {
 
   // Get optional market subscription
   const subscribedMarket = c.req.query('market') || '';
+  // ?mock=1 allows simulated orderbook/trades to be emitted over SSE
+  // (used ONLY by the landing/marketing page for a decorative feed).
+  // Real trade page MUST NOT pass mock=1.
+  const allowMock = c.req.query('mock') === '1';
 
   // Try to blend with real DB data (non-blocking)
   try {
@@ -338,6 +342,37 @@ app.get('/api/stream/ticker', async (c) => {
     return tickers;
   };
 
+  // Fetch real orderbook/trades from D1 for the subscribed market.
+  // Returns { bids, asks, trades } or null if market is unknown / DB fails.
+  const fetchRealMarketData = async (sym: string) => {
+    const [base, quote] = sym.split('-');
+    try {
+      const market = await c.env.DB.prepare(
+        'SELECT id FROM markets WHERE base_coin = ? AND quote_coin = ?'
+      ).bind(base, quote).first() as any;
+      if (!market) return null;
+      const { results: bids } = await c.env.DB.prepare(
+        `SELECT price, SUM(remaining) as amount FROM orders WHERE market_id = ? AND side = 'buy' AND status IN ('open','partial') GROUP BY price ORDER BY price DESC LIMIT 25`
+      ).bind(market.id).all();
+      const { results: asks } = await c.env.DB.prepare(
+        `SELECT price, SUM(remaining) as amount FROM orders WHERE market_id = ? AND side = 'sell' AND status IN ('open','partial') GROUP BY price ORDER BY price ASC LIMIT 25`
+      ).bind(market.id).all();
+      const { results: trades } = await c.env.DB.prepare(`
+        SELECT t.id, t.price, t.amount, t.total, t.created_at as time,
+          CASE WHEN o.side = 'buy' THEN 'buy' ELSE 'sell' END as side
+        FROM trades t JOIN orders o ON o.id = t.buy_order_id
+        WHERE t.market_id = ? ORDER BY t.created_at DESC LIMIT 50
+      `).bind(market.id).all();
+      return {
+        bids: (bids as any[]) ?? [],
+        asks: (asks as any[]) ?? [],
+        trades: (trades as any[]) ?? [],
+      };
+    } catch {
+      return null;
+    }
+  };
+
   const stream = new ReadableStream({
     start(controller) {
       // Send initial ticker data
@@ -346,14 +381,26 @@ app.get('/api/stream/ticker', async (c) => {
 
       // Send initial orderbook & trades if subscribed
       if (subscribedMarket) {
-        const [base, quote] = subscribedMarket.split('-');
-        const key = `${base}-${quote}`;
-        const state = priceState[key];
-        if (state) {
-          const cache = getMarketCache(key, state.price);
-          controller.enqueue(encoder.encode(formatEvent('orderbook', cache.orderbook)));
-          controller.enqueue(encoder.encode(formatEvent('trades', cache.trades)));
-        }
+        (async () => {
+          const real = await fetchRealMarketData(subscribedMarket);
+          if (real) {
+            controller.enqueue(encoder.encode(formatEvent('orderbook', { bids: real.bids, asks: real.asks, simulated: false })));
+            controller.enqueue(encoder.encode(formatEvent('trades', real.trades)));
+          } else if (allowMock) {
+            const [base, quote] = subscribedMarket.split('-');
+            const key = `${base}-${quote}`;
+            const state = priceState[key];
+            if (state) {
+              const cache = getMarketCache(key, state.price);
+              controller.enqueue(encoder.encode(formatEvent('orderbook', { ...cache.orderbook, simulated: true })));
+              controller.enqueue(encoder.encode(formatEvent('trades', cache.trades)));
+            }
+          } else {
+            // Truthful empty state
+            controller.enqueue(encoder.encode(formatEvent('orderbook', { bids: [], asks: [], simulated: false })));
+            controller.enqueue(encoder.encode(formatEvent('trades', [])));
+          }
+        })();
       }
 
       // Stream loop
@@ -370,20 +417,30 @@ app.get('/api/stream/ticker', async (c) => {
           controller.enqueue(encoder.encode(formatEvent('tickers', tickers)));
 
           if (subscribedMarket) {
-            const [base, quote] = subscribedMarket.split('-');
-            const key = `${base}-${quote}`;
-            const state = priceState[key];
-            if (state) {
-              const cache = getMarketCache(key, state.price);
-              cache.orderbook = tickCount % 5 === 0
-                ? generateOrderbook(state.price, key)
-                : tickOrderbook(cache.orderbook, state.price, key);
-              const newTrades = generateTickTrades(state.price, key);
-              cache.trades = [...newTrades, ...cache.trades].slice(0, 50);
-
-              controller.enqueue(encoder.encode(formatEvent('orderbook', cache.orderbook)));
-              controller.enqueue(encoder.encode(formatEvent('trades', newTrades)));
-            }
+            (async () => {
+              const real = await fetchRealMarketData(subscribedMarket);
+              if (real) {
+                controller.enqueue(encoder.encode(formatEvent('orderbook', { bids: real.bids, asks: real.asks, simulated: false })));
+                // Only push trades delta: since last tick. Simpler: push last 10.
+                controller.enqueue(encoder.encode(formatEvent('trades', real.trades.slice(0, 10))));
+              } else if (allowMock) {
+                const [base, quote] = subscribedMarket.split('-');
+                const key = `${base}-${quote}`;
+                const state = priceState[key];
+                if (state) {
+                  const cache = getMarketCache(key, state.price);
+                  cache.orderbook = tickCount % 5 === 0
+                    ? generateOrderbook(state.price, key)
+                    : tickOrderbook(cache.orderbook, state.price, key);
+                  const newTrades = generateTickTrades(state.price, key);
+                  cache.trades = [...newTrades, ...cache.trades].slice(0, 50);
+                  controller.enqueue(encoder.encode(formatEvent('orderbook', { ...cache.orderbook, simulated: true })));
+                  controller.enqueue(encoder.encode(formatEvent('trades', newTrades)));
+                }
+              }
+              // If no real data and mock disabled, stay silent — client keeps
+              // whatever empty state it started with.
+            })().catch(() => {});
           }
         } catch {
           clearInterval(interval);
@@ -403,19 +460,17 @@ app.get('/api/stream/ticker', async (c) => {
   });
 });
 
-// ===== SIMULATED ORDERBOOK ENDPOINT (fallback/REST) =====
+// ===== ORDERBOOK ENDPOINT =====
+// Returns REAL orderbook from DB only.
+// Opt-in simulated fallback available via ?mock=1 (landing-page marketing use only).
+// Never returns simulated data to the trade UI — empty book is a truthful state
+// when there is no real liquidity.
 app.get('/api/stream/orderbook/:symbol', async (c) => {
   const symbol = c.req.param('symbol');
   const [base, quote] = symbol.split('-');
   const key = `${base}-${quote}`;
+  const allowMock = c.req.query('mock') === '1';
 
-  const basePrice = COIN_PRICES[base];
-  if (basePrice) initPriceState(base, basePrice, quote);
-
-  const state = priceState[key];
-  if (!state) return c.json({ error: 'Unknown symbol' }, 404);
-
-  // Try real orderbook from DB
   try {
     const market = await c.env.DB.prepare('SELECT id FROM markets WHERE base_coin = ? AND quote_coin = ?').bind(base, quote).first() as any;
     if (market) {
@@ -425,29 +480,34 @@ app.get('/api/stream/orderbook/:symbol', async (c) => {
       const { results: realAsks } = await c.env.DB.prepare(
         `SELECT price, SUM(remaining) as amount FROM orders WHERE market_id = ? AND side = 'sell' AND status IN ('open','partial') GROUP BY price ORDER BY price ASC LIMIT 25`
       ).bind(market.id).all();
-      if ((realBids as any[]).length > 3 || (realAsks as any[]).length > 3) {
-        return c.json({ bids: realBids, asks: realAsks });
-      }
+      return c.json({ bids: realBids ?? [], asks: realAsks ?? [], simulated: false });
     }
-  } catch {}
+  } catch (e) {
+    // DB hiccup — fall through
+  }
 
+  // Market not found OR DB failure
+  if (!allowMock) {
+    return c.json({ bids: [], asks: [], simulated: false });
+  }
+
+  // Opt-in: landing/marketing page asks for decorative book
+  const basePrice = COIN_PRICES[base];
+  if (basePrice) initPriceState(base, basePrice, quote);
+  const state = priceState[key];
+  if (!state) return c.json({ bids: [], asks: [], simulated: false });
   const cache = getMarketCache(key, state.price);
-  return c.json(cache.orderbook);
+  return c.json({ ...cache.orderbook, simulated: true });
 });
 
-// ===== SIMULATED RECENT TRADES ENDPOINT (fallback/REST) =====
+// ===== RECENT TRADES ENDPOINT =====
+// Returns REAL trades from DB only. Same mock opt-in as above.
 app.get('/api/stream/trades/:symbol', async (c) => {
   const symbol = c.req.param('symbol');
   const [base, quote] = symbol.split('-');
   const key = `${base}-${quote}`;
+  const allowMock = c.req.query('mock') === '1';
 
-  const basePrice = COIN_PRICES[base];
-  if (basePrice) initPriceState(base, basePrice, quote);
-
-  const state = priceState[key];
-  if (!state) return c.json({ error: 'Unknown symbol' }, 404);
-
-  // Try real trades
   try {
     const market = await c.env.DB.prepare('SELECT id FROM markets WHERE base_coin = ? AND quote_coin = ?').bind(base, quote).first() as any;
     if (market) {
@@ -457,10 +517,18 @@ app.get('/api/stream/trades/:symbol', async (c) => {
         FROM trades t JOIN orders o ON o.id = t.buy_order_id
         WHERE t.market_id = ? ORDER BY t.created_at DESC LIMIT 50
       `).bind(market.id).all();
-      if ((realTrades as any[]).length > 5) return c.json(realTrades);
+      return c.json(realTrades ?? []);
     }
-  } catch {}
+  } catch (e) {
+    // fall through
+  }
 
+  if (!allowMock) return c.json([]);
+
+  const basePrice = COIN_PRICES[base];
+  if (basePrice) initPriceState(base, basePrice, quote);
+  const state = priceState[key];
+  if (!state) return c.json([]);
   const cache = getMarketCache(key, state.price);
   return c.json(cache.trades);
 });
