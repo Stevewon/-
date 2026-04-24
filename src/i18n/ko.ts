@@ -884,7 +884,7 @@ const ko = {
   'auth.verifyEmailResend': '인증 메일 재전송',
   'auth.verifyEmailSuccess': '이메일이 인증되었습니다.',
   'auth.verifyEmailBannerTitle': '이메일을 인증해 주세요',
-  'auth.verifyEmailBannerDesc': '인증이 완료될 때까지 거래·출금이 제한됩니다.',
+  'auth.verifyEmailBannerDesc': '인증 완료 시 1,000 QTA 보너스가 지급됩니다.',
   'auth.verifyEmailBannerBtn': '메일 재전송',
   'auth.kycRequiredTitle': '신원 인증이 필요합니다',
   'auth.kycRequiredDesc': 'KYC 를 완료하면 거래와 출금이 가능합니다.',

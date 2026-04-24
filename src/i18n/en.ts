@@ -893,7 +893,7 @@ const en = {
   'auth.verifyEmailResend': 'Resend verification email',
   'auth.verifyEmailSuccess': 'Email verified successfully.',
   'auth.verifyEmailBannerTitle': 'Please verify your email',
-  'auth.verifyEmailBannerDesc': 'Trading and withdrawals are locked until you verify.',
+  'auth.verifyEmailBannerDesc': 'Your 1,000 QTA bonus is locked until you verify.',
   'auth.verifyEmailBannerBtn': 'Resend link',
   'auth.kycRequiredTitle': 'Identity verification required',
   'auth.kycRequiredDesc': 'Complete KYC to unlock trading and withdrawals.',
