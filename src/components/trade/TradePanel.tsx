@@ -4,6 +4,7 @@ import { useI18n } from '../../i18n';
 import api from '../../utils/api';
 import { formatPrice } from '../../utils/format';
 import { showToast } from '../common/Toast';
+import FeeTierBadge from './FeeTierBadge';
 
 interface Props {
   symbol: string;
@@ -12,16 +13,22 @@ interface Props {
   onComplete?: () => void;
 }
 
+type OrderType = 'limit' | 'market' | 'stop_limit';
+type Tif = 'GTC' | 'IOC' | 'FOK' | 'POST_ONLY';
+
 export default function TradePanel({ symbol, initialPrice, forceSide, onComplete }: Props) {
   const { user, wallets, fetchWallets, fetchOpenOrders } = useStore();
   const { t } = useI18n();
   const [side, setSide] = useState<'buy' | 'sell'>(forceSide || 'buy');
-  const [orderType, setOrderType] = useState<'limit' | 'market'>('limit');
+  const [orderType, setOrderType] = useState<OrderType>('limit');
+  const [tif, setTif] = useState<Tif>('GTC');
   const [price, setPrice] = useState('');
+  const [stopPrice, setStopPrice] = useState('');
   const [amount, setAmount] = useState('');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [sliderPct, setSliderPct] = useState(0);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const [base, quote] = symbol.split('-');
 
@@ -39,11 +46,17 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
     if (user) fetchWallets();
   }, [user]);
 
+  // When switching to market order, TIF must be GTC (server ignores it anyway)
+  useEffect(() => {
+    if (orderType === 'market' && tif !== 'GTC') setTif('GTC');
+  }, [orderType]);
+
   const quoteWallet = wallets.find((w) => w.coin_symbol === quote);
   const baseWallet = wallets.find((w) => w.coin_symbol === base);
   const available = side === 'buy' ? (quoteWallet?.available || 0) : (baseWallet?.available || 0);
 
-  const total = orderType === 'limit' && price && amount ? parseFloat(price) * parseFloat(amount) : 0;
+  const hasPrice = orderType === 'limit' || orderType === 'stop_limit';
+  const total = hasPrice && price && amount ? parseFloat(price) * parseFloat(amount) : 0;
   const fee = total * 0.001;
 
   const setPercentage = (pct: number) => {
@@ -59,30 +72,48 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
   const handleSubmit = async () => {
     if (!user) { setMessage(t('trade.loginToTrade')); return; }
     if (!amount || parseFloat(amount) <= 0) { setMessage(t('trade.invalidAmount')); return; }
-    if (orderType === 'limit' && (!price || parseFloat(price) <= 0)) { setMessage(t('trade.invalidPrice')); return; }
+    if (hasPrice && (!price || parseFloat(price) <= 0)) { setMessage(t('trade.invalidPrice')); return; }
+    if (orderType === 'stop_limit' && (!stopPrice || parseFloat(stopPrice) <= 0)) {
+      setMessage(t('trade.invalidStopPrice'));
+      return;
+    }
 
     setLoading(true);
     setMessage('');
     try {
       const payload: any = { market_symbol: symbol, side, type: orderType, amount: parseFloat(amount) };
-      if (orderType === 'limit') payload.price = parseFloat(price);
+      if (hasPrice) payload.price = parseFloat(price);
+      if (orderType === 'stop_limit') payload.stop_price = parseFloat(stopPrice);
+      if (orderType === 'limit' && tif !== 'GTC') payload.time_in_force = tif;
 
       const res = await api.post('/orders', payload);
       const tradeCount = res.data.trades?.length || 0;
-      const msg = tradeCount > 0
-        ? `${t('trade.orderPlaced')} ${tradeCount}${t('trade.tradesExecuted')}`
-        : `${t('trade.orderPlaced')} ${t('trade.waitingMatch')}`;
+      const status = res.data.order?.status;
+      let msg: string;
+      if (status === 'pending') {
+        msg = t('trade.stopPending');
+      } else if (tradeCount > 0) {
+        msg = `${t('trade.orderPlaced')} ${tradeCount}${t('trade.tradesExecuted')}`;
+      } else {
+        msg = `${t('trade.orderPlaced')} ${t('trade.waitingMatch')}`;
+      }
       setMessage(msg);
       showToast('success', side === 'buy' ? t('trade.buyOrder') : t('trade.sellOrder'), msg);
       setAmount('');
+      setStopPrice('');
       setSliderPct(0);
       fetchWallets();
       fetchOpenOrders(symbol);
       if (onComplete) setTimeout(onComplete, 1500);
     } catch (err: any) {
-      const errMsg = err.response?.data?.error || t('trade.orderFailed');
-      setMessage(errMsg);
-      showToast('error', t('trade.orderFailed'), errMsg);
+      const rawErr = err.response?.data?.error || err.response?.data?.message || t('trade.orderFailed');
+      let shown = rawErr;
+      // Friendly mapping for TIF rejections
+      const lower = String(rawErr).toLowerCase();
+      if (lower.includes('post_only') || lower.includes('post-only')) shown = t('trade.postOnlyRejected');
+      else if (lower.includes('fok') || lower.includes('fill or kill')) shown = t('trade.fokRejected');
+      setMessage(shown);
+      showToast('error', t('trade.orderFailed'), shown);
     } finally {
       setLoading(false);
     }
@@ -112,24 +143,28 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
         </div>
       )}
 
-      {/* Order type */}
-      <div className="flex gap-4 mb-3 border-b border-exchange-border pb-2">
-        {([
-          { key: 'limit' as const, label: t('trade.limit') },
-          { key: 'market' as const, label: t('trade.market') },
-        ]).map(({ key, label }) => (
-          <button
-            key={key}
-            onClick={() => setOrderType(key)}
-            className={`text-xs font-medium pb-1 border-b-2 transition-colors ${
-              orderType === key
-                ? 'border-exchange-yellow text-exchange-yellow'
-                : 'border-transparent text-exchange-text-secondary hover:text-exchange-text'
-            }`}
-          >
-            {label}
-          </button>
-        ))}
+      {/* Order type + fee tier badge */}
+      <div className="flex items-center justify-between mb-3 border-b border-exchange-border pb-2">
+        <div className="flex gap-3">
+          {([
+            { key: 'limit' as const, label: t('trade.limit') },
+            { key: 'market' as const, label: t('trade.market') },
+            { key: 'stop_limit' as const, label: t('trade.stopLimit') },
+          ]).map(({ key, label }) => (
+            <button
+              key={key}
+              onClick={() => setOrderType(key)}
+              className={`text-xs font-medium pb-1 border-b-2 transition-colors ${
+                orderType === key
+                  ? 'border-exchange-yellow text-exchange-yellow'
+                  : 'border-transparent text-exchange-text-secondary hover:text-exchange-text'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <FeeTierBadge compact />
       </div>
 
       {/* Available */}
@@ -140,8 +175,26 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
         </span>
       </div>
 
+      {/* Stop price input (stop-limit only) */}
+      {orderType === 'stop_limit' && (
+        <div className="mb-2">
+          <label className="text-xs text-exchange-text-third mb-1 block">
+            {t('trade.stopPrice')} ({quote})
+          </label>
+          <input
+            type="number"
+            value={stopPrice}
+            onChange={(e) => setStopPrice(e.target.value)}
+            className="input-field text-right tabular-nums"
+            placeholder="0.00"
+            step="any"
+          />
+          <p className="text-[10px] text-exchange-text-third mt-1">{t('trade.stopPriceHint')}</p>
+        </div>
+      )}
+
       {/* Price input */}
-      {orderType === 'limit' && (
+      {hasPrice && (
         <div className="mb-2">
           <label className="text-xs text-exchange-text-third mb-1 block">{t('trade.price')} ({quote})</label>
           <input
@@ -194,8 +247,50 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
         </div>
       </div>
 
-      {/* Total & Fee */}
+      {/* Advanced / TIF — limit orders only */}
       {orderType === 'limit' && (
+        <div className="mb-3">
+          <button
+            type="button"
+            onClick={() => setShowAdvanced((v) => !v)}
+            className="text-[11px] text-exchange-text-third hover:text-exchange-yellow flex items-center gap-1"
+          >
+            <span className={`transition-transform ${showAdvanced ? 'rotate-90' : ''}`}>▸</span>
+            {t('trade.timeInForce')}
+            <span className="ml-1 px-1.5 py-0.5 rounded bg-exchange-input text-exchange-text-secondary font-mono text-[10px]">
+              {tif}
+            </span>
+          </button>
+          {showAdvanced && (
+            <div className="mt-2 grid grid-cols-2 gap-1.5">
+              {([
+                { key: 'GTC' as const, label: t('trade.tif.gtc'), desc: t('trade.tif.gtcDesc') },
+                { key: 'IOC' as const, label: t('trade.tif.ioc'), desc: t('trade.tif.iocDesc') },
+                { key: 'FOK' as const, label: t('trade.tif.fok'), desc: t('trade.tif.fokDesc') },
+                { key: 'POST_ONLY' as const, label: t('trade.tif.postOnly'), desc: t('trade.tif.postOnlyDesc') },
+              ]).map(({ key, label, desc }) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setTif(key)}
+                  title={desc}
+                  className={`text-[10px] px-2 py-1.5 rounded border transition-colors text-left ${
+                    tif === key
+                      ? 'border-exchange-yellow bg-exchange-yellow/10 text-exchange-yellow'
+                      : 'border-exchange-border bg-exchange-input text-exchange-text-secondary hover:border-exchange-yellow/50'
+                  }`}
+                >
+                  <div className="font-semibold">{label}</div>
+                  <div className="text-[9px] opacity-70 truncate">{desc}</div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Total & Fee */}
+      {hasPrice && (
         <div className="space-y-1 mb-3 text-xs">
           <div className="flex justify-between">
             <span className="text-exchange-text-third">{t('trade.total')}</span>
@@ -222,9 +317,11 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
       {/* Message */}
       {message && (
         <div className={`mt-2 text-xs text-center px-2 py-1.5 rounded-lg ${
-          message.includes('failed') || message.includes('Insufficient') || message.includes('login') || message.includes('Failed') || message.includes('실패') || message.includes('로그인')
+          message.includes('failed') || message.includes('Insufficient') || message.includes('login') || message.includes('Failed') || message.includes('실패') || message.includes('로그인') || message.includes('rejected') || message.includes('거절')
             ? 'bg-exchange-sell/10 text-exchange-sell'
-            : 'bg-exchange-buy/10 text-exchange-buy'
+            : message.includes('pending') || message.includes('대기')
+              ? 'bg-exchange-yellow/10 text-exchange-yellow'
+              : 'bg-exchange-buy/10 text-exchange-buy'
         }`}>
           {message}
         </div>

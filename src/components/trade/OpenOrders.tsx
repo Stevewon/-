@@ -57,8 +57,21 @@ export default function OpenOrders({ symbol }: Props) {
             <span className={`w-[10%] font-medium ${order.side === 'buy' ? 'text-exchange-buy' : 'text-exchange-sell'}`}>
               {order.side === 'buy' ? t('trade.buy') : t('trade.sell')}
             </span>
-            <span className="w-[12%] text-exchange-text-secondary">{order.type === 'limit' ? t('trade.limit') : t('trade.market')}</span>
-            <span className="w-[15%] text-right tabular-nums">{order.price ? formatPrice(order.price) : t('trade.market')}</span>
+            <span className="w-[12%] text-exchange-text-secondary">
+              {order.type === 'stop_limit' ? (
+                <span className="inline-flex items-center gap-1">
+                  {t('trade.stopLimit')}
+                  {order.status === 'pending' && (
+                    <span className="text-[9px] px-1 rounded bg-exchange-yellow/20 text-exchange-yellow">PEND</span>
+                  )}
+                </span>
+              ) : order.type === 'limit' ? t('trade.limit') : t('trade.market')}
+            </span>
+            <span className="w-[15%] text-right tabular-nums">
+              {order.type === 'stop_limit' && order.stop_price && order.status === 'pending' ? (
+                <span className="text-exchange-yellow">@{formatPrice(order.stop_price)}</span>
+              ) : order.price ? formatPrice(order.price) : t('trade.market')}
+            </span>
             <span className="w-[15%] text-right tabular-nums">{formatAmount(order.amount)}</span>
             <span className="w-[15%] text-right text-exchange-text-secondary tabular-nums">
               {((order.filled / order.amount) * 100).toFixed(1)}%

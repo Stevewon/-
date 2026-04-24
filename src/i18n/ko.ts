@@ -89,6 +89,28 @@ const ko = {
   'trade.buyOrder': '\ub9e4\uc218 \uc8fc\ubb38',
   'trade.sellOrder': '\ub9e4\ub3c4 \uc8fc\ubb38',
 
+  // 고급 주문 (S3-3, S3-4, S3-5)
+  'trade.stopLimit': '스톱-지정가',
+  'trade.stopPrice': '트리거 가격',
+  'trade.stopPriceHint': '현재가가 이 가격을 돌파하면 주문이 발동됩니다',
+  'trade.invalidStopPrice': '유효한 트리거 가격을 입력하세요',
+  'trade.timeInForce': '주문 유효시간',
+  'trade.tif.gtc': 'GTC',
+  'trade.tif.gtcDesc': '취소 전까지 유효 (기본값)',
+  'trade.tif.ioc': 'IOC',
+  'trade.tif.iocDesc': '즉시 체결 후 잔량 취소',
+  'trade.tif.fok': 'FOK',
+  'trade.tif.fokDesc': '전량 즉시 체결 또는 전량 취소',
+  'trade.tif.postOnly': 'Post-Only',
+  'trade.tif.postOnlyDesc': '즉시 체결될 경우 거절 (메이커 전용)',
+  'trade.feeTier': '수수료 등급',
+  'trade.makerTaker': '메이커 / 테이커',
+  'trade.volume30d': '30일 거래량',
+  'trade.nextTier': '다음 등급까지',
+  'trade.postOnlyRejected': 'Post-Only 거절됨 — 즉시 체결 가능 상태',
+  'trade.fokRejected': 'FOK 거절됨 — 전량 체결 불가',
+  'trade.stopPending': '스톱 주문 접수됨 — 트리거 대기 중',
+
   // Market Info
   'market.change24h': '24h \ubcc0\ub3d9',
   'market.high24h': '24h \uace0\uac00',

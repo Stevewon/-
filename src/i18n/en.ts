@@ -89,6 +89,28 @@ const en = {
   'trade.buyOrder': 'Buy Order',
   'trade.sellOrder': 'Sell Order',
 
+  // Advanced order types (S3-3, S3-4, S3-5)
+  'trade.stopLimit': 'Stop-Limit',
+  'trade.stopPrice': 'Stop Price',
+  'trade.stopPriceHint': 'Order triggers when last price crosses this level',
+  'trade.invalidStopPrice': 'Enter valid stop price',
+  'trade.timeInForce': 'Time-in-Force',
+  'trade.tif.gtc': 'GTC',
+  'trade.tif.gtcDesc': 'Good-Till-Cancelled (default)',
+  'trade.tif.ioc': 'IOC',
+  'trade.tif.iocDesc': 'Immediate-Or-Cancel — fill what you can, cancel the rest',
+  'trade.tif.fok': 'FOK',
+  'trade.tif.fokDesc': 'Fill-Or-Kill — fill completely or cancel',
+  'trade.tif.postOnly': 'Post-Only',
+  'trade.tif.postOnlyDesc': 'Rejected if it would match immediately (maker only)',
+  'trade.feeTier': 'Fee Tier',
+  'trade.makerTaker': 'M / T',
+  'trade.volume30d': '30d Volume',
+  'trade.nextTier': 'Next tier at',
+  'trade.postOnlyRejected': 'Post-Only rejected — would take liquidity',
+  'trade.fokRejected': 'FOK rejected — cannot fully fill',
+  'trade.stopPending': 'Stop order pending — waiting for trigger',
+
   // Market Info
   'market.change24h': '24h Change',
   'market.high24h': '24h High',
