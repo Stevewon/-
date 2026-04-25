@@ -175,7 +175,8 @@ const priceState: Record<string, {
 function initPriceState(symbol: string, basePrice: number, quote: string) {
   const key = `${symbol}-${quote}`;
   if (!priceState[key]) {
-    const p = quote === 'KRW' ? basePrice * 1350 : basePrice;
+    // USDT and USDC both peg to ~$1, so the base USD price applies as-is.
+    const p = basePrice;
     const jitter = 1 + (Math.random() - 0.5) * 0.02;
     const price = p * jitter;
     priceState[key] = {
@@ -340,7 +341,7 @@ app.get('/api/stream/ticker', async (c) => {
   // Initialize all price states
   for (const [symbol, basePrice] of Object.entries(COIN_PRICES)) {
     initPriceState(symbol, basePrice, 'USDT');
-    initPriceState(symbol, basePrice, 'KRW');
+    initPriceState(symbol, basePrice, 'USDC');
   }
 
   // Get optional market subscription
@@ -358,8 +359,8 @@ app.get('/api/stream/ticker', async (c) => {
     for (const m of markets.results as any[]) {
       const key = `${m.base_coin}-${m.quote_coin}`;
       if (priceState[key] && m.price_usd > 0) {
-        const realPrice = m.quote_coin === 'KRW' ? m.price_usd * 1350 : m.price_usd;
-        priceState[key].price = priceState[key].price * 0.95 + realPrice * 0.05;
+        // USDT/USDC are both ~$1, no FX conversion needed.
+        priceState[key].price = priceState[key].price * 0.95 + m.price_usd * 0.05;
       }
     }
   } catch { /* DB might not be available */ }
@@ -376,7 +377,7 @@ app.get('/api/stream/ticker', async (c) => {
   const buildTickers = () => {
     const tickers: Record<string, any> = {};
     for (const [symbol] of Object.entries(COIN_PRICES)) {
-      for (const quote of ['USDT', 'KRW']) {
+      for (const quote of ['USDT', 'USDC']) {
         const key = `${symbol}-${quote}`;
         tickPrice(key);
         const s = priceState[key];
@@ -608,9 +609,10 @@ app.get('/api/admin/seed-candles', async (c) => {
   let insertCount = 0;
 
   for (const [symbol, basePrice] of Object.entries(COIN_PRICES)) {
-    for (const quote of ['USDT', 'KRW']) {
+    for (const quote of ['USDT', 'USDC']) {
       const marketId = `m-${symbol.toLowerCase()}-${quote.toLowerCase()}`;
-      const price = quote === 'KRW' ? basePrice * 1350 : basePrice;
+      // USDT and USDC both peg to ~$1
+      const price = basePrice;
 
       for (const [interval, cfg] of Object.entries(intervals)) {
         let currentPrice = price * (0.9 + Math.random() * 0.1);

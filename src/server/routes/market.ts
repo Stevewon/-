@@ -90,7 +90,7 @@ app.get('/tickers', async (c) => {
       'SELECT close FROM candles WHERE market_id = ? AND interval = ? ORDER BY open_time DESC LIMIT 1'
     ).bind(m.id, '1m').first() as any;
 
-    const price = lastCandle?.close || (m.quote_coin === 'KRW' ? (coin?.price_usd || 0) * 1350 : coin?.price_usd || 0);
+    // QuantaEX is USD-denominated; USDT and USDC both peg to ~$1 so the\n    // base coin's USD price applies directly without conversion.\n    const price = lastCandle?.close || (coin?.price_usd || 0);
     tickers[sym] = {
       last: price,
       change: coin?.change_24h || (Math.random() - 0.5) * 10,

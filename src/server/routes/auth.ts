@@ -99,7 +99,7 @@ app.post('/register', rlRegister, async (c) => {
   // farm the bonus. Unlock happens in POST /verify-email below.
   const defaults = [
     { symbol: 'USDT', available: 0, locked: 0 },
-    { symbol: 'KRW',  available: 0, locked: 0 },
+    { symbol: 'USDC', available: 0, locked: 0 },
     { symbol: 'BTC',  available: 0, locked: 0 },
     { symbol: 'ETH',  available: 0, locked: 0 },
     { symbol: 'QTA',  available: 0, locked: 1000 },

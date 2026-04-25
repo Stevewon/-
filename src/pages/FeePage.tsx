@@ -33,7 +33,7 @@ export default function FeePage() {
     { coin: 'AVAX', name: 'Avalanche', network: 'C-Chain', fee: '0.01 AVAX', min: '0.1 AVAX', confirmations: 12 },
     { coin: 'MATIC', name: 'Polygon', network: 'Polygon', fee: '0.1 MATIC', min: '1 MATIC', confirmations: 128 },
     { coin: 'QTA', name: 'QuantaEX', network: 'QuantaEX', fee: '100 QTA', min: '500 QTA', confirmations: 1 },
-    { coin: 'KRW', name: t('fee.krw'), network: t('fee.bankTransferNetwork'), fee: '1,000 KRW', min: '5,000 KRW', confirmations: 0 },
+    { coin: 'USDC', name: 'USD Coin', network: 'TRC20 / ERC20 / BEP20', fee: '1 USDC', min: '10 USDC', confirmations: 19 },
   ];
 
   const tabs: { key: Tab; icon: React.ReactNode; label: string }[] = [
@@ -452,7 +452,7 @@ export default function FeePage() {
                   { coin: 'XRP', time: `${t('fee.approx')} 1min`, blocks: t('fee.blocks', { n: '1' }) },
                   { coin: 'BNB', time: `${t('fee.approx')} 3min`, blocks: t('fee.blocks', { n: '15' }) },
                   { coin: 'ADA', time: `${t('fee.approx')} 5min`, blocks: t('fee.blocks', { n: '15' }) },
-                  { coin: 'KRW', time: `${t('fee.approx')} 1~5min`, blocks: t('fee.bankTransfer') },
+                  { coin: 'USDC', time: `${t('fee.approx')} 1~5min`, blocks: t('fee.byNetwork') },
                 ].map((item) => (
                   <div key={item.coin} className="bg-exchange-card p-4 flex items-center gap-3">
                     <CoinIcon symbol={item.coin} size={32} />

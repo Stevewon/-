@@ -73,7 +73,10 @@ export default function WalletPage() {
     wallets.reduce((sum, w) => sum + (w.available + w.locked) * (w.price_usd || 0), 0),
     [wallets]
   );
-  const totalKRW = totalUSD * 1350;
+  // Reference asset cross-rate (BTC) so global users have a familiar
+  // crypto-native sub-line under the USD total.
+  const btcPrice = wallets.find(w => w.coin_symbol === 'BTC')?.price_usd || 0;
+  const totalBTC = btcPrice > 0 ? totalUSD / btcPrice : 0;
 
   // Portfolio breakdown
   const portfolio = useMemo(() => {
@@ -173,7 +176,7 @@ export default function WalletPage() {
               {hideBalance ? '••••••••' : `$${formatPrice(totalUSD)}`}
             </div>
             <div className="text-sm text-exchange-text-secondary tabular-nums">
-              {hideBalance ? '••••••••' : `≈ ₩${totalKRW.toLocaleString('ko-KR', { maximumFractionDigits: 0 })}`}
+              {hideBalance ? '••••••••' : `≈ ${totalBTC.toFixed(8)} BTC`}
             </div>
 
             {/* Quick Actions */}
