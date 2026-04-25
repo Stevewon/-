@@ -4,7 +4,7 @@ import {
   DollarSign, TrendingUp, Search, Filter, ChevronLeft, ChevronRight,
   Ban, UserCheck, Crown, KeyRound, X, CheckCircle2, XCircle, Clock,
   Coins, Send, ArrowDownToLine, Megaphone, Wallet, Hash, Bell,
-  FileText, Receipt,
+  FileText, Receipt, Server, Database, HardDrive,
 } from 'lucide-react';
 import useStore from '../store/useStore';
 import { useI18n } from '../i18n';
@@ -13,7 +13,7 @@ import { formatPrice, timeAgo } from '../utils/format';
 import { showToast } from '../components/common/Toast';
 import CoinIcon from '../components/common/CoinIcon';
 
-type Tab = 'overview' | 'users' | 'kyc' | 'deposits' | 'withdrawals' | 'trades' | 'coins' | 'broadcast' | 'audit' | 'fees';
+type Tab = 'overview' | 'users' | 'kyc' | 'deposits' | 'withdrawals' | 'trades' | 'coins' | 'broadcast' | 'audit' | 'fees' | 'system';
 
 export default function AdminPage() {
   const { user } = useStore();
@@ -80,6 +80,9 @@ export default function AdminPage() {
     { key: 'trades',     label: t('admin.tradesTab'),   icon: BarChart3 },
     { key: 'coins',      label: t('admin.coins'),       icon: Coins },
     { key: 'broadcast',  label: t('admin.broadcast'),   icon: Megaphone },
+    { key: 'fees',       label: t('admin.fees'),        icon: Receipt },
+    { key: 'audit',      label: t('admin.audit'),       icon: FileText },
+    { key: 'system',     label: t('admin.system'),      icon: Server },
   ];
 
   return (
@@ -145,6 +148,7 @@ export default function AdminPage() {
       {tab === 'broadcast'   && <BroadcastTab t={t} />}
       {tab === 'fees'        && <FeesTab t={t} />}
       {tab === 'audit'       && <AuditTab t={t} />}
+      {tab === 'system'      && <SystemTab t={t} />}
     </div>
   );
 }
@@ -1471,6 +1475,247 @@ function AuditTab({ t }: any) {
             ))}
           </tbody>
         </table>
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================================================
+// System tab — DB/health/migrations status, last backup, audit summary cards
+// ============================================================================
+function SystemTab({ t }: any) {
+  const [health, setHealth] = useState<any>(null);
+  const [auditStats, setAuditStats] = useState<any>(null);
+  const [feeStats, setFeeStats] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const [h, a, f] = await Promise.all([
+        api.get('/admin/system-health').then((r) => r.data).catch((e) => ({ error: e?.response?.data?.error || 'fail' })),
+        api.get('/admin/audit-stats').then((r) => r.data).catch(() => null),
+        api.get('/admin/fee-stats').then((r) => r.data).catch(() => null),
+      ]);
+      setHealth(h);
+      setAuditStats(a);
+      setFeeStats(f);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    load();
+    const id = setInterval(load, 30_000); // auto-refresh 30s
+    return () => clearInterval(id);
+  }, []);
+
+  if (!health) {
+    return <div className="p-8 text-center text-exchange-text-third">{loading ? t('common.loading') : '—'}</div>;
+  }
+
+  const StatusPill = ({ ok, label }: { ok: boolean; label?: string }) => (
+    <span className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+      ok ? 'bg-exchange-buy/15 text-exchange-buy' : 'bg-exchange-sell/15 text-exchange-sell'
+    }`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${ok ? 'bg-exchange-buy' : 'bg-exchange-sell'}`} />
+      {label || (ok ? 'OK' : 'FAIL')}
+    </span>
+  );
+
+  return (
+    <div className="space-y-4">
+      {/* Top status banner */}
+      <div className={`rounded-xl border p-4 flex items-center justify-between ${
+        health.status === 'ok'
+          ? 'bg-exchange-buy/5 border-exchange-buy/30'
+          : 'bg-exchange-sell/5 border-exchange-sell/30'
+      }`}>
+        <div className="flex items-center gap-3">
+          <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+            health.status === 'ok' ? 'bg-exchange-buy/15' : 'bg-exchange-sell/15'
+          }`}>
+            <Server size={20} className={health.status === 'ok' ? 'text-exchange-buy' : 'text-exchange-sell'} />
+          </div>
+          <div>
+            <div className="text-sm font-semibold uppercase tracking-wide">
+              {health.status === 'ok' ? t('admin.systemHealthy') : t('admin.systemDegraded')}
+            </div>
+            <div className="text-[11px] text-exchange-text-third">
+              {t('admin.checkedAt')}: {timeAgo(health.checked_at)}
+            </div>
+          </div>
+        </div>
+        <button
+          onClick={load}
+          disabled={loading}
+          className="p-2 text-exchange-text-third hover:text-exchange-text rounded-lg hover:bg-exchange-hover/50 transition-colors"
+          aria-label="Refresh"
+        >
+          <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+        </button>
+      </div>
+
+      {/* DB + Backup row */}
+      <div className="grid md:grid-cols-3 gap-3">
+        <div className="bg-exchange-card border border-exchange-border rounded-xl p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <Database size={14} className="text-exchange-yellow" />
+            <span className="text-xs font-semibold">{t('admin.database')}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-exchange-text-third">{t('admin.dbPing')}</span>
+            <StatusPill ok={!!health.db?.ok} />
+          </div>
+          {typeof health.db?.latency_ms === 'number' && (
+            <div className="flex items-center justify-between mt-1">
+              <span className="text-xs text-exchange-text-third">{t('admin.dbLatency')}</span>
+              <span className="text-xs font-mono tabular-nums">{health.db.latency_ms} ms</span>
+            </div>
+          )}
+        </div>
+
+        <div className="bg-exchange-card border border-exchange-border rounded-xl p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <HardDrive size={14} className="text-exchange-yellow" />
+            <span className="text-xs font-semibold">{t('admin.lastBackup')}</span>
+          </div>
+          <div className="text-sm font-mono tabular-nums">
+            {health.last_backup_at ? timeAgo(health.last_backup_at) : '—'}
+          </div>
+          <div className="text-[10px] text-exchange-text-third mt-1">
+            {t('admin.backupHint')}
+          </div>
+        </div>
+
+        <div className="bg-exchange-card border border-exchange-border rounded-xl p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <Activity size={14} className="text-exchange-yellow" />
+            <span className="text-xs font-semibold">{t('admin.last24h')}</span>
+          </div>
+          <div className="grid grid-cols-3 gap-2 mt-1">
+            {[
+              { k: 'orders', label: t('admin.tradesOrders') },
+              { k: 'trades', label: t('admin.tradesTab') },
+              { k: 'new_users', label: t('admin.newUsers') },
+            ].map((m) => (
+              <div key={m.k} className="text-center">
+                <div className="text-base font-bold tabular-nums">
+                  {Number(health.last24h?.[m.k] || 0).toLocaleString()}
+                </div>
+                <div className="text-[9px] text-exchange-text-third truncate">{m.label}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Migrations / table presence */}
+      <div className="bg-exchange-card border border-exchange-border rounded-xl p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <FileText size={14} className="text-exchange-yellow" />
+          <span className="text-xs font-semibold">{t('admin.migrations')}</span>
+        </div>
+        <div className="grid sm:grid-cols-2 gap-2 text-xs">
+          {Object.entries(health.tables || {}).map(([name, v]: [string, any]) => (
+            <div key={name} className="flex items-center justify-between bg-exchange-input/40 rounded-lg px-3 py-2">
+              <code className="text-exchange-text-secondary">{name}</code>
+              <div className="flex items-center gap-2">
+                {v.ok && <span className="text-[10px] text-exchange-text-third tabular-nums">{Number(v.rows).toLocaleString()} rows</span>}
+                <StatusPill ok={!!v.ok} label={v.ok ? 'OK' : 'MISSING'} />
+              </div>
+            </div>
+          ))}
+          {Object.entries(health.orders_columns || {}).map(([col, ok]: [string, any]) => (
+            <div key={col} className="flex items-center justify-between bg-exchange-input/40 rounded-lg px-3 py-2">
+              <code className="text-exchange-text-secondary">orders.{col}</code>
+              <StatusPill ok={!!ok} label={ok ? 'OK' : 'MIGRATE'} />
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Audit + Fee summary cards */}
+      <div className="grid md:grid-cols-2 gap-3">
+        <div className="bg-exchange-card border border-exchange-border rounded-xl p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <FileText size={14} className="text-exchange-yellow" />
+              <span className="text-xs font-semibold">{t('admin.auditSummary')}</span>
+            </div>
+            <span className="text-[10px] text-exchange-text-third">{t('admin.last7d')}</span>
+          </div>
+          {auditStats?.error ? (
+            <div className="text-xs text-exchange-sell">{auditStats.error}</div>
+          ) : auditStats ? (
+            <>
+              <div className="grid grid-cols-3 gap-2 mb-3">
+                <div className="text-center">
+                  <div className="text-base font-bold tabular-nums">{Number(auditStats.last24h || 0).toLocaleString()}</div>
+                  <div className="text-[9px] text-exchange-text-third">{t('admin.last24h')}</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-base font-bold tabular-nums">{Number(auditStats.last7d || 0).toLocaleString()}</div>
+                  <div className="text-[9px] text-exchange-text-third">{t('admin.last7d')}</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-base font-bold tabular-nums">{Number(auditStats.total || 0).toLocaleString()}</div>
+                  <div className="text-[9px] text-exchange-text-third">{t('admin.total')}</div>
+                </div>
+              </div>
+              <div className="space-y-1">
+                {(auditStats.byAction || []).slice(0, 5).map((a: any) => (
+                  <div key={a.action} className="flex justify-between text-[11px]">
+                    <code className="text-exchange-text-secondary">{a.action}</code>
+                    <span className="font-mono tabular-nums text-exchange-text">{Number(a.n).toLocaleString()}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : <div className="text-xs text-exchange-text-third">—</div>}
+        </div>
+
+        <div className="bg-exchange-card border border-exchange-border rounded-xl p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Receipt size={14} className="text-exchange-yellow" />
+              <span className="text-xs font-semibold">{t('admin.feeRevenue')}</span>
+            </div>
+            <span className="text-[10px] text-exchange-text-third">USD</span>
+          </div>
+          {feeStats?.error ? (
+            <div className="text-xs text-exchange-sell">{feeStats.error}</div>
+          ) : feeStats ? (
+            <>
+              <div className="grid grid-cols-2 gap-2 mb-3">
+                <div className="text-center">
+                  <div className="text-base font-bold tabular-nums text-exchange-buy">
+                    ${Number(feeStats.last24h?.usd || 0).toFixed(2)}
+                  </div>
+                  <div className="text-[9px] text-exchange-text-third">{t('admin.last24h')}</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-base font-bold tabular-nums text-exchange-buy">
+                    ${Number(feeStats.last7d?.usd || 0).toFixed(2)}
+                  </div>
+                  <div className="text-[9px] text-exchange-text-third">{t('admin.last7d')}</div>
+                </div>
+              </div>
+              <div className="space-y-1">
+                {(feeStats.byCoin || []).slice(0, 5).map((c: any) => (
+                  <div key={c.coin} className="flex justify-between text-[11px]">
+                    <span className="text-exchange-text-secondary">{c.coin}</span>
+                    <span className="font-mono tabular-nums text-exchange-text">
+                      ${Number(c.total_usd || 0).toFixed(2)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : <div className="text-xs text-exchange-text-third">—</div>}
+        </div>
       </div>
     </div>
   );

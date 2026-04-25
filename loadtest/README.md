@@ -1,138 +1,128 @@
-# QuantaEx Load Testing
+# QuantaEX Load Tests
 
-k6-based load tests for the order matching engine. Measures throughput, latency,
-and correctness of the Cloudflare Pages + D1 stack under concurrent load.
+k6-based load tests for the QuantaEX API. Three independent scenarios cover the
+hottest paths: read traffic (orderbook polling), order placement throughput, and
+the full user journey (login → query → order → cancel).
 
 ## Prerequisites
 
 ```bash
-# macOS
-brew install k6
+# Install k6 (one-time)
+# macOS:    brew install k6
+# Linux:    https://k6.io/docs/get-started/installation/
+# Windows:  choco install k6
+k6 version
+```
 
-# Linux
-sudo gpg -k && sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
-echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
-sudo apt update && sudo apt install k6
+## Targets
 
-# Docker
-docker pull grafana/k6
+By default tests hit `https://quantaex.io`. Override with the `BASE_URL` env var
+to run against staging or local:
+
+```bash
+export BASE_URL=https://staging.quantaex.io
+# or for the local Pages dev server (npm run dev:pages):
+export BASE_URL=http://localhost:3000
+```
+
+## Pre-flight: seed test users
+
+The scenarios below require `LOAD_USERS` test accounts to exist. Run the seed
+script once against the target environment (idempotent — it skips users that
+already exist):
+
+```bash
+# Creates loadtest+0001@quantaex.io ... loadtest+NNNN@quantaex.io
+# password: Loadtest!1234
+node loadtest/seed-users.mjs --base=$BASE_URL --count=200
 ```
 
 ## Scenarios
 
-### 1. `smoke.js` — health check
-Fires 10 req/s at `/api/health`, `/api/markets` for 30 s.
-Use to verify the target is up before running heavy tests.
+### 1. `read.js` — orderbook & market read traffic
+
+Pure GETs against unauthenticated public endpoints. Emulates a user staring at
+the trade page (orderbook, recent trades, ticker) at 1 Hz.
 
 ```bash
-BASE_URL=https://quantaex.io k6 run smoke.js
+k6 run loadtest/read.js \
+  -e BASE_URL=$BASE_URL \
+  --vus 200 --duration 2m
 ```
 
-### 2. `order-matching.js` — full order lifecycle
-Simulates concurrent users placing limit buy/sell orders that match each other.
-Uses pre-created test accounts (see **Setup** below).
-Reports **TPS (orders/s)**, **p95 latency**, and **matched trade rate**.
+**Pass criteria** (defined in the script `thresholds`):
+- `http_req_failed` < 1%
+- `http_req_duration{p(95)}` < 800 ms
+- `http_req_duration{p(99)}` < 1500 ms
+
+### 2. `match.js` — matching engine TPS
+
+Authenticated VUs each place a randomized limit order in `BTC-USDT` once per
+iteration. Sell prices ±0.5% above/below mid so most orders match. Measures
+server-side time to insert + match + reply.
 
 ```bash
-BASE_URL=https://quantaex.io \
-  TEST_USERS_FILE=./users.json \
-  k6 run order-matching.js
+k6 run loadtest/match.js \
+  -e BASE_URL=$BASE_URL \
+  -e LOAD_USERS=200 \
+  --vus 50 --duration 2m
 ```
 
-Default profile: ramps 0 → 50 VUs over 30 s, holds for 2 min, ramps down.
-Pass-fail thresholds baked in:
-- `http_req_duration{endpoint:place_order} p(95) < 1500ms`
-- `order_place_failure_rate < 1%`
+**Pass criteria**:
+- `http_req_failed` < 2% (some "insufficient balance" expected as wallets drain)
+- `match_latency{p(95)}` < 1500 ms
+- successful match rate > 95% of placed orders
 
-### 3. `read-heavy.js` — orderbook/markets read load
-100 VUs hammering `/api/markets`, `/api/markets/:symbol/orderbook`,
-`/api/markets/:symbol/trades`. Tests CDN + D1 read replica behavior.
+### 3. `journey.js` — end-to-end user flow
+
+Login → fetch wallets → fetch orderbook → place limit order → cancel. Closer to
+real user behavior. Used to detect interaction effects (rate limits, JWT
+contention, etc.).
 
 ```bash
-BASE_URL=https://quantaex.io k6 run read-heavy.js
+k6 run loadtest/journey.js \
+  -e BASE_URL=$BASE_URL \
+  -e LOAD_USERS=200 \
+  --vus 100 --duration 5m
 ```
 
-### 4. `chaos.js` — adverse conditions
-Injects scenarios that exercise failure paths:
-- Insufficient-balance rejections
-- Invalid-signature / expired-JWT
-- Rapid-fire order cancels (race with matching engine)
-- POST_ONLY rejections against live orderbook
-- FOK rejections
+## Smoke (CI)
 
-Primarily a correctness test — confirms the exchange returns proper error codes
-under stress, never double-spends, and never leaves stuck 'pending' orders.
+A 30-second sanity check used as a gate before bigger runs:
 
 ```bash
-BASE_URL=https://quantaex.io \
-  TEST_USERS_FILE=./users.json \
-  k6 run chaos.js
+k6 run loadtest/read.js -e BASE_URL=$BASE_URL --vus 5 --duration 30s
 ```
 
-## Setup: provisioning test accounts
+## Reading the output
 
-Create N test users, give them seed balances on TESTNET ONLY, export to JSON:
+k6 prints aggregate metrics and threshold pass/fail at the end. Key fields:
+
+- `http_reqs` — total requests, rate per second
+- `http_req_duration` — server-side latency (p50/p90/p95/p99)
+- `iterations` — completed VU loops; with one order per loop in `match.js`
+  this is roughly your sustained order TPS
+- `checks` — domain-level assertions (e.g. response had `order.id`)
+
+## Cloudflare considerations
+
+- **Worker CPU limit**: D1-backed routes can hit the 50 ms CPU limit under a
+  burst. Watch for `1102` errors in the stderr output — they show up as 5xx
+  with body `Worker exceeded resource limits`.
+- **Rate limits**: `auth.ts` rate-limits login at 10/5min/IP. Run `seed-users`
+  with --use-token-cache so VUs reuse JWTs and avoid blowing the limit.
+- **D1 contention**: heavy concurrent writes to the same row (e.g. wallets)
+  serialize. The matching engine already addresses this with locked balance
+  per-user, but batch DB writes will queue. Don't be surprised by p99 spikes
+  on `match.js`.
+
+## Reporting
+
+Output a JSON summary for tracking trends:
 
 ```bash
-# Against local dev DB
-node scripts/provision-test-users.js --count 20 --output ./users.json
-
-# Format of users.json:
-# [{ "email": "load-00@test.quantaex.io", "password": "...", "jwt": "...", "userId": "..." }]
+k6 run loadtest/match.js \
+  -e BASE_URL=$BASE_URL \
+  --vus 50 --duration 2m \
+  --summary-export=loadtest/results/match-$(date +%Y%m%d-%H%M).json
 ```
-
-Seed wallet balances for matching tests (via admin manual-deposit endpoint):
-
-```bash
-ADMIN_JWT=$ADMIN_JWT node scripts/seed-test-balances.js \
-  --users ./users.json --base BTC --quote USDT --amount 10
-```
-
-## Reading results
-
-k6 prints a summary table at the end:
-
-```
-http_req_duration..............: avg=145ms  p(95)=820ms  p(99)=1.3s
-http_reqs......................: 12450    62.1/s
-order_place_success_rate.......: 99.20%
-order_matched_rate.............: 68.3%
-iterations.....................: 6225     31.0/s
-```
-
-Key metrics:
-- **`http_reqs` rate/s** — overall request throughput
-- **`iterations/s`** — completed user journeys (place → match → verify)
-- **`p(95)` latency** — 95th percentile response time; <1.5 s is the SLO
-- **`order_matched_rate`** — how many orders found a counterparty; <20% means
-  spread is too wide or orderbook is starved
-
-## Recommended targets
-
-| Phase | VUs | Duration | Goal |
-|-------|-----|----------|------|
-| Baseline | 10 | 2 min | Confirm basic functionality, establish latency floor |
-| Sustained | 50 | 10 min | Normal production load |
-| Spike | 200 | 1 min | Handle 4× sudden burst |
-| Soak | 30 | 60 min | Detect memory leaks, D1 connection exhaustion |
-
-## Interpreting D1 limits
-
-Cloudflare D1 current limits (2026-04):
-- **Writes/s per DB**: ~1,000 sustained
-- **Reads/s per DB**: ~5,000 sustained
-- **Max concurrent connections**: 6 per Worker instance
-
-If `http_req_duration` p95 climbs above 2 s **and** `error_rate` spikes,
-you've likely hit the write throughput ceiling. Options:
-1. Batch orderbook updates in the matching engine
-2. Move hot reads (orderbook, recent trades) to KV with TTL
-3. Shard by market_id (one D1 per market)
-
-## Ethical use
-
-- **NEVER** run against production without stakeholder approval
-- Always use test accounts with zero real value
-- Rate-limit yourself; Cloudflare will 429 you if you exceed 1200 req/min from a single IP
-- For production capacity planning, prefer Cloudflare's load-test endpoints or a
-  dedicated staging environment (`quantaex-staging.pages.dev`)

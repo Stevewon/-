@@ -847,6 +847,25 @@ const ko = {
   'admin.userIdFilter': '사용자 ID',
   'admin.coinFilter': '코인',
 
+  // 시스템 상태 탭 (Sprint 3+)
+  'admin.system': '시스템',
+  'admin.systemHealthy': '모든 시스템 정상',
+  'admin.systemDegraded': '일부 이상 — 상세 확인',
+  'admin.checkedAt': '점검',
+  'admin.database': '데이터베이스',
+  'admin.dbPing': '핑',
+  'admin.dbLatency': '지연시간',
+  'admin.lastBackup': '최근 백업',
+  'admin.backupHint': '매일 03:00 UTC → R2 (quantaex-backups)',
+  'admin.last24h': '24시간',
+  'admin.last7d': '7일',
+  'admin.total': '전체',
+  'admin.tradesOrders': '주문',
+  'admin.newUsers': '신규 가입',
+  'admin.migrations': '스키마 / 마이그레이션',
+  'admin.auditSummary': '감사 활동',
+  'admin.feeRevenue': '수수료 수익',
+
   // 회원가입/로그인 리디자인 (바이낸스/업비트 스타일)
   'auth.tabEmail': '이메일',
   'auth.tabPhone': '휴대폰',
