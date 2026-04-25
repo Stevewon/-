@@ -875,6 +875,17 @@ const en = {
   'admin.userIdFilter': 'User ID',
   'admin.coinFilter': 'Coin',
 
+  // Admin layout (PC-optimised sidebar)
+  'admin.console': 'Console',
+  'admin.live': 'Live',
+  'admin.backToSite': 'Back to site',
+  'admin.useDesktopHint': 'Admin console is optimised for desktop. Some tables may overflow on small screens.',
+  'admin.groupOverview': 'Overview',
+  'admin.groupOps': 'Operations',
+  'admin.groupMarket': 'Market',
+  'admin.groupSystem': 'System',
+  'common.logout': 'Logout',
+
   // Register/Login revamp (Binance/Upbit style)
   'auth.tabEmail': 'Email',
   'auth.tabPhone': 'Phone',

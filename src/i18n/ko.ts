@@ -866,6 +866,17 @@ const ko = {
   'admin.auditSummary': '감사 활동',
   'admin.feeRevenue': '수수료 수익',
 
+  // 관리자 레이아웃 (PC 최적화 사이드바)
+  'admin.console': '콘솔',
+  'admin.live': 'LIVE',
+  'admin.backToSite': '사이트로 돌아가기',
+  'admin.useDesktopHint': '관리자 콘솔은 PC 환경에 최적화되어 있습니다. 작은 화면에서는 일부 표가 넘칠 수 있습니다.',
+  'admin.groupOverview': '개요',
+  'admin.groupOps': '운영',
+  'admin.groupMarket': '마켓',
+  'admin.groupSystem': '시스템',
+  'common.logout': '로그아웃',
+
   // 회원가입/로그인 리디자인 (바이낸스/업비트 스타일)
   'auth.tabEmail': '이메일',
   'auth.tabPhone': '휴대폰',
