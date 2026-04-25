@@ -44,9 +44,31 @@ interface ExchangeStore {
   fetchWallets: () => Promise<void>;
 }
 
+// Hydrate auth state from localStorage SYNCHRONOUSLY at module load so the
+// very first render of <ProtectedRoute> already sees the logged-in user.
+// Previously we relied on App's useEffect → loadAuth(), but useEffect only
+// runs *after* the first render, by which point ProtectedRoute had already
+// redirected to /login. That's why typing a deep URL (/admin, /wallet, …) and
+// hitting Enter always bounced you to the login screen even with a valid token.
+function hydrateAuth(): { user: User | null; token: string | null } {
+  if (typeof localStorage === 'undefined') return { user: null, token: null };
+  try {
+    const token = localStorage.getItem('token');
+    const userStr = localStorage.getItem('user');
+    if (token && userStr) {
+      return { token, user: JSON.parse(userStr) as User };
+    }
+  } catch {
+    /* corrupted localStorage — fall through to logged-out state */
+  }
+  return { user: null, token: null };
+}
+
+const __initialAuth = hydrateAuth();
+
 const useStore = create<ExchangeStore>((set, get) => ({
-  user: null,
-  token: null,
+  user: __initialAuth.user,
+  token: __initialAuth.token,
   setAuth: (user, token) => {
     localStorage.setItem('token', token);
     localStorage.setItem('user', JSON.stringify(user));
@@ -62,10 +84,13 @@ const useStore = create<ExchangeStore>((set, get) => ({
     set({ user: null, token: null });
   },
   loadAuth: () => {
+    // Kept for backward compatibility — useStore is already hydrated above,
+    // but App.tsx still calls this on mount. Re-read in case localStorage
+    // changed in another tab.
     const token = localStorage.getItem('token');
     const userStr = localStorage.getItem('user');
     if (token && userStr) {
-      set({ token, user: JSON.parse(userStr) });
+      try { set({ token, user: JSON.parse(userStr) as User }); } catch { /* noop */ }
     }
   },
 
