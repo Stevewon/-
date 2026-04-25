@@ -15,6 +15,13 @@ export default function Layout() {
   const location = useLocation();
   const { t } = useI18n();
 
+  // Admin console renders its own full-page chrome (sidebar + topbar).
+  // Skip the public site header/footer/ticker entirely on /admin/* routes.
+  const isAdminRoute = location.pathname.startsWith('/admin');
+  if (isAdminRoute) {
+    return <Outlet />;
+  }
+
   const navItems = [
     { path: '/trade/BTC-USDT', label: t('nav.trade'), icon: BarChart3 },
     { path: '/markets', label: t('nav.markets'), icon: LayoutGrid },
