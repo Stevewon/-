@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Fragment } from 'react';
 import {
   Users, BarChart3, ShieldCheck, ArrowUpFromLine, RefreshCw, Activity,
   DollarSign, TrendingUp, Search, Filter, ChevronLeft, ChevronRight,
   Ban, UserCheck, Crown, KeyRound, X, CheckCircle2, XCircle, Clock,
   Coins, Send, ArrowDownToLine, Megaphone, Wallet, Hash, Bell,
+  FileText, Receipt,
 } from 'lucide-react';
 import useStore from '../store/useStore';
 import { useI18n } from '../i18n';
@@ -12,7 +13,7 @@ import { formatPrice, timeAgo } from '../utils/format';
 import { showToast } from '../components/common/Toast';
 import CoinIcon from '../components/common/CoinIcon';
 
-type Tab = 'overview' | 'users' | 'kyc' | 'deposits' | 'withdrawals' | 'trades' | 'coins' | 'broadcast';
+type Tab = 'overview' | 'users' | 'kyc' | 'deposits' | 'withdrawals' | 'trades' | 'coins' | 'broadcast' | 'audit' | 'fees';
 
 export default function AdminPage() {
   const { user } = useStore();
@@ -142,6 +143,8 @@ export default function AdminPage() {
       {tab === 'trades'      && <TradesTab t={t} />}
       {tab === 'coins'       && <CoinsTab t={t} />}
       {tab === 'broadcast'   && <BroadcastTab t={t} />}
+      {tab === 'fees'        && <FeesTab t={t} />}
+      {tab === 'audit'       && <AuditTab t={t} />}
     </div>
   );
 }
@@ -1111,6 +1114,363 @@ function BroadcastTab({ t }: any) {
             </div>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// Fees tab (Sprint 3+ #4 — VIP fee revenue dashboard)
+// ============================================================================
+function FeesTab({ t }: any) {
+  const [stats, setStats] = useState<any>(null);
+  const [ledger, setLedger] = useState<any[]>([]);
+  const [available, setAvailable] = useState(true);
+  const [filter, setFilter] = useState({ user_id: '', coin: '', role: '' });
+  const [loading, setLoading] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const [s, l] = await Promise.all([
+        api.get('/admin/fee-stats'),
+        api.get('/admin/fee-ledger?limit=200'),
+      ]);
+      setStats(s.data);
+      setLedger(Array.isArray(l.data) ? l.data : []);
+      setAvailable(true);
+    } catch (e: any) {
+      if (e.response?.status === 503) setAvailable(false);
+      else showToast('error', t('common.error'), e.response?.data?.error || 'Failed to load fees');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const applyFilter = async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({ limit: '200' });
+      if (filter.user_id) params.set('user_id', filter.user_id);
+      if (filter.coin)    params.set('coin', filter.coin);
+      if (filter.role)    params.set('role', filter.role);
+      const res = await api.get(`/admin/fee-ledger?${params.toString()}`);
+      setLedger(Array.isArray(res.data) ? res.data : []);
+    } catch (e: any) {
+      showToast('error', t('common.error'), e.response?.data?.error || 'Failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!available) {
+    return (
+      <div className="card p-8 text-center">
+        <Receipt className="mx-auto mb-3 text-exchange-text-third" size={32} />
+        <div className="text-sm text-exchange-text-third mb-2">{t('admin.feeLedgerUnavailable')}</div>
+        <div className="text-[11px] text-exchange-text-third font-mono">
+          npx wrangler d1 execute quantaex-production --remote --file=./migrations/0011_sprint3_fee_tiers.sql
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* KPI cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="card p-4">
+          <div className="text-[11px] text-exchange-text-third mb-1">{t('admin.feeRevenue24h')}</div>
+          <div className="text-xl font-bold tabular-nums">${formatPrice(stats?.last24h?.usd || 0)}</div>
+          <div className="text-[10px] text-exchange-text-third mt-0.5">{stats?.last24h?.entries || 0} {t('admin.entries')}</div>
+        </div>
+        <div className="card p-4">
+          <div className="text-[11px] text-exchange-text-third mb-1">{t('admin.feeRevenue7d')}</div>
+          <div className="text-xl font-bold tabular-nums">${formatPrice(stats?.last7d?.usd || 0)}</div>
+          <div className="text-[10px] text-exchange-text-third mt-0.5">{stats?.last7d?.entries || 0} {t('admin.entries')}</div>
+        </div>
+        <div className="card p-4">
+          <div className="text-[11px] text-exchange-text-third mb-1">{t('admin.topFeeCoin')}</div>
+          <div className="text-xl font-bold">{stats?.byCoin?.[0]?.coin || '—'}</div>
+          <div className="text-[10px] text-exchange-text-third mt-0.5 tabular-nums">
+            ${formatPrice(stats?.byCoin?.[0]?.total_usd || 0)}
+          </div>
+        </div>
+        <div className="card p-4">
+          <div className="text-[11px] text-exchange-text-third mb-1">{t('admin.tierDistribution')}</div>
+          <div className="text-xl font-bold tabular-nums">{stats?.byTier?.length || 0}</div>
+          <div className="text-[10px] text-exchange-text-third mt-0.5">{t('admin.activeTiers')}</div>
+        </div>
+      </div>
+
+      {/* Breakdown tables */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        <div className="card p-4">
+          <div className="text-sm font-semibold mb-3">{t('admin.feesByCoin')}</div>
+          {(stats?.byCoin || []).length === 0 ? (
+            <div className="text-xs text-exchange-text-third text-center py-4">{t('admin.noData')}</div>
+          ) : (
+            <table className="w-full text-xs">
+              <thead><tr className="text-exchange-text-third border-b border-exchange-border">
+                <th className="text-left py-1.5">{t('admin.coin')}</th>
+                <th className="text-right">{t('admin.amount')}</th>
+                <th className="text-right">USD</th>
+                <th className="text-right">{t('admin.entries')}</th>
+              </tr></thead>
+              <tbody>
+                {stats.byCoin.map((r: any) => (
+                  <tr key={r.coin} className="border-b border-exchange-border/50">
+                    <td className="py-1.5 font-medium">{r.coin}</td>
+                    <td className="text-right tabular-nums">{formatPrice(r.total_amount)}</td>
+                    <td className="text-right tabular-nums text-exchange-yellow">${formatPrice(r.total_usd || 0)}</td>
+                    <td className="text-right tabular-nums text-exchange-text-third">{r.entries}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+        <div className="card p-4">
+          <div className="text-sm font-semibold mb-3">{t('admin.feesByTier')}</div>
+          {(stats?.byTier || []).length === 0 ? (
+            <div className="text-xs text-exchange-text-third text-center py-4">{t('admin.noData')}</div>
+          ) : (
+            <table className="w-full text-xs">
+              <thead><tr className="text-exchange-text-third border-b border-exchange-border">
+                <th className="text-left py-1.5">{t('trade.feeTier')}</th>
+                <th className="text-right">{t('admin.entries')}</th>
+                <th className="text-right">USD</th>
+              </tr></thead>
+              <tbody>
+                {stats.byTier.map((r: any) => (
+                  <tr key={r.tier} className="border-b border-exchange-border/50">
+                    <td className="py-1.5">
+                      <span className="px-1.5 py-0.5 rounded bg-exchange-yellow/10 text-exchange-yellow font-semibold">VIP{r.tier}</span>
+                    </td>
+                    <td className="text-right tabular-nums">{r.entries}</td>
+                    <td className="text-right tabular-nums text-exchange-yellow">${formatPrice(r.usd || 0)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+
+      {/* Ledger table with filters */}
+      <div className="card">
+        <div className="p-3 border-b border-exchange-border flex flex-wrap gap-2 items-center">
+          <span className="text-sm font-semibold mr-2">{t('admin.feeLedger')}</span>
+          <input
+            placeholder={t('admin.userIdFilter')}
+            value={filter.user_id}
+            onChange={(e) => setFilter({ ...filter, user_id: e.target.value })}
+            className="input-field text-xs py-1 px-2 w-40"
+          />
+          <input
+            placeholder={t('admin.coinFilter')}
+            value={filter.coin}
+            onChange={(e) => setFilter({ ...filter, coin: e.target.value.toUpperCase() })}
+            className="input-field text-xs py-1 px-2 w-24"
+          />
+          <select
+            value={filter.role}
+            onChange={(e) => setFilter({ ...filter, role: e.target.value })}
+            className="input-field text-xs py-1 px-2"
+          >
+            <option value="">{t('admin.roleAny')}</option>
+            <option value="buyer">{t('admin.buyer')}</option>
+            <option value="seller">{t('admin.seller')}</option>
+          </select>
+          <button onClick={applyFilter} className="btn-primary text-xs px-3 py-1" disabled={loading}>
+            {loading ? '...' : t('admin.apply')}
+          </button>
+          <span className="ml-auto text-[11px] text-exchange-text-third">{ledger.length} {t('admin.rows')}</span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-exchange-text-third border-b border-exchange-border">
+                <th className="text-left px-3 py-2">{t('trade.time')}</th>
+                <th className="text-left px-3 py-2">{t('admin.user')}</th>
+                <th className="text-left px-3 py-2">{t('admin.market')}</th>
+                <th className="text-left px-3 py-2">{t('admin.role')}</th>
+                <th className="text-left px-3 py-2">{t('admin.coin')}</th>
+                <th className="text-right px-3 py-2">{t('admin.amount')}</th>
+                <th className="text-right px-3 py-2">USD</th>
+                <th className="text-right px-3 py-2">{t('trade.feeTier')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ledger.length === 0 ? (
+                <tr><td colSpan={8} className="px-3 py-6 text-center text-exchange-text-third">{t('admin.noData')}</td></tr>
+              ) : ledger.map((r: any) => (
+                <tr key={r.id} className="border-b border-exchange-border/50 hover:bg-exchange-hover/30">
+                  <td className="px-3 py-1.5 text-[11px] text-exchange-text-third">{timeAgo(r.created_at, t)}</td>
+                  <td className="px-3 py-1.5 truncate max-w-[180px]" title={r.user_email}>{r.user_email || r.user_id?.slice(0,8)}</td>
+                  <td className="px-3 py-1.5">{r.base_coin}/{r.quote_coin}</td>
+                  <td className="px-3 py-1.5">
+                    <span className={r.role === 'buyer' ? 'text-exchange-buy' : 'text-exchange-sell'}>{r.role}</span>
+                  </td>
+                  <td className="px-3 py-1.5 font-medium">{r.coin}</td>
+                  <td className="px-3 py-1.5 text-right tabular-nums">{formatPrice(r.amount)}</td>
+                  <td className="px-3 py-1.5 text-right tabular-nums text-exchange-yellow">${formatPrice(r.usd_equivalent || 0)}</td>
+                  <td className="px-3 py-1.5 text-right">
+                    <span className="px-1.5 py-0.5 rounded bg-exchange-yellow/10 text-exchange-yellow text-[10px] font-semibold">VIP{r.tier}</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// Audit-log tab (Sprint 3 — S3-2 admin surface)
+// ============================================================================
+function AuditTab({ t }: any) {
+  const [logs, setLogs] = useState<any[]>([]);
+  const [available, setAvailable] = useState(true);
+  const [filter, setFilter] = useState({ admin_id: '', action: '', target_type: '', target_id: '' });
+  const [loading, setLoading] = useState(false);
+  const [expanded, setExpanded] = useState<string | null>(null);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({ limit: '200' });
+      Object.entries(filter).forEach(([k, v]) => { if (v) params.set(k, v); });
+      const res = await api.get(`/admin/audit-logs?${params.toString()}`);
+      setLogs(Array.isArray(res.data) ? res.data : []);
+      setAvailable(true);
+    } catch (e: any) {
+      if (e.response?.status === 503) setAvailable(false);
+      else showToast('error', t('common.error'), e.response?.data?.error || 'Failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  if (!available) {
+    return (
+      <div className="card p-8 text-center">
+        <FileText className="mx-auto mb-3 text-exchange-text-third" size={32} />
+        <div className="text-sm text-exchange-text-third mb-2">{t('admin.auditLogUnavailable')}</div>
+        <div className="text-[11px] text-exchange-text-third font-mono">
+          npx wrangler d1 execute quantaex-production --remote --file=./migrations/0009_sprint3_audit_log.sql
+        </div>
+      </div>
+    );
+  }
+
+  const actionColor = (action: string) => {
+    if (action.includes('reject') || action.includes('delete') || action.includes('deactivate') || action.includes('disable')) return 'text-exchange-sell';
+    if (action.includes('approve') || action.includes('activate') || action.includes('enable') || action.includes('credit')) return 'text-exchange-buy';
+    return 'text-exchange-yellow';
+  };
+
+  return (
+    <div className="card">
+      <div className="p-3 border-b border-exchange-border flex flex-wrap gap-2 items-center">
+        <span className="text-sm font-semibold mr-2">{t('admin.auditLog')}</span>
+        <input
+          placeholder={t('admin.adminIdFilter')}
+          value={filter.admin_id}
+          onChange={(e) => setFilter({ ...filter, admin_id: e.target.value })}
+          className="input-field text-xs py-1 px-2 w-40"
+        />
+        <select
+          value={filter.action}
+          onChange={(e) => setFilter({ ...filter, action: e.target.value })}
+          className="input-field text-xs py-1 px-2"
+        >
+          <option value="">{t('admin.actionAny')}</option>
+          <option value="user.toggle_active">user.toggle_active</option>
+          <option value="user.change_role">user.change_role</option>
+          <option value="user.reset_2fa">user.reset_2fa</option>
+          <option value="kyc.approve">kyc.approve</option>
+          <option value="kyc.reject">kyc.reject</option>
+          <option value="withdrawal.approve">withdrawal.approve</option>
+          <option value="withdrawal.reject">withdrawal.reject</option>
+          <option value="deposit.manual">deposit.manual</option>
+          <option value="coin.update">coin.update</option>
+          <option value="broadcast.send">broadcast.send</option>
+        </select>
+        <input
+          placeholder={t('admin.targetType')}
+          value={filter.target_type}
+          onChange={(e) => setFilter({ ...filter, target_type: e.target.value })}
+          className="input-field text-xs py-1 px-2 w-28"
+        />
+        <input
+          placeholder={t('admin.targetId')}
+          value={filter.target_id}
+          onChange={(e) => setFilter({ ...filter, target_id: e.target.value })}
+          className="input-field text-xs py-1 px-2 w-40"
+        />
+        <button onClick={load} className="btn-primary text-xs px-3 py-1" disabled={loading}>
+          {loading ? '...' : t('admin.apply')}
+        </button>
+        <span className="ml-auto text-[11px] text-exchange-text-third">{logs.length} {t('admin.rows')}</span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-exchange-text-third border-b border-exchange-border">
+              <th className="text-left px-3 py-2">{t('trade.time')}</th>
+              <th className="text-left px-3 py-2">{t('admin.admin')}</th>
+              <th className="text-left px-3 py-2">{t('admin.action')}</th>
+              <th className="text-left px-3 py-2">{t('admin.target')}</th>
+              <th className="text-left px-3 py-2">IP</th>
+              <th className="text-left px-3 py-2"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {logs.length === 0 ? (
+              <tr><td colSpan={6} className="px-3 py-6 text-center text-exchange-text-third">{t('admin.noData')}</td></tr>
+            ) : logs.map((r: any) => (
+              <Fragment key={r.id}>
+                <tr className="border-b border-exchange-border/50 hover:bg-exchange-hover/30 cursor-pointer"
+                    onClick={() => setExpanded(expanded === r.id ? null : r.id)}>
+                  <td className="px-3 py-1.5 text-[11px] text-exchange-text-third">{timeAgo(r.created_at, t)}</td>
+                  <td className="px-3 py-1.5 truncate max-w-[180px]" title={r.admin_email}>
+                    {r.admin_email || r.admin_id?.slice(0, 8)}
+                  </td>
+                  <td className={`px-3 py-1.5 font-medium font-mono ${actionColor(r.action || '')}`}>{r.action}</td>
+                  <td className="px-3 py-1.5 text-exchange-text-secondary">
+                    {r.target_type && <span className="text-exchange-text-third">{r.target_type}</span>}
+                    {r.target_id && <span className="font-mono text-[10px] ml-1">{r.target_id.slice(0, 12)}</span>}
+                  </td>
+                  <td className="px-3 py-1.5 font-mono text-[10px] text-exchange-text-third">{r.ip_address || '—'}</td>
+                  <td className="px-3 py-1.5 text-exchange-text-third text-[10px]">
+                    {r.payload && Object.keys(r.payload).length > 0 ? (expanded === r.id ? '▼' : '▶') : ''}
+                  </td>
+                </tr>
+                {expanded === r.id && r.payload && (
+                  <tr className="bg-exchange-input/30">
+                    <td colSpan={6} className="px-3 py-2">
+                      <pre className="text-[10px] font-mono text-exchange-text-secondary overflow-x-auto">
+                        {JSON.stringify(r.payload, null, 2)}
+                      </pre>
+                      {r.user_agent && (
+                        <div className="text-[10px] text-exchange-text-third mt-1 break-all">
+                          <span className="font-semibold">UA:</span> {r.user_agent}
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );

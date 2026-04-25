@@ -897,4 +897,85 @@ app.get('/audit-logs', async (c) => {
   }
 });
 
+// ============================================================================
+// Admin fee ledger viewer (Sprint 3+ — S3-5 admin surface)
+// Read-only. Supports filtering by user_id, market_id, role (buyer/seller),
+// coin, and a date range. Also returns aggregate totals so the UI can render
+// a "fee revenue by coin" summary.
+// ============================================================================
+app.get('/fee-ledger', async (c) => {
+  const db = c.env.DB;
+  const limit = Math.min(parseInt(c.req.query('limit') || '200'), 1000);
+  const userId = c.req.query('user_id') || '';
+  const marketId = c.req.query('market_id') || '';
+  const role = c.req.query('role') || '';
+  const coin = c.req.query('coin') || '';
+  const since = c.req.query('since') || ''; // ISO date string
+
+  let sql = `SELECT l.*, m.base_coin, m.quote_coin, u.email AS user_email
+               FROM fee_ledger l
+          LEFT JOIN markets m ON m.id = l.market_id
+          LEFT JOIN users   u ON u.id = l.user_id
+              WHERE 1=1`;
+  const params: any[] = [];
+  if (userId)   { sql += ' AND l.user_id = ?';   params.push(userId); }
+  if (marketId) { sql += ' AND l.market_id = ?'; params.push(marketId); }
+  if (role)     { sql += ' AND l.role = ?';      params.push(role); }
+  if (coin)     { sql += ' AND l.coin = ?';      params.push(coin); }
+  if (since)    { sql += ' AND l.created_at >= ?'; params.push(since); }
+  sql += ' ORDER BY l.created_at DESC LIMIT ?';
+  params.push(limit);
+
+  try {
+    const { results } = await db.prepare(sql).bind(...params).all<any>();
+    return c.json(results || []);
+  } catch (e: any) {
+    return c.json({ error: 'fee_ledger unavailable', detail: String(e?.message || e) }, 503);
+  }
+});
+
+// GET /fee-stats — aggregate totals (24h / 7d / all-time) grouped by coin.
+app.get('/fee-stats', async (c) => {
+  const db = c.env.DB;
+  try {
+    const totals = await db.prepare(
+      `SELECT coin,
+              SUM(amount) AS total_amount,
+              SUM(usd_equivalent) AS total_usd,
+              COUNT(*) AS entries
+         FROM fee_ledger
+        GROUP BY coin
+        ORDER BY total_usd DESC`
+    ).all<any>();
+
+    const day = await db.prepare(
+      `SELECT COALESCE(SUM(usd_equivalent), 0) AS usd, COUNT(*) AS entries
+         FROM fee_ledger
+        WHERE created_at >= datetime('now', '-1 day')`
+    ).first<any>();
+
+    const week = await db.prepare(
+      `SELECT COALESCE(SUM(usd_equivalent), 0) AS usd, COUNT(*) AS entries
+         FROM fee_ledger
+        WHERE created_at >= datetime('now', '-7 days')`
+    ).first<any>();
+
+    const byTier = await db.prepare(
+      `SELECT tier, COUNT(*) AS entries, SUM(usd_equivalent) AS usd
+         FROM fee_ledger
+        GROUP BY tier
+        ORDER BY tier ASC`
+    ).all<any>();
+
+    return c.json({
+      byCoin: totals.results || [],
+      last24h: day || { usd: 0, entries: 0 },
+      last7d: week || { usd: 0, entries: 0 },
+      byTier: byTier.results || [],
+    });
+  } catch (e: any) {
+    return c.json({ error: 'fee_stats unavailable', detail: String(e?.message || e) }, 503);
+  }
+});
+
 export default app;
