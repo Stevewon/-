@@ -13,16 +13,16 @@ interface Notice {
 
 const NOTICES_KO: Notice[] = [
   {
-    id: 1, type: 'notice', title: 'QuantaEX 거래소 그랜드 오픈 안내', date: '2026-04-20', pinned: true,
-    content: 'QuantaEX 거래소가 정식 오픈되었습니다. BTC, ETH, QTA 등 13종의 암호화폐를 USDT 및 KRW 마켓에서 거래하실 수 있습니다. 회원가입 시 10,000 USDT + 10,000,000 KRW 보너스가 지급됩니다. 많은 이용 부탁드립니다.',
+    id: 1, type: 'notice', title: 'QuantaEX 글로벌 거래소 그랜드 오픈 안내', date: '2026-04-20', pinned: true,
+    content: 'QuantaEX가 글로벌 디지털 자산 거래소로 정식 오픈되었습니다. BTC, ETH, QTA 등 13종의 암호화폐를 USDT 및 USDC 마켓에서 거래하실 수 있습니다. 회원가입 시 1,000 QTA 보너스(이메일 인증 후 잠금 해제)가 지급됩니다. 많은 이용 부탁드립니다.',
   },
   {
     id: 2, type: 'listing', title: '[신규 상장] QTA (Quanta Token) 상장 안내', date: '2026-04-20', pinned: true,
-    content: 'QTA (Quanta Token)이 QuantaEX 거래소에 신규 상장되었습니다.\n\n■ 상장일시: 2026년 4월 20일 (일) 00:00 (KST)\n■ 거래쌍: QTA/USDT, QTA/KRW\n■ 입출금: 즉시 가능\n\n상장 기념 이벤트로 QTA 거래 수수료 50% 할인이 진행됩니다.',
+    content: 'QTA (Quanta Token)이 QuantaEX 거래소에 신규 상장되었습니다.\n\n■ 상장일시: 2026년 4월 20일 (일) 00:00 UTC\n■ 거래쌍: QTA/USDT, QTA/USDC\n■ 입출금: 즉시 가능\n\n상장 기념 이벤트로 QTA 거래 수수료 50% 할인이 진행됩니다.',
   },
   {
     id: 3, type: 'event', title: '[이벤트] 회원가입 보너스 지급 이벤트', date: '2026-04-20',
-    content: '신규 회원가입 시 다음 보너스를 지급합니다:\n\n• 10,000 USDT\n• 10,000,000 KRW\n• 0.1 BTC\n• 2 ETH\n• 1,000 QTA\n\n이벤트 기간: 2026년 4월 20일 ~ 별도 공지 시까지',
+    content: '신규 회원가입 시 다음 보너스를 지급합니다:\n\n• 1,000 QTA (이메일 인증 후 잠금 해제)\n\n이벤트 기간: 2026년 4월 20일 ~ 별도 공지 시까지\n\nKYC 인증 완료 회원에게는 추가 거래 수수료 할인이 적용됩니다.',
   },
   {
     id: 4, type: 'notice', title: 'KYC 인증 절차 안내', date: '2026-04-19',
@@ -40,16 +40,16 @@ const NOTICES_KO: Notice[] = [
 
 const NOTICES_EN: Notice[] = [
   {
-    id: 1, type: 'notice', title: 'QuantaEX Grand Opening Announcement', date: '2026-04-20', pinned: true,
-    content: 'QuantaEX is now officially open. You can trade 13 types of cryptocurrencies including BTC, ETH, and QTA on the USDT and KRW markets. Sign up to receive a bonus of 10,000 USDT + 10,000,000 KRW. We look forward to your participation.',
+    id: 1, type: 'notice', title: 'QuantaEX Global Exchange Grand Opening', date: '2026-04-20', pinned: true,
+    content: 'QuantaEX is now officially open as a global digital-asset exchange. You can trade 13 cryptocurrencies including BTC, ETH, and QTA against USDT and USDC. Sign up to receive a 1,000 QTA welcome bonus, unlocked after email verification. We look forward to your participation.',
   },
   {
     id: 2, type: 'listing', title: '[New Listing] QTA (Quanta Token) Listed', date: '2026-04-20', pinned: true,
-    content: 'QTA (Quanta Token) has been listed on QuantaEX.\n\n■ Listing Date: April 20, 2026 (Sun) 00:00 (KST)\n■ Trading Pairs: QTA/USDT, QTA/KRW\n■ Deposits/Withdrawals: Available immediately\n\nTo celebrate the listing, QTA trading fees are discounted by 50%.',
+    content: 'QTA (Quanta Token) has been listed on QuantaEX.\n\n■ Listing Date: April 20, 2026 (Sun) 00:00 UTC\n■ Trading Pairs: QTA/USDT, QTA/USDC\n■ Deposits/Withdrawals: Available immediately\n\nTo celebrate the listing, QTA trading fees are discounted by 50%.',
   },
   {
     id: 3, type: 'event', title: '[Event] Sign-Up Bonus Giveaway', date: '2026-04-20',
-    content: 'New members will receive the following bonuses upon registration:\n\n• 10,000 USDT\n• 10,000,000 KRW\n• 0.1 BTC\n• 2 ETH\n• 1,000 QTA\n\nEvent period: April 20, 2026 ~ until further notice',
+    content: 'New members will receive the following bonus upon registration:\n\n• 1,000 QTA (unlocked after email verification)\n\nEvent period: April 20, 2026 ~ until further notice\n\nKYC-verified members are eligible for additional trading-fee discounts.',
   },
   {
     id: 4, type: 'notice', title: 'KYC Verification Process Guide', date: '2026-04-19',

@@ -24,8 +24,16 @@ export function formatVolume(vol: number): string {
   return vol.toFixed(2);
 }
 
-export function formatKRW(price: number): string {
-  return new Intl.NumberFormat('ko-KR').format(Math.round(price));
+/**
+ * Format a USD-denominated price with two decimals and thousand separators.
+ * QuantaEX is a USD-based global exchange — both USDT and USDC peg to ~$1
+ * so we treat the underlying USD price as the canonical fiat reference.
+ */
+export function formatUSD(price: number): string {
+  return new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(price);
 }
 
 export function timeAgo(dateStr: string, t?: (key: string, params?: Record<string, string | number>) => string): string {

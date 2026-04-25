@@ -11,7 +11,7 @@ const COIN_COLORS: Record<string, { bg: string; text: string }> = {
   MATIC: { bg: '#8247E5', text: '#FFF' },
   QTA: { bg: '#F0B90B', text: '#000' },
   USDT: { bg: '#26A17B', text: '#FFF' },
-  KRW: { bg: '#003E7E', text: '#FFF' },
+  USDC: { bg: '#2775CA', text: '#FFF' },
 };
 
 const COIN_SYMBOLS: Record<string, string> = {
@@ -27,7 +27,7 @@ const COIN_SYMBOLS: Record<string, string> = {
   MATIC: 'M',
   QTA: 'Q',
   USDT: '$',
-  KRW: '\u20A9',
+  USDC: '$',
 };
 
 interface Props {

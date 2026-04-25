@@ -9,7 +9,7 @@ interface FAQ {
 }
 
 const FAQS_KO: FAQ[] = [
-  { category: 'account', question: '회원가입은 어떻게 하나요?', answer: '상단 "회원가입" 버튼을 클릭하고, 이메일, 닉네임, 비밀번호를 입력하면 바로 가입할 수 있습니다. 가입 시 10,000 USDT + 10,000,000 KRW 보너스가 자동 지급됩니다.' },
+  { category: 'account', question: '회원가입은 어떻게 하나요?', answer: '상단 "회원가입" 버튼을 클릭하고, 이메일, 닉네임, 비밀번호를 입력하면 바로 가입할 수 있습니다. 가입 후 이메일 인증을 완료하면 1,000 QTA 웰컬 보너스가 지급됩니다.' },
   { category: 'account', question: 'KYC 인증은 어떻게 하나요?', answer: '로그인 후 마이페이지(지갑) > KYC 인증 메뉴에서 성명, 연락처, 신분증 번호를 입력하여 신청할 수 있습니다. 인증 처리는 최대 24시간 이내에 완료됩니다.' },
   { category: 'account', question: '비밀번호를 분실했어요. 어떻게 하나요?', answer: '로그인 페이지에서 "비밀번호 찾기"를 클릭하고, 가입 시 사용한 이메일을 입력하면 비밀번호 재설정 링크가 전송됩니다. (현재 준비 중인 기능입니다)' },
   { category: 'account', question: '2단계 인증(2FA)은 어떻게 설정하나요?', answer: 'Google Authenticator 앱을 설치한 후, 마이페이지 > 보안설정에서 2FA 설정을 진행할 수 있습니다. (향후 업데이트 예정)' },
@@ -21,12 +21,12 @@ const FAQS_KO: FAQ[] = [
   { category: 'wallet', question: '출금은 어떻게 하나요?', answer: '자산 페이지에서 출금 버튼을 클릭하고, 출금할 코인, 수량, 출금 주소를 입력한 후 출금을 신청합니다. 관리자 승인 후 처리됩니다.' },
   { category: 'wallet', question: '출금은 얼마나 걸리나요?', answer: '출금 신청 후 관리자 승인 절차를 거쳐 처리됩니다. 통상 1~2시간 이내에 처리되며, 블록체인 네트워크 상황에 따라 지연될 수 있습니다.' },
   { category: 'wallet', question: '최소 출금액은 얼마인가요?', answer: '코인별로 최소 출금액이 다릅니다. 예를 들어 BTC는 0.001 BTC, ETH는 0.01 ETH입니다. 자세한 내용은 수수료 안내 페이지를 참고하세요.' },
-  { category: 'other', question: 'QuantaEX는 어떤 거래소인가요?', answer: 'QuantaEX는 BTC, ETH, QTA 등 13종 이상의 암호화폐를 USDT 및 KRW 마켓에서 거래할 수 있는 디지털 자산 거래 플랫폼입니다. 실시간 차트, 호가창, 빠른 주문 체결 등 전문적인 거래 환경을 제공합니다.' },
+  { category: 'other', question: 'QuantaEX는 어떤 거래소인가요?', answer: 'QuantaEX는 BTC, ETH, QTA 등 13종 이상의 암호화폐를 USDT 및 USDC 마켓에서 거래할 수 있는 글로벌 디지털 자산 거래 플랫폼입니다. 실시간 차트, 호가창, 빠른 주문 체결 등 전문적인 거래 환경을 제공합니다.' },
   { category: 'other', question: 'QTA 토큰은 무엇인가요?', answer: 'QTA(Quanta Token)은 QuantaEX 거래소의 자체 토큰입니다. 거래 수수료 할인(25%), 이벤트 참여, 거버넌스 투표 등 다양한 혜택이 제공됩니다.' },
 ];
 
 const FAQS_EN: FAQ[] = [
-  { category: 'account', question: 'How do I sign up?', answer: 'Click the "Register" button at the top, enter your email, nickname, and password to create an account instantly. You will receive a bonus of 10,000 USDT + 10,000,000 KRW upon registration.' },
+  { category: 'account', question: 'How do I sign up?', answer: 'Click the "Register" button at the top, enter your email, nickname, and password to create an account instantly. After verifying your email, you will receive a 1,000 QTA welcome bonus.' },
   { category: 'account', question: 'How do I complete KYC verification?', answer: 'After logging in, go to My Page > KYC Verification and submit your full name, phone number, and ID number. Verification is typically completed within 24 hours.' },
   { category: 'account', question: 'I forgot my password. What should I do?', answer: 'On the login page, click "Forgot Password" and enter the email you used to register. A password reset link will be sent to you. (This feature is currently in development.)' },
   { category: 'account', question: 'How do I set up 2FA?', answer: 'Install the Google Authenticator app, then go to My Page > Security Settings to enable 2FA. (Coming in a future update.)' },
@@ -38,7 +38,7 @@ const FAQS_EN: FAQ[] = [
   { category: 'wallet', question: 'How do I withdraw?', answer: 'Go to the Wallet page, click Withdraw, select the coin, enter the amount and withdrawal address, then submit. Withdrawals are processed after admin approval.' },
   { category: 'wallet', question: 'How long does a withdrawal take?', answer: 'After submission, withdrawals go through an admin approval process. They are typically processed within 1-2 hours, though blockchain network conditions may cause delays.' },
   { category: 'wallet', question: 'What is the minimum withdrawal amount?', answer: 'Minimum withdrawal amounts vary by coin. For example, BTC is 0.001 BTC and ETH is 0.01 ETH. Check the Fees page for full details.' },
-  { category: 'other', question: 'What is QuantaEX?', answer: 'QuantaEX is a digital asset trading platform where you can trade 13+ cryptocurrencies including BTC, ETH, and QTA on USDT and KRW markets. We offer professional trading tools including real-time charts, order book, and fast order execution.' },
+  { category: 'other', question: 'What is QuantaEX?', answer: 'QuantaEX is a global digital asset trading platform where you can trade 13+ cryptocurrencies including BTC, ETH, and QTA on USDT and USDC markets. We offer professional trading tools including real-time charts, order book, and fast order execution.' },
   { category: 'other', question: 'What is the QTA token?', answer: 'QTA (Quanta Token) is the native token of QuantaEX. It offers various benefits including a 25% trading fee discount, event participation, and governance voting.' },
 ];
 

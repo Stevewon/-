@@ -84,8 +84,9 @@ app.get('/:symbol', authMiddleware, async (c) => {
 // of USDT / BTC / ETH etc.  That was the single biggest launch blocker
 // surfaced by the exchange-readiness audit (see docs/EXCHANGE_READINESS_AUDIT.md §1.1).
 //
-// Real user deposits must come from on-chain confirmations (or admin credit
-// for KRW bank rails).  Until the chain watcher is implemented, ordinary
+// Real user deposits must come from on-chain confirmations only — QuantaEX
+// is a global crypto-only exchange and does not accept fiat rails. Until the
+// chain watcher is fully implemented for every supported network, ordinary
 // users simply cannot deposit.  Admins can still credit test balances via
 // the admin-only /api/wallet/admin-credit endpoint below for QA purposes.
 app.post('/deposit', authMiddleware, async (c) => {

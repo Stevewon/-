@@ -151,7 +151,7 @@ export default function Footer() {
 
           <div className="flex items-center gap-3 mb-4 pt-4 border-t border-exchange-border/50">
             <LangSwitch />
-            <span className="text-[10px] text-exchange-text-third">KRW / USD</span>
+            <span className="text-[10px] text-exchange-text-third">USD</span>
             <span className="ml-auto"><Moon size={12} className="text-exchange-text-third" /></span>
           </div>
 
@@ -184,7 +184,7 @@ export default function Footer() {
                 </div>
                 <div className="flex items-center gap-2 text-xs text-exchange-text-secondary">
                   <Globe size={13} className="text-exchange-text-third" />
-                  <span>KRW / USD</span>
+                  <span>USD</span>
                 </div>
                 <div className="flex items-center gap-2 text-xs text-exchange-text-secondary">
                   <Moon size={13} className="text-exchange-text-third" />

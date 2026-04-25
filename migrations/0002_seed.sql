@@ -12,7 +12,7 @@ INSERT OR IGNORE INTO coins (id, symbol, name, icon, price_usd, sort_order) VALU
   ('c-matic', 'MATIC', 'Polygon', 'polygon', 0.8650, 9),
   ('c-qta', 'QTA', 'Quantarium', 'quantarium', 0.0125, 10),
   ('c-usdt', 'USDT', 'Tether', 'tether', 1.00, 11),
-  ('c-krw', 'KRW', 'Korean Won', 'krw', 1.00, 12);
+  ('c-usdc', 'USDC', 'USD Coin', 'usdc', 1.00, 12);
 
 -- Seed Markets (USDT pairs)
 INSERT OR IGNORE INTO markets (id, base_coin, quote_coin, price_decimals, amount_decimals) VALUES
@@ -28,28 +28,28 @@ INSERT OR IGNORE INTO markets (id, base_coin, quote_coin, price_decimals, amount
   ('m-matic-usdt', 'MATIC', 'USDT', 4, 6),
   ('m-qta-usdt', 'QTA', 'USDT', 6, 6);
 
--- Seed Markets (KRW pairs)
+-- Seed Markets (USDC pairs) — global stablecoin alternative to USDT
 INSERT OR IGNORE INTO markets (id, base_coin, quote_coin, price_decimals, amount_decimals) VALUES
-  ('m-btc-krw', 'BTC', 'KRW', 0, 6),
-  ('m-eth-krw', 'ETH', 'KRW', 0, 6),
-  ('m-bnb-krw', 'BNB', 'KRW', 0, 6),
-  ('m-sol-krw', 'SOL', 'KRW', 0, 6),
-  ('m-xrp-krw', 'XRP', 'KRW', 2, 6),
-  ('m-ada-krw', 'ADA', 'KRW', 2, 6),
-  ('m-doge-krw', 'DOGE', 'KRW', 2, 6),
-  ('m-dot-krw', 'DOT', 'KRW', 0, 6),
-  ('m-avax-krw', 'AVAX', 'KRW', 0, 6),
-  ('m-matic-krw', 'MATIC', 'KRW', 2, 6),
-  ('m-qta-krw', 'QTA', 'KRW', 4, 6);
+  ('m-btc-usdc', 'BTC', 'USDC', 2, 6),
+  ('m-eth-usdc', 'ETH', 'USDC', 2, 6),
+  ('m-bnb-usdc', 'BNB', 'USDC', 2, 6),
+  ('m-sol-usdc', 'SOL', 'USDC', 2, 6),
+  ('m-xrp-usdc', 'XRP', 'USDC', 4, 6),
+  ('m-ada-usdc', 'ADA', 'USDC', 4, 6),
+  ('m-doge-usdc', 'DOGE', 'USDC', 6, 6),
+  ('m-dot-usdc', 'DOT', 'USDC', 4, 6),
+  ('m-avax-usdc', 'AVAX', 'USDC', 2, 6),
+  ('m-matic-usdc', 'MATIC', 'USDC', 4, 6),
+  ('m-qta-usdc', 'QTA', 'USDC', 6, 6);
 
 -- Admin account (password: admin1234)
 INSERT OR IGNORE INTO users (id, email, password, nickname, role) VALUES
   ('admin-001', 'admin@quantaex.io', '$2a$10$WuX/qd7nxB0x8V.BReFaWOtL1V5CaXnljDZlJOg2FpdrE2q1JWX5y', 'Admin', 'admin');
 
--- Admin wallets
+-- Admin wallets (used for ops, hot wallet seed funding, etc.)
 INSERT OR IGNORE INTO wallets (id, user_id, coin_symbol, available) VALUES
   ('w-admin-usdt', 'admin-001', 'USDT', 1000000),
-  ('w-admin-krw', 'admin-001', 'KRW', 1000000000),
+  ('w-admin-usdc', 'admin-001', 'USDC', 1000000),
   ('w-admin-btc', 'admin-001', 'BTC', 100),
   ('w-admin-eth', 'admin-001', 'ETH', 5000),
   ('w-admin-qta', 'admin-001', 'QTA', 100000000);
