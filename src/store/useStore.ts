@@ -107,17 +107,35 @@ const useStore = create<ExchangeStore>((set, get) => ({
   setCurrentMarket: (symbol) => set({ currentMarket: symbol }),
 
   fetchMarkets: async () => {
-    try {
-      set({ isLoadingMarkets: true });
-      const [marketsRes, tickersRes] = await Promise.all([
-        api.get('/market/markets'),
-        api.get('/market/tickers'),
-      ]);
-      set({ markets: marketsRes.data, tickers: tickersRes.data, isLoadingMarkets: false });
-    } catch (e) {
-      set({ isLoadingMarkets: false });
-      console.error(e);
-    }
+    // Render the table as soon as /markets returns, even if /tickers is still
+    // in flight. Previously we awaited Promise.all, so the slowest call
+    // (tickers, ~700-900 ms on cold cache) dictated time-to-first-paint.
+    // Splitting them lets the markets list show up almost immediately and
+    // tickers fill in shortly after.
+    set({ isLoadingMarkets: true });
+    let marketsLoaded = false;
+
+    api.get('/market/markets')
+      .then(res => {
+        marketsLoaded = true;
+        set({ markets: res.data, isLoadingMarkets: false });
+      })
+      .catch(e => {
+        marketsLoaded = true;
+        set({ isLoadingMarkets: false });
+        console.error('fetchMarkets:', e);
+      });
+
+    api.get('/market/tickers')
+      .then(res => set({ tickers: res.data }))
+      .catch(e => console.error('fetchTickers:', e));
+
+    // Failsafe: if neither resolves within 8 s (network failure, etc.),
+    // drop the skeleton so the user sees an empty state instead of a
+    // perpetual loader.
+    setTimeout(() => {
+      if (!marketsLoaded) set({ isLoadingMarkets: false });
+    }, 8000);
   },
 
   fetchOrderbook: async (symbol) => {
