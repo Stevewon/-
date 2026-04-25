@@ -224,6 +224,18 @@ async function backupD1ToR2(env: Env): Promise<{
     },
   });
 
+  // Best-effort: write a marker row so the admin dashboard can show
+  // "last backup at …". Falls through silently if the table doesn't exist.
+  try {
+    await env.DB.prepare(
+      `INSERT INTO system_markers (key, value, updated_at)
+       VALUES ('last_backup_at', ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+    ).bind(now.toISOString(), now.toISOString()).run();
+  } catch (e) {
+    console.warn('[backup] marker write failed (table may be missing):', e);
+  }
+
   return { ok: true, tables: dumped, bytes: gz.length, key };
 }
 

@@ -978,4 +978,130 @@ app.get('/fee-stats', async (c) => {
   }
 });
 
+// ============================================================================
+// System health & operational status (Sprint 3+ admin dashboard)
+// ============================================================================
+
+// GET /admin/system-health — DB ping, table presence, row counts for the
+// Sprint 3 tables, and optional cron-worker / R2 backup probes. Designed to
+// be cheap (uses SELECT COUNT(*) with LIMIT 1 trick where possible) so it
+// can be polled every 30s by the dashboard without measurable load.
+app.get('/system-health', async (c) => {
+  const db = c.env.DB;
+  const probes: Record<string, any> = {};
+  const now = Date.now();
+
+  // 1) DB ping
+  try {
+    const r = await db.prepare('SELECT 1 AS one').first<any>();
+    probes.db = { ok: r?.one === 1, latency_ms: Date.now() - now };
+  } catch (e: any) {
+    probes.db = { ok: false, error: String(e?.message || e) };
+  }
+
+  // 2) Sprint 3 table presence + row counts
+  const tables = [
+    'admin_audit_logs',  // 0009 — S3-2
+    'fee_tiers',         // 0011 — S3-5
+    'fee_ledger',        // 0011 — S3-5
+  ];
+  probes.tables = {};
+  for (const t of tables) {
+    try {
+      const r = await db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).first<any>();
+      probes.tables[t] = { ok: true, rows: Number(r?.n || 0) };
+    } catch (e: any) {
+      // SQLITE_ERROR for missing table
+      probes.tables[t] = { ok: false, error: String(e?.message || e).slice(0, 200) };
+    }
+  }
+
+  // 3) Sprint 3 column presence on orders (TIF + stop-limit)
+  try {
+    const colRows = await db.prepare(`PRAGMA table_info(orders)`).all<any>();
+    const cols = new Set((colRows.results || []).map((r: any) => r.name));
+    probes.orders_columns = {
+      time_in_force: cols.has('time_in_force'),  // 0010 — S3-4
+      stop_price:    cols.has('stop_price'),     // 0012 — S3-3
+      triggered_at:  cols.has('triggered_at'),   // 0012 — S3-3
+    };
+  } catch (e: any) {
+    probes.orders_columns = { error: String(e?.message || e).slice(0, 200) };
+  }
+
+  // 4) Activity counters (last 24h) — quick DB pulse
+  try {
+    const day = await db.prepare(
+      `SELECT
+         (SELECT COUNT(*) FROM orders WHERE created_at >= datetime('now', '-1 day')) AS orders,
+         (SELECT COUNT(*) FROM trades WHERE created_at >= datetime('now', '-1 day')) AS trades,
+         (SELECT COUNT(*) FROM users  WHERE created_at >= datetime('now', '-1 day')) AS new_users`
+    ).first<any>();
+    probes.last24h = day || { orders: 0, trades: 0, new_users: 0 };
+  } catch (e: any) {
+    probes.last24h = { error: String(e?.message || e).slice(0, 200) };
+  }
+
+  // 5) Most recent backup marker (if cron-worker writes a row to a marker
+  // table, surface it; otherwise return null and the UI shows "—").
+  try {
+    const r = await db.prepare(
+      `SELECT value FROM system_markers WHERE key = 'last_backup_at'`
+    ).first<any>();
+    probes.last_backup_at = r?.value || null;
+  } catch {
+    // Table is optional — cron-worker may write directly to R2 without a marker.
+    probes.last_backup_at = null;
+  }
+
+  // Aggregate status
+  const allOk =
+    probes.db?.ok === true &&
+    Object.values(probes.tables || {}).every((v: any) => v?.ok) &&
+    Object.values(probes.orders_columns || {}).every((v: any) => v === true);
+  probes.status = allOk ? 'ok' : 'degraded';
+  probes.checked_at = new Date().toISOString();
+
+  return c.json(probes);
+});
+
+// GET /admin/audit-stats — counts for the dashboard summary cards.
+app.get('/audit-stats', async (c) => {
+  const db = c.env.DB;
+  try {
+    const totals = await db.prepare(
+      `SELECT
+         COUNT(*) AS total,
+         (SELECT COUNT(*) FROM admin_audit_logs WHERE created_at >= datetime('now', '-1 day'))  AS last24h,
+         (SELECT COUNT(*) FROM admin_audit_logs WHERE created_at >= datetime('now', '-7 days')) AS last7d
+       FROM admin_audit_logs`
+    ).first<any>();
+    const byAction = await db.prepare(
+      `SELECT action, COUNT(*) AS n
+         FROM admin_audit_logs
+        WHERE created_at >= datetime('now', '-7 days')
+        GROUP BY action
+        ORDER BY n DESC
+        LIMIT 10`
+    ).all<any>();
+    const topAdmins = await db.prepare(
+      `SELECT admin_email, COUNT(*) AS n
+         FROM admin_audit_logs
+        WHERE created_at >= datetime('now', '-7 days')
+        GROUP BY admin_email
+        ORDER BY n DESC
+        LIMIT 5`
+    ).all<any>();
+    return c.json({
+      total: Number(totals?.total || 0),
+      last24h: Number(totals?.last24h || 0),
+      last7d: Number(totals?.last7d || 0),
+      byAction: byAction.results || [],
+      topAdmins: topAdmins.results || [],
+    });
+  } catch (e: any) {
+    return c.json({ error: 'audit_stats unavailable', detail: String(e?.message || e) }, 503);
+  }
+});
+
 export default app;
