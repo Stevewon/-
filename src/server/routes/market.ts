@@ -90,7 +90,11 @@ app.get('/tickers', async (c) => {
       'SELECT close FROM candles WHERE market_id = ? AND interval = ? ORDER BY open_time DESC LIMIT 1'
     ).bind(m.id, '1m').first() as any;
 
-    // QuantaEX is USD-denominated; USDT and USDC both peg to ~$1 so the\n    // base coin's USD price applies directly without conversion.\n    const price = lastCandle?.close || (coin?.price_usd || 0);
+    // QuantaEX is USD-denominated; USDT and USDC both peg to ~$1 so the
+    // base coin's USD price applies directly without conversion. Any legacy
+    // KRW market still in the DB falls through harmlessly until migration
+    // 0014 is applied.
+    const price = lastCandle?.close || (coin?.price_usd || 0);
     tickers[sym] = {
       last: price,
       change: coin?.change_24h || (Math.random() - 0.5) * 10,
