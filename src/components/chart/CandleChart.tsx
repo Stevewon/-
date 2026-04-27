@@ -13,7 +13,7 @@ export default function CandleChart({ symbol }: Props) {
   const chartInstance = useRef<any>(null);
   const candleSeriesRef = useRef<any>(null);
   const volumeSeriesRef = useRef<any>(null);
-  const [interval, setInterval] = useState('1h');
+  const [interval, setIntervalState] = useState('1h');
 
   useEffect(() => {
     if (!chartRef.current) return;
@@ -85,11 +85,12 @@ export default function CandleChart({ symbol }: Props) {
     loadCandles();
 
     // Poll for candle updates (SSE-compatible, no WebSocket needed)
-    const pollInterval = setInterval(() => {
+    // CRITICAL: use window.setInterval — `setInterval` was shadowed by useState setter
+    const pollInterval = window.setInterval(() => {
       refreshLatestCandle();
     }, 5000);
 
-    return () => clearInterval(pollInterval);
+    return () => window.clearInterval(pollInterval);
   }, [symbol, interval]);
 
   const refreshLatestCandle = useCallback(async () => {
@@ -143,7 +144,7 @@ export default function CandleChart({ symbol }: Props) {
         {INTERVALS.map((iv) => (
           <button
             key={iv}
-            onClick={() => setInterval(iv)}
+            onClick={() => setIntervalState(iv)}
             className={`px-2.5 py-1 text-xs rounded transition-colors ${
               interval === iv
                 ? 'bg-exchange-yellow/20 text-exchange-yellow'
