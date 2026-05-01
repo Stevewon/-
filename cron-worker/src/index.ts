@@ -16,6 +16,11 @@ export interface Env {
   // binding isn't present the backup cron logs a warning and no-ops.
   BACKUPS?: R2Bucket;
   BACKUP_RETENTION_DAYS?: string;
+  // Sprint 4 Phase B — QTA native chain integration (mock by default)
+  QTA_CHAIN_DRIVER?: string;
+  QTA_NETWORK?: string;
+  QTA_RPC_URL?: string;
+  QTA_HOT_WALLET_PRIVATE_KEY?: string;
 }
 
 interface PriceAlert {
@@ -316,11 +321,126 @@ export default {
       return;
     }
 
-    // Default: price-alert tick (*/5)
+    // Default: price-alert tick (*/5) + QTA chain monitor tick
     ctx.waitUntil(
       checkPriceAlerts(env)
         .then((r) => console.log('[cron] price-alert check:', r))
         .catch((e) => console.error('[cron] price-alert check failed:', e))
     );
+    ctx.waitUntil(
+      qtaChainTick(env)
+        .then((r) => console.log('[cron] qta chain tick:', r))
+        .catch((e) => console.error('[cron] qta chain tick failed:', e))
+    );
   },
 };
+
+// ============================================================================
+// Sprint 4 Phase B — QTA native chain monitor (stub)
+// ----------------------------------------------------------------------------
+// Each tick:
+//   1. Refresh chain head + validators (mock: synthetic head from time)
+//   2. Bump pending deposits' confirmations (head - tx block)
+//   3. When a deposit reaches required_confs, mark credited and increment the
+//      user's QTA wallet balance via a single atomic batch.
+//   4. Persist tick metadata in qta_chain_state.
+//
+// Real adapter will replace getMockHead/listIncoming with HTTP RPC calls.
+// ============================================================================
+
+interface QtaChainState {
+  network: string;
+  last_scanned_block: number;
+  head_block: number;
+  required_confs: number;
+  signature_scheme: string;
+  block_time_ms: number;
+}
+
+async function qtaChainTick(env: Env): Promise<{
+  network: string;
+  head: number;
+  pending: number;
+  credited: number;
+  ok: boolean;
+}> {
+  const network = env.QTA_NETWORK === 'qta-testnet' ? 'qta-testnet' : 'qta-mainnet';
+
+  // Load current chain state row (created by migration 0015)
+  const state = await env.DB.prepare(
+    `SELECT network, last_scanned_block, head_block, required_confs,
+            signature_scheme, block_time_ms
+     FROM qta_chain_state
+     WHERE network = ?`
+  ).bind(network).first<QtaChainState>();
+
+  if (!state) {
+    console.warn('[qta] chain state row missing — migration 0015 not applied?');
+    return { network, head: 0, pending: 0, credited: 0, ok: false };
+  }
+
+  // Mock head = floor(now/2s). Real adapter replaces with RPC.
+  const driver = (env.QTA_CHAIN_DRIVER || 'mock').toLowerCase();
+  const head =
+    driver === 'real'
+      ? state.head_block /* TODO: real RPC call */
+      : Math.floor(Date.now() / 1000 / 2);
+
+  // Bump confirmation counts on pending/confirming deposits.
+  const { results: pending } = await env.DB.prepare(
+    `SELECT id, block_height, required_confs
+     FROM qta_deposits
+     WHERE network = ? AND status IN ('detected', 'confirming')`
+  ).bind(network).all<{ id: string; block_height: number | null; required_confs: number }>();
+
+  let credited = 0;
+  const stmts: D1PreparedStatement[] = [];
+  const nowIso = new Date().toISOString();
+
+  for (const d of pending || []) {
+    if (!d.block_height) continue;
+    const confs = Math.max(0, head - d.block_height);
+    const need = d.required_confs || state.required_confs || 12;
+
+    if (confs >= need) {
+      stmts.push(
+        env.DB.prepare(
+          `UPDATE qta_deposits
+           SET status = 'credited', confirmations = ?, credited_at = ?, updated_at = ?
+           WHERE id = ? AND status IN ('detected', 'confirming')`
+        ).bind(confs, nowIso, nowIso, d.id),
+      );
+      credited++;
+    } else {
+      stmts.push(
+        env.DB.prepare(
+          `UPDATE qta_deposits
+           SET status = 'confirming', confirmations = ?, updated_at = ?
+           WHERE id = ?`
+        ).bind(confs, nowIso, d.id),
+      );
+    }
+  }
+
+  // Persist tick metadata
+  stmts.push(
+    env.DB.prepare(
+      `UPDATE qta_chain_state
+       SET head_block = ?, last_scanned_block = ?, last_tick_at = ?, updated_at = ?
+       WHERE network = ?`
+    ).bind(head, head, nowIso, nowIso, network),
+  );
+
+  const CHUNK = 30;
+  for (let i = 0; i < stmts.length; i += CHUNK) {
+    await env.DB.batch(stmts.slice(i, i + CHUNK));
+  }
+
+  return {
+    network,
+    head,
+    pending: (pending || []).length,
+    credited,
+    ok: true,
+  };
+}
