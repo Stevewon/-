@@ -99,6 +99,10 @@ export default function AdminPage() {
       {tab === 'fees'        && <FeesTab t={t} />}
       {tab === 'audit'       && <AuditTab t={t} />}
       {tab === 'system'      && <SystemTab t={t} />}
+      {tab === 'chainWallets' && <ChainWalletsTab t={t} />}
+      {tab === 'chainQueue'   && <ChainQueueTab t={t} />}
+      {tab === 'chainHealth'  && <ChainHealthTab t={t} />}
+      {tab === 'risk'         && <RiskTab t={t} />}
     </AdminLayout>
   );
 }
@@ -1744,6 +1748,273 @@ function SystemTab({ t }: any) {
             </>
           ) : <div className="text-xs text-exchange-text-third">—</div>}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// Sprint 4 Phase C — QTA Chain Admin tabs (Phase B backend already deployed)
+// ============================================================================
+
+function ChainWalletsTab({ t }: any) {
+  const [state, setState] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const r = await api.get('/chain/qta/state');
+      setState(r.data?.state || null);
+    } catch {
+      setState(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { load(); const id = setInterval(load, 30_000); return () => clearInterval(id); }, []);
+
+  if (!state) {
+    return <div className="p-12 text-center text-exchange-text-third">{loading ? t('common.loading') : '—'}</div>;
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="rounded-2xl border-2 border-exchange-yellow/30 bg-gradient-to-br from-exchange-yellow/10 to-exchange-yellow/5 p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <Wallet size={22} className="text-exchange-yellow" />
+          <div>
+            <div className="text-lg font-bold">{t('admin.chainWallets')}</div>
+            <div className="text-xs text-exchange-text-third uppercase tracking-wider mt-0.5">
+              {state.network} · {state.signature_scheme}
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <Card label={t('admin.chainHotWallet')} value={state.hot_wallet_addr || '—'} mono />
+          <Card label={t('admin.chainHotBalance')} value={`${state.hot_wallet_balance || '0'} QTA`} />
+          <Card label={t('admin.chainSigScheme')} value={state.signature_scheme} pill />
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-exchange-border p-5 bg-exchange-card">
+        <div className="text-sm font-semibold mb-2">{t('admin.chainColdNote')}</div>
+        <div className="text-xs text-exchange-text-third leading-relaxed">
+          {t('admin.chainColdNoteDesc')}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ChainQueueTab({ t }: any) {
+  const [items, setItems] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const r = await api.get('/chain/qta/admin/withdrawals?status=pending');
+      setItems(r.data?.withdrawals || []);
+    } catch (e: any) {
+      showToast('error', t('common.error'), e.response?.data?.error || 'Failed');
+      setItems([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { load(); }, []);
+
+  const approve = async (id: string) => {
+    setBusy(id);
+    try {
+      const r = await api.post(`/chain/qta/admin/withdrawals/${id}/approve`);
+      showToast('success', t('admin.chainApproved'), r.data?.tx_hash || '');
+      load();
+    } catch (e: any) {
+      showToast('error', t('common.error'), e.response?.data?.error || 'Failed');
+    } finally {
+      setBusy(null);
+    }
+  };
+  const reject = async (id: string) => {
+    const reason = prompt(t('admin.chainRejectReason') || 'Reason?') || '';
+    if (!reason) return;
+    setBusy(id);
+    try {
+      await api.post(`/chain/qta/admin/withdrawals/${id}/reject`, { reason });
+      showToast('success', t('admin.chainRejected'), '');
+      load();
+    } catch (e: any) {
+      showToast('error', t('common.error'), e.response?.data?.error || 'Failed');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="text-sm text-exchange-text-secondary">
+          {t('admin.chainPendingCount', { n: items.length })}
+        </div>
+        <button
+          onClick={load}
+          className="text-xs px-3 py-1.5 rounded-lg border border-exchange-border hover:bg-exchange-hover/40"
+        >
+          <RefreshCw size={12} className="inline mr-1" />
+          {t('common.refresh')}
+        </button>
+      </div>
+
+      <div className="rounded-xl border border-exchange-border bg-exchange-card overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-exchange-hover/40 text-[11px] uppercase tracking-wider text-exchange-text-third">
+            <tr>
+              <th className="text-left px-4 py-2.5">{t('admin.user')}</th>
+              <th className="text-left px-4 py-2.5">{t('admin.toAddress')}</th>
+              <th className="text-right px-4 py-2.5">{t('admin.amount')}</th>
+              <th className="text-center px-4 py-2.5">{t('admin.network')}</th>
+              <th className="text-center px-4 py-2.5">{t('admin.actions')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.length === 0 && (
+              <tr><td colSpan={5} className="text-center py-12 text-exchange-text-third">{loading ? t('common.loading') : t('admin.chainNoQueue')}</td></tr>
+            )}
+            {items.map((w) => (
+              <tr key={w.id} className="border-t border-exchange-border">
+                <td className="px-4 py-3 truncate max-w-[200px]">{w.email || w.user_id}</td>
+                <td className="px-4 py-3 font-mono text-xs truncate max-w-[260px]">{w.to_address}</td>
+                <td className="px-4 py-3 text-right font-semibold">{w.amount} QTA</td>
+                <td className="px-4 py-3 text-center text-[11px] text-exchange-text-third">{w.network}</td>
+                <td className="px-4 py-3 text-center">
+                  <button
+                    onClick={() => approve(w.id)}
+                    disabled={busy === w.id}
+                    className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-exchange-buy/20 text-exchange-buy hover:bg-exchange-buy/30 disabled:opacity-50 mr-2"
+                  >
+                    <CheckCircle2 size={12} className="inline mr-1" />
+                    {t('admin.approve')}
+                  </button>
+                  <button
+                    onClick={() => reject(w.id)}
+                    disabled={busy === w.id}
+                    className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-exchange-sell/20 text-exchange-sell hover:bg-exchange-sell/30 disabled:opacity-50"
+                  >
+                    <XCircle size={12} className="inline mr-1" />
+                    {t('admin.reject')}
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function ChainHealthTab({ t }: any) {
+  const [state, setState] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const r = await api.get('/chain/qta/state');
+      setState(r.data?.state || null);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { load(); const id = setInterval(load, 10_000); return () => clearInterval(id); }, []);
+
+  if (!state) {
+    return <div className="p-12 text-center text-exchange-text-third">{loading ? t('common.loading') : '—'}</div>;
+  }
+
+  const ok = !state.last_error;
+  const lastTickSec = state.last_tick_at
+    ? Math.floor((Date.now() - new Date(state.last_tick_at).getTime()) / 1000)
+    : null;
+  const stale = lastTickSec === null || lastTickSec > 600;
+
+  return (
+    <div className="space-y-6">
+      <div className={`rounded-2xl border-2 p-6 flex items-center gap-5 ${
+        ok && !stale
+          ? 'bg-gradient-to-br from-exchange-buy/10 to-exchange-buy/5 border-exchange-buy/40'
+          : 'bg-gradient-to-br from-exchange-sell/10 to-exchange-sell/5 border-exchange-sell/40'
+      }`}>
+        <div className={`w-14 h-14 rounded-2xl flex items-center justify-center ${
+          ok && !stale ? 'bg-exchange-buy/20 text-exchange-buy' : 'bg-exchange-sell/20 text-exchange-sell'
+        }`}>
+          <Activity size={26} />
+        </div>
+        <div className="flex-1">
+          <div className="text-xl font-bold">
+            {ok && !stale ? t('admin.chainOnline') : t('admin.chainStale')}
+          </div>
+          <div className="text-xs text-exchange-text-third mt-1">
+            {state.network} · {t('admin.chainLastTick')} {lastTickSec === null ? '—' : `${lastTickSec}s`} {t('admin.ago')}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <Card label={t('admin.chainHead')} value={state.head_block?.toLocaleString?.() || '0'} />
+        <Card label={t('admin.chainScanned')} value={state.last_scanned_block?.toLocaleString?.() || '0'} />
+        <Card label={t('admin.chainValidators')} value={String(state.validators_online ?? 0)} />
+        <Card label={t('admin.chainBlockTime')} value={`${state.block_time_ms || 2000} ms`} />
+        <Card label={t('admin.chainConfs')} value={String(state.required_confs ?? 12)} />
+        <Card label={t('admin.chainSigScheme')} value={state.signature_scheme} pill />
+        <Card label={t('admin.chainNetwork')} value={state.network} pill />
+        <Card label={t('admin.chainHotBalance')} value={`${state.hot_wallet_balance || '0'} QTA`} />
+      </div>
+
+      {state.last_error && (
+        <div className="rounded-xl border border-exchange-sell/40 bg-exchange-sell/10 p-4">
+          <div className="text-xs font-semibold text-exchange-sell mb-1">{t('admin.chainLastError')}</div>
+          <div className="text-xs font-mono break-all">{state.last_error}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RiskTab({ t }: any) {
+  return (
+    <div className="space-y-4">
+      <div className="rounded-2xl border border-exchange-border bg-exchange-card p-6">
+        <div className="flex items-center gap-3 mb-3">
+          <Ban size={20} className="text-exchange-sell" />
+          <div className="text-base font-bold">{t('admin.riskComingSoon')}</div>
+        </div>
+        <div className="text-xs text-exchange-text-third leading-relaxed">
+          {t('admin.riskComingSoonDesc')}
+        </div>
+        <ul className="mt-3 space-y-1 text-xs text-exchange-text-secondary list-disc list-inside">
+          <li>{t('admin.riskFeatureIp')}</li>
+          <li>{t('admin.riskFeature2fa')}</li>
+          <li>{t('admin.riskFeatureCb')}</li>
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+// Small reusable card for chain tabs
+function Card({ label, value, mono, pill }: { label: string; value: string; mono?: boolean; pill?: boolean }) {
+  return (
+    <div className="rounded-xl border border-exchange-border bg-exchange-card p-4">
+      <div className="text-[10px] uppercase tracking-wider text-exchange-text-third">{label}</div>
+      <div className={`mt-1.5 font-bold ${mono ? 'font-mono text-xs break-all' : 'text-base'} ${
+        pill ? 'inline-block px-2 py-0.5 rounded-full bg-exchange-yellow/15 text-exchange-yellow text-xs' : ''
+      }`}>
+        {value}
       </div>
     </div>
   );
