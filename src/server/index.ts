@@ -8,6 +8,8 @@ import adminRoutes from './routes/admin';
 import notificationRoutes from './routes/notifications';
 import priceAlertRoutes from './routes/priceAlerts';
 import profileRoutes from './routes/profile';
+import chainRoutes from './routes/chain';
+import chainRoutes from './routes/chain';
 import { installObservability, captureError } from './utils/observability';
 
 export type Env = {
@@ -19,6 +21,11 @@ export type Env = {
   LOGFLARE_API_KEY?: string;
   LOGFLARE_SOURCE?: string;
   ENVIRONMENT?: string;
+  // Sprint 4 Phase B — QTA native chain integration (all optional, mock by default)
+  QTA_CHAIN_DRIVER?: string;        // 'mock' | 'real'
+  QTA_NETWORK?: string;             // 'qta-mainnet' | 'qta-testnet'
+  QTA_RPC_URL?: string;
+  QTA_HOT_WALLET_PRIVATE_KEY?: string;
 };
 
 export type AppVars = {
@@ -110,6 +117,7 @@ app.route('/api/admin', adminRoutes);
 app.route('/api/notifications', notificationRoutes);
 app.route('/api/price-alerts', priceAlertRoutes);
 app.route('/api/profile', profileRoutes);
+app.route('/api/chain', chainRoutes);
 
 // ============================================================================
 // Health checks (Sprint 3+ #3)

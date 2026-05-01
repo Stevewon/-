@@ -16,6 +16,11 @@ export interface Env {
   // binding isn't present the backup cron logs a warning and no-ops.
   BACKUPS?: R2Bucket;
   BACKUP_RETENTION_DAYS?: string;
+  // Sprint 4 Phase B — QTA native chain integration (mock by default)
+  QTA_CHAIN_DRIVER?: string;
+  QTA_NETWORK?: string;
+  QTA_RPC_URL?: string;
+  QTA_HOT_WALLET_PRIVATE_KEY?: string;
 }
 
 interface PriceAlert {
@@ -263,6 +268,81 @@ async function pruneOldBackups(env: Env): Promise<{ pruned: number }> {
   return { pruned };
 }
 
+// ============================================================================
+// Sprint 4 Phase B: QTA native chain monitor (stubbable)
+// ----------------------------------------------------------------------------
+// Each tick advances qta_chain_state for the current network: synthetic head
+// height (mock) or real RPC-derived head (real). Confirmation accounting for
+// qta_deposits will be wired in once the real RPC indexer ships; for now the
+// monitor keeps the state row fresh so the admin System tab and /chain/qta/state
+// endpoint always reflect a live "last_tick_at".
+// ============================================================================
+
+function qtaCurrentNetwork(env: Env): 'qta-mainnet' | 'qta-testnet' {
+  return env.QTA_NETWORK === 'qta-testnet' ? 'qta-testnet' : 'qta-mainnet';
+}
+
+async function tickQtaChainMonitor(
+  env: Env,
+): Promise<{ ok: boolean; network: string; head: number; driver: string; error?: string }> {
+  const driver = (env.QTA_CHAIN_DRIVER || 'mock').toLowerCase();
+  const network = qtaCurrentNetwork(env);
+  const now = new Date().toISOString();
+
+  try {
+    let head = 0;
+    let validators = 21;
+
+    if (driver === 'real' && env.QTA_RPC_URL) {
+      // Best-effort real RPC head fetch. Failures fall through to mock state.
+      try {
+        const r = await fetch(`${env.QTA_RPC_URL.replace(/\/+$/, '')}/status`, {
+          method: 'GET',
+          headers: { 'content-type': 'application/json' },
+          // 5s soft cap so cron doesn't stall
+          signal: AbortSignal.timeout(5000),
+        });
+        if (r.ok) {
+          const j: any = await r.json().catch(() => ({}));
+          head = Number(j.head ?? j.height ?? 0) || 0;
+          validators = Number(j.validators ?? j.validators_online ?? validators) || validators;
+        }
+      } catch (e) {
+        console.warn('[qta] real rpc head fetch failed, falling back to mock head:', e);
+      }
+    }
+
+    if (head === 0) {
+      // Synthetic head: seconds since epoch / 2s block time
+      head = Math.floor(Date.now() / 2000);
+    }
+
+    await env.DB.prepare(
+      `UPDATE qta_chain_state
+       SET head_block = ?, validators_online = ?, last_tick_at = ?, last_error = NULL,
+           updated_at = ?
+       WHERE network = ?`,
+    )
+      .bind(head, validators, now, now, network)
+      .run();
+
+    return { ok: true, network, head, driver };
+  } catch (e: any) {
+    const msg = String(e?.message || e);
+    try {
+      await env.DB.prepare(
+        `UPDATE qta_chain_state SET last_error = ?, last_tick_at = ?, updated_at = ?
+         WHERE network = ?`,
+      )
+        .bind(msg.slice(0, 500), now, now, network)
+        .run();
+    } catch {
+      // qta_chain_state table may be missing on a stale DB — don't crash.
+    }
+    return { ok: false, network, head: 0, driver, error: msg };
+  }
+}
+
 export default {
   // Optional HTTP endpoint for manual runs (useful for debugging)
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -285,11 +365,21 @@ export default {
         headers: { 'content-type': 'application/json' },
       });
     }
+    if (url.pathname === '/qta/tick') {
+      const result = await tickQtaChainMonitor(env);
+      return new Response(JSON.stringify(result), {
+        headers: { 'content-type': 'application/json' },
+      });
+    }
     return new Response(
       JSON.stringify({
         service: 'quantaex-cron',
-        schedules: ['*/5 * * * * (price-alert tick)', '0 3 * * * (daily D1 backup)'],
-        endpoints: ['/run', '/backup', '/backup/prune'],
+        schedules: [
+          '*/5 * * * * (price-alert tick)',
+          '0 3 * * * (daily D1 backup)',
+          '*/5 * * * * (QTA chain monitor — bundled with price-alert tick)',
+        ],
+        endpoints: ['/run', '/backup', '/backup/prune', '/qta/tick'],
       }),
       { headers: { 'content-type': 'application/json' } }
     );
@@ -316,11 +406,16 @@ export default {
       return;
     }
 
-    // Default: price-alert tick (*/5)
+    // Default: price-alert tick (*/5) + QTA chain monitor tick
     ctx.waitUntil(
       checkPriceAlerts(env)
         .then((r) => console.log('[cron] price-alert check:', r))
         .catch((e) => console.error('[cron] price-alert check failed:', e))
+    );
+    ctx.waitUntil(
+      tickQtaChainMonitor(env)
+        .then((r) => console.log('[cron] qta chain tick:', r))
+        .catch((e) => console.error('[cron] qta chain tick failed:', e))
     );
   },
 };
