@@ -240,12 +240,30 @@ async function loginHistoryHandler(c: any) {
 app.get('/sessions', authMiddleware, loginHistoryHandler);
 app.get('/login-history', authMiddleware, loginHistoryHandler);
 
+// ============================================================================
+// API keys — Sprint 4 Phase H2 (PQ-Only stub)
+// ----------------------------------------------------------------------------
+// signature_alg ∈ { 'hmac-sha256' (default, legacy), 'dilithium2', 'hybrid' }.
+// Existing HMAC-only keys keep working unchanged. PQ keys carry an extra
+// base64 public_key (Dilithium2 = 1312 bytes raw); the user keeps the
+// matching secret key client-side and we never store it.
+// ============================================================================
+import {
+  isValidDilithium2PublicKey,
+  readPqMarkers,
+} from '../lib/pq-crypto';
+
+type SignatureAlg = 'hmac-sha256' | 'dilithium2' | 'hybrid';
+const VALID_ALGS: ReadonlyArray<SignatureAlg> = ['hmac-sha256', 'dilithium2', 'hybrid'];
+
 // GET /api/profile/api-keys - list API keys
 app.get('/api-keys', authMiddleware, async (c) => {
   const user = c.get('user');
   const { results } = await c.env.DB.prepare(
-    `SELECT id, label, api_key, permissions, ip_whitelist, is_active, last_used_at, created_at, expires_at
-     FROM api_keys WHERE user_id = ? ORDER BY created_at DESC`
+    `SELECT id, label, api_key, permissions, ip_whitelist, is_active,
+            last_used_at, created_at, expires_at,
+            signature_alg, public_key, pq_key_version, last_pq_verify_at
+       FROM api_keys WHERE user_id = ? ORDER BY created_at DESC`
   ).bind(user.id).all().catch(() => ({ results: [] as any[] }));
   return c.json(results);
 });
@@ -253,30 +271,71 @@ app.get('/api-keys', authMiddleware, async (c) => {
 // POST /api/profile/api-keys - create API key
 app.post('/api-keys', authMiddleware, async (c) => {
   const user = c.get('user');
-  const body = await c.req.json();
-  const { label, permissions, ip_whitelist } = body;
+  const body = await c.req.json().catch(() => ({} as any));
+  const { label, permissions, ip_whitelist } = body || {};
+  const rawAlg = (body?.signature_alg ?? 'hmac-sha256') as string;
+  const publicKey = body?.public_key as string | undefined;
 
   if (!label) return c.json({ error: 'Label is required' }, 400);
+  if (!VALID_ALGS.includes(rawAlg as SignatureAlg)) {
+    return c.json({ error: 'Unsupported signature_alg', code: 'BAD_ALG' }, 400);
+  }
+  const signatureAlg = rawAlg as SignatureAlg;
+
+  // PQ keys must arrive with a syntactically valid Dilithium2 public key.
+  if (signatureAlg !== 'hmac-sha256') {
+    if (!isValidDilithium2PublicKey(publicKey)) {
+      return c.json(
+        { error: 'Invalid Dilithium2 public key (expect 1312 bytes, base64).', code: 'BAD_PUBKEY' },
+        400,
+      );
+    }
+    const markers = await readPqMarkers(c);
+    if (!markers.enabled) {
+      return c.json({ error: 'PQ API keys are currently disabled.', code: 'PQ_DISABLED' }, 503);
+    }
+  }
 
   const id = crypto.randomUUID();
   const apiKey = 'qx_' + Array.from(crypto.getRandomValues(new Uint8Array(24)))
     .map((b) => b.toString(16).padStart(2, '0')).join('');
-  const apiSecret = Array.from(crypto.getRandomValues(new Uint8Array(32)))
-    .map((b) => b.toString(16).padStart(2, '0')).join('');
-  const enc = new TextEncoder().encode(apiSecret);
-  const digest = await crypto.subtle.digest('SHA-256', enc);
-  const apiSecretHash = Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
+
+  // HMAC secret is only generated for HMAC / hybrid keys. Pure PQ keys do
+  // NOT have a server-side secret — verification is asymmetric.
+  let apiSecret: string | null = null;
+  let apiSecretHash: string | null = null;
+  if (signatureAlg === 'hmac-sha256' || signatureAlg === 'hybrid') {
+    apiSecret = Array.from(crypto.getRandomValues(new Uint8Array(32)))
+      .map((b) => b.toString(16).padStart(2, '0')).join('');
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(apiSecret));
+    apiSecretHash = Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
+  }
 
   await c.env.DB.prepare(
-    `INSERT INTO api_keys (id, user_id, label, api_key, api_secret_hash, permissions, ip_whitelist, is_active)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 1)`
+    `INSERT INTO api_keys
+       (id, user_id, label, api_key, api_secret_hash, permissions, ip_whitelist, is_active,
+        signature_alg, public_key, pq_key_version)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 1)`
   ).bind(
     id, user.id, label, apiKey, apiSecretHash,
-    permissions || 'read', ip_whitelist || null
+    permissions || 'read', ip_whitelist || null,
+    signatureAlg, signatureAlg === 'hmac-sha256' ? null : (publicKey ?? null),
   ).run();
 
-  // Return secret ONCE only
-  return c.json({ id, label, api_key: apiKey, api_secret: apiSecret, permissions, ip_whitelist, is_active: 1 }, 201);
+  // Secret returned ONCE only (and only for HMAC/hybrid). Public key is
+  // echoed back so the client UI can show its fingerprint.
+  return c.json({
+    id,
+    label,
+    api_key: apiKey,
+    api_secret: apiSecret,
+    public_key: signatureAlg === 'hmac-sha256' ? null : (publicKey ?? null),
+    signature_alg: signatureAlg,
+    pq_key_version: 1,
+    permissions,
+    ip_whitelist,
+    is_active: 1,
+  }, 201);
 });
 
 // DELETE /api/profile/api-keys/:id
@@ -287,6 +346,37 @@ app.delete('/api-keys/:id', authMiddleware, async (c) => {
     'DELETE FROM api_keys WHERE id = ? AND user_id = ?'
   ).bind(id, user.id).run();
   return c.json({ ok: true });
+});
+
+// GET /api/profile/api-keys/stats - per-user algorithm distribution
+// Used by ApiKeysPage to show "X HMAC / Y PQ / Z hybrid" badges.
+app.get('/api-keys/stats', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const markers = await readPqMarkers(c);
+  let counts: Record<SignatureAlg, number> = {
+    'hmac-sha256': 0,
+    'dilithium2': 0,
+    'hybrid': 0,
+  };
+  try {
+    const { results } = await c.env.DB.prepare(
+      `SELECT signature_alg, COUNT(*) AS n
+         FROM api_keys WHERE user_id = ? GROUP BY signature_alg`
+    ).bind(user.id).all<{ signature_alg: SignatureAlg; n: number }>();
+    for (const r of results ?? []) {
+      if (VALID_ALGS.includes(r.signature_alg)) counts[r.signature_alg] = Number(r.n) || 0;
+    }
+  } catch { /* table not migrated yet */ }
+  return c.json({
+    ok: true,
+    counts,
+    pq: {
+      enabled: markers.enabled,
+      required: markers.required,
+      wasm_ready: markers.wasmReady,
+      integration_phase: markers.integrationPhase,
+    },
+  });
 });
 
 // ============================================================================

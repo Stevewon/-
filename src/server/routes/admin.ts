@@ -1104,4 +1104,92 @@ app.get('/audit-stats', async (c) => {
   }
 });
 
+// ============================================================================
+// Sprint 4 Phase H2 — Admin: PQ API key observability
+// GET /api/admin/api-keys/stats
+// Returns global algorithm distribution + recent PQ verify failures.
+// Used by AdminPage "API Keys" stats card.
+// ============================================================================
+app.get('/api-keys/stats', async (c) => {
+  try {
+    const db = c.env.DB;
+
+    // Algorithm distribution across all users.
+    const distRows = await db.prepare(
+      `SELECT signature_alg, COUNT(*) AS n
+         FROM api_keys GROUP BY signature_alg`
+    ).all<{ signature_alg: string; n: number }>();
+    const distribution: Record<string, number> = {
+      'hmac-sha256': 0,
+      'dilithium2': 0,
+      'hybrid': 0,
+    };
+    for (const r of distRows.results ?? []) {
+      if (r.signature_alg) distribution[r.signature_alg] = Number(r.n) || 0;
+    }
+
+    // Total active keys (is_active = 1) for context.
+    const totals = await db.prepare(
+      `SELECT
+         COUNT(*) AS total,
+         SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) AS active
+       FROM api_keys`
+    ).first<{ total: number; active: number }>();
+
+    // Recent PQ audit summary (last 24h).
+    let recentFailures: Array<{ outcome: string; n: number }> = [];
+    let total24h = 0;
+    try {
+      const failRows = await db.prepare(
+        `SELECT outcome, COUNT(*) AS n
+           FROM api_key_pq_audit
+          WHERE created_at >= strftime('%s', 'now') - 86400
+          GROUP BY outcome
+          ORDER BY n DESC`
+      ).all<{ outcome: string; n: number }>();
+      recentFailures = (failRows.results ?? []).map((r) => ({
+        outcome: r.outcome,
+        n: Number(r.n) || 0,
+      }));
+      total24h = recentFailures.reduce((acc, r) => acc + r.n, 0);
+    } catch { /* audit table not migrated yet */ }
+
+    // Markers (so admin UI can show 'phase-h2-stub' badge + flip required/wasm_ready).
+    let markers: Record<string, string> = {};
+    try {
+      const mr = await db.prepare(
+        `SELECT key, value FROM system_markers
+           WHERE key IN (
+             'pq_api_keys_enabled',
+             'pq_api_keys_required',
+             'pq_api_keys_wasm_ready',
+             'pq_api_keys_integration'
+           )`
+      ).all<{ key: string; value: string }>();
+      for (const r of mr.results ?? []) markers[r.key] = r.value;
+    } catch { /* markers table missing */ }
+
+    return c.json({
+      ok: true,
+      distribution,
+      totals: {
+        total: Number(totals?.total || 0),
+        active: Number(totals?.active || 0),
+      },
+      pq_audit_24h: {
+        total: total24h,
+        by_outcome: recentFailures,
+      },
+      markers: {
+        enabled: (markers['pq_api_keys_enabled'] ?? 'off') === 'on',
+        required: (markers['pq_api_keys_required'] ?? 'off') === 'on',
+        wasm_ready: (markers['pq_api_keys_wasm_ready'] ?? 'off') === 'on',
+        integration_phase: markers['pq_api_keys_integration'] ?? 'phase-h2-stub',
+      },
+    });
+  } catch (e: any) {
+    return c.json({ error: 'api_keys_stats unavailable', detail: String(e?.message || e) }, 503);
+  }
+});
+
 export default app;
