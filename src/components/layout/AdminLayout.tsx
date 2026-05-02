@@ -5,6 +5,7 @@ import {
   BarChart3, Coins, Megaphone, Receipt, FileText, Server,
   RefreshCw, Bell, ExternalLink, LogOut, Menu, X, Monitor,
   Wallet as WalletIcon, ListChecks, Link2, ShieldAlert, Repeat,
+  TrendingUp, Layers, Zap, Percent,
 } from 'lucide-react';
 import useStore from '../../store/useStore';
 import { useI18n } from '../../i18n';
@@ -16,7 +17,10 @@ export type AdminTab =
   // Sprint 4 Phase C — QTA chain admin
   | 'chainWallets' | 'chainQueue' | 'chainHealth' | 'risk'
   // Sprint 4 Phase G — QTA <-> ETH bridge
-  | 'bridge';
+  | 'bridge'
+  // Sprint 4 Phase H1 — Futures + Margin
+  | 'futuresMarkets' | 'futuresPositions' | 'liquidations' | 'fundingHistory'
+  | 'marginAccounts';
 
 interface Props {
   active: AdminTab;
@@ -76,6 +80,16 @@ export default function AdminLayout({
         { key: 'chainHealth',  label: t('admin.chainHealth'),  icon: Link2 },
         { key: 'bridge',       label: t('admin.bridge'),       icon: Repeat },
         { key: 'risk',         label: t('admin.risk'),         icon: ShieldAlert },
+      ],
+    },
+    {
+      title: t('admin.groupDerivatives'),
+      items: [
+        { key: 'futuresMarkets',   label: t('admin.futuresMarkets'),   icon: TrendingUp },
+        { key: 'futuresPositions', label: t('admin.futuresPositions'), icon: Layers },
+        { key: 'liquidations',     label: t('admin.liquidations'),     icon: Zap },
+        { key: 'fundingHistory',   label: t('admin.fundingHistory'),   icon: Percent },
+        { key: 'marginAccounts',   label: t('admin.marginAccounts'),   icon: WalletIcon },
       ],
     },
     {

@@ -11,6 +11,8 @@ import profileRoutes from './routes/profile';
 import chainRoutes from './routes/chain';
 import riskRoutes from './routes/risk';
 import bridgeRoutes from './routes/bridge';
+import futuresRoutes from './routes/futures';
+import marginRoutes from './routes/margin';
 import { installObservability, captureError } from './utils/observability';
 
 export type Env = {
@@ -127,6 +129,8 @@ app.route('/api/profile', profileRoutes);
 app.route('/api/chain', chainRoutes);
 app.route('/api/risk', riskRoutes);
 app.route('/api/bridge', bridgeRoutes);
+app.route('/api/futures', futuresRoutes);
+app.route('/api/margin', marginRoutes);
 
 // ============================================================================
 // Health checks (Sprint 3+ #3)
