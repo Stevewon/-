@@ -5,6 +5,7 @@ import {
   Ban, UserCheck, Crown, KeyRound, X, CheckCircle2, XCircle, Clock,
   Coins, Send, ArrowDownToLine, Megaphone, Wallet, Hash, Bell,
   FileText, Receipt, Server, Database, HardDrive,
+  Shield, AlertTriangle, Zap, Plus, Trash2,
 } from 'lucide-react';
 import useStore from '../store/useStore';
 import { useI18n } from '../i18n';
@@ -1758,46 +1759,137 @@ function SystemTab({ t }: any) {
 // ============================================================================
 
 function ChainWalletsTab({ t }: any) {
-  const [state, setState] = useState<any>(null);
+  const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const [q, setQ] = useState('');
+  const [debouncedQ, setDebouncedQ] = useState('');
 
-  const load = async () => {
+  // Debounce search input (400ms)
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedQ(q.trim()), 400);
+    return () => clearTimeout(id);
+  }, [q]);
+
+  const load = async (query: string) => {
     setLoading(true);
     try {
-      const r = await api.get('/chain/qta/state');
-      setState(r.data?.state || null);
-    } catch {
-      setState(null);
+      const url = query
+        ? `/chain/qta/admin/wallets?q=${encodeURIComponent(query)}`
+        : '/chain/qta/admin/wallets';
+      const r = await api.get(url);
+      setData(r.data || null);
+    } catch (e: any) {
+      if (e.response?.status !== 401) {
+        showToast('error', t('common.error'), e.response?.data?.error || 'Failed');
+      }
+      setData(null);
     } finally {
       setLoading(false);
     }
   };
-  useEffect(() => { load(); const id = setInterval(load, 30_000); return () => clearInterval(id); }, []);
 
-  if (!state) {
+  useEffect(() => {
+    load(debouncedQ);
+    const id = setInterval(() => load(debouncedQ), 30_000);
+    return () => clearInterval(id);
+  }, [debouncedQ]);
+
+  if (!data) {
     return <div className="p-12 text-center text-exchange-text-third">{loading ? t('common.loading') : '—'}</div>;
   }
 
+  const hw = data.hot_wallet || {};
+  const dep = data.deposits || {};
+  const wd = data.withdrawals || {};
+
   return (
     <div className="space-y-6">
+      {/* Hero — hot wallet snapshot */}
       <div className="rounded-2xl border-2 border-exchange-yellow/30 bg-gradient-to-br from-exchange-yellow/10 to-exchange-yellow/5 p-6">
         <div className="flex items-center gap-3 mb-4">
           <Wallet size={22} className="text-exchange-yellow" />
           <div>
             <div className="text-lg font-bold">{t('admin.chainWallets')}</div>
             <div className="text-xs text-exchange-text-third uppercase tracking-wider mt-0.5">
-              {state.network} · {state.signature_scheme}
+              {data.network} · {hw.signature_scheme}
             </div>
           </div>
+          <button
+            onClick={() => load(debouncedQ)}
+            className="ml-auto text-xs px-3 py-1.5 rounded-lg border border-exchange-border hover:bg-exchange-hover/40"
+          >
+            <RefreshCw size={12} className={`inline mr-1 ${loading ? 'animate-spin' : ''}`} />
+            {t('common.refresh')}
+          </button>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <Card label={t('admin.chainHotWallet')} value={state.hot_wallet_addr || '—'} mono />
-          <Card label={t('admin.chainHotBalance')} value={`${state.hot_wallet_balance || '0'} QTA`} />
-          <Card label={t('admin.chainSigScheme')} value={state.signature_scheme} pill />
+          <Card label={t('admin.chainHotWallet')} value={hw.address || '—'} mono />
+          <Card label={t('admin.chainHotBalance')} value={`${hw.balance || '0'} QTA`} />
+          <Card label={t('admin.chainSigScheme')} value={hw.signature_scheme || '—'} pill />
         </div>
       </div>
 
+      {/* KPI grid */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <Card label={t('admin.chainAddressesActive')} value={String(data.addresses_active ?? 0)} />
+        <Card label={t('admin.chainDepositsCredited')} value={String(dep.credited ?? 0)} />
+        <Card label={t('admin.chainDepositsConfirming')} value={String(dep.confirming ?? 0)} />
+        <Card label={t('admin.chainWithdrawalsPending')} value={String(wd.pending ?? 0)} />
+        <Card label={t('admin.chainWithdrawalsBroadcasting')} value={String(wd.broadcasting ?? 0)} />
+        <Card label={t('admin.chainWithdrawalsConfirmed')} value={String(wd.confirmed ?? 0)} />
+        <Card label={t('admin.chainWithdrawalsFailed')} value={String(wd.failed ?? 0)} />
+        <Card label={t('admin.chainValidators')} value={String(hw.validators_online ?? 0)} />
+      </div>
+
+      {/* Search box */}
+      <div className="rounded-xl border border-exchange-border bg-exchange-card p-5">
+        <div className="relative">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-exchange-text-third" />
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder={t('admin.chainSearchPlaceholder')}
+            className="w-full pl-9 pr-3 py-2.5 text-sm rounded-lg bg-exchange-bg border border-exchange-border focus:border-exchange-yellow/60 outline-none"
+          />
+        </div>
+
+        {debouncedQ && (
+          <div className="mt-4">
+            <div className="text-xs text-exchange-text-third uppercase tracking-wider mb-2">
+              {t('admin.chainSearchResults')} ({(data.users || []).length})
+            </div>
+            {(data.users || []).length === 0 ? (
+              <div className="text-xs text-exchange-text-third py-6 text-center">
+                {t('admin.chainSearchEmpty')}
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-lg border border-exchange-border">
+                <table className="w-full text-sm">
+                  <thead className="bg-exchange-hover/40 text-[11px] uppercase tracking-wider text-exchange-text-third">
+                    <tr>
+                      <th className="text-left px-3 py-2">{t('admin.user')}</th>
+                      <th className="text-left px-3 py-2">{t('admin.toAddress')}</th>
+                      <th className="text-center px-3 py-2">{t('admin.network')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(data.users || []).map((u: any) => (
+                      <tr key={u.id} className="border-t border-exchange-border">
+                        <td className="px-3 py-2 truncate max-w-[200px]">{u.email || u.user_id}</td>
+                        <td className="px-3 py-2 font-mono text-xs truncate max-w-[260px]">{u.address}</td>
+                        <td className="px-3 py-2 text-center text-[11px] text-exchange-text-third">{u.network}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Cold wallet note */}
       <div className="rounded-xl border border-exchange-border p-5 bg-exchange-card">
         <div className="text-sm font-semibold mb-2">{t('admin.chainColdNote')}</div>
         <div className="text-xs text-exchange-text-third leading-relaxed">
@@ -1812,20 +1904,27 @@ function ChainQueueTab({ t }: any) {
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  const [status, setStatus] = useState<string>('pending');
 
   const load = async () => {
     setLoading(true);
     try {
-      const r = await api.get('/chain/qta/admin/withdrawals?status=pending');
+      const r = await api.get(`/chain/qta/admin/withdrawals?status=${encodeURIComponent(status)}`);
       setItems(r.data?.withdrawals || []);
     } catch (e: any) {
-      showToast('error', t('common.error'), e.response?.data?.error || 'Failed');
+      if (e.response?.status !== 401) {
+        showToast('error', t('common.error'), e.response?.data?.error || 'Failed');
+      }
       setItems([]);
     } finally {
       setLoading(false);
     }
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    const id = setInterval(load, 10_000);
+    return () => clearInterval(id);
+  }, [status]);
 
   const approve = async (id: string) => {
     setBusy(id);
@@ -1854,8 +1953,33 @@ function ChainQueueTab({ t }: any) {
     }
   };
 
+  const STATUS_TABS: Array<{ key: string; label: string }> = [
+    { key: 'pending', label: t('admin.chainQueuePending') },
+    { key: 'broadcasting', label: t('admin.chainQueueBroadcasting') },
+    { key: 'confirmed', label: t('admin.chainQueueConfirmed') },
+    { key: 'failed', label: t('admin.chainQueueFailed') },
+    { key: 'rejected', label: t('admin.chainQueueRejected') },
+  ];
+
   return (
     <div className="space-y-4">
+      {/* Status tabs */}
+      <div className="flex flex-wrap gap-1.5 rounded-xl border border-exchange-border bg-exchange-card p-1.5">
+        {STATUS_TABS.map((s) => (
+          <button
+            key={s.key}
+            onClick={() => setStatus(s.key)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+              status === s.key
+                ? 'bg-exchange-yellow/20 text-exchange-yellow'
+                : 'text-exchange-text-secondary hover:bg-exchange-hover/40'
+            }`}
+          >
+            {s.label}
+          </button>
+        ))}
+      </div>
+
       <div className="flex items-center justify-between">
         <div className="text-sm text-exchange-text-secondary">
           {t('admin.chainPendingCount', { n: items.length })}
@@ -1864,7 +1988,7 @@ function ChainQueueTab({ t }: any) {
           onClick={load}
           className="text-xs px-3 py-1.5 rounded-lg border border-exchange-border hover:bg-exchange-hover/40"
         >
-          <RefreshCw size={12} className="inline mr-1" />
+          <RefreshCw size={12} className={`inline mr-1 ${loading ? 'animate-spin' : ''}`} />
           {t('common.refresh')}
         </button>
       </div>
@@ -1876,38 +2000,53 @@ function ChainQueueTab({ t }: any) {
               <th className="text-left px-4 py-2.5">{t('admin.user')}</th>
               <th className="text-left px-4 py-2.5">{t('admin.toAddress')}</th>
               <th className="text-right px-4 py-2.5">{t('admin.amount')}</th>
+              <th className="text-left px-4 py-2.5">{t('admin.chainTxHash')}</th>
               <th className="text-center px-4 py-2.5">{t('admin.network')}</th>
-              <th className="text-center px-4 py-2.5">{t('admin.actions')}</th>
+              {status === 'pending' && (
+                <th className="text-center px-4 py-2.5">{t('admin.actions')}</th>
+              )}
             </tr>
           </thead>
           <tbody>
             {items.length === 0 && (
-              <tr><td colSpan={5} className="text-center py-12 text-exchange-text-third">{loading ? t('common.loading') : t('admin.chainNoQueue')}</td></tr>
+              <tr>
+                <td
+                  colSpan={status === 'pending' ? 6 : 5}
+                  className="text-center py-12 text-exchange-text-third"
+                >
+                  {loading ? t('common.loading') : t('admin.chainNoQueue')}
+                </td>
+              </tr>
             )}
             {items.map((w) => (
               <tr key={w.id} className="border-t border-exchange-border">
                 <td className="px-4 py-3 truncate max-w-[200px]">{w.email || w.user_id}</td>
-                <td className="px-4 py-3 font-mono text-xs truncate max-w-[260px]">{w.to_address}</td>
+                <td className="px-4 py-3 font-mono text-xs truncate max-w-[220px]">{w.to_address}</td>
                 <td className="px-4 py-3 text-right font-semibold">{w.amount} QTA</td>
-                <td className="px-4 py-3 text-center text-[11px] text-exchange-text-third">{w.network}</td>
-                <td className="px-4 py-3 text-center">
-                  <button
-                    onClick={() => approve(w.id)}
-                    disabled={busy === w.id}
-                    className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-exchange-buy/20 text-exchange-buy hover:bg-exchange-buy/30 disabled:opacity-50 mr-2"
-                  >
-                    <CheckCircle2 size={12} className="inline mr-1" />
-                    {t('admin.approve')}
-                  </button>
-                  <button
-                    onClick={() => reject(w.id)}
-                    disabled={busy === w.id}
-                    className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-exchange-sell/20 text-exchange-sell hover:bg-exchange-sell/30 disabled:opacity-50"
-                  >
-                    <XCircle size={12} className="inline mr-1" />
-                    {t('admin.reject')}
-                  </button>
+                <td className="px-4 py-3 font-mono text-[10px] truncate max-w-[180px] text-exchange-text-third">
+                  {w.tx_hash || '—'}
                 </td>
+                <td className="px-4 py-3 text-center text-[11px] text-exchange-text-third">{w.network}</td>
+                {status === 'pending' && (
+                  <td className="px-4 py-3 text-center">
+                    <button
+                      onClick={() => approve(w.id)}
+                      disabled={busy === w.id}
+                      className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-exchange-buy/20 text-exchange-buy hover:bg-exchange-buy/30 disabled:opacity-50 mr-2"
+                    >
+                      <CheckCircle2 size={12} className="inline mr-1" />
+                      {t('admin.approve')}
+                    </button>
+                    <button
+                      onClick={() => reject(w.id)}
+                      disabled={busy === w.id}
+                      className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-exchange-sell/20 text-exchange-sell hover:bg-exchange-sell/30 disabled:opacity-50"
+                    >
+                      <XCircle size={12} className="inline mr-1" />
+                      {t('admin.reject')}
+                    </button>
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>
@@ -1918,61 +2057,116 @@ function ChainQueueTab({ t }: any) {
 }
 
 function ChainHealthTab({ t }: any) {
-  const [state, setState] = useState<any>(null);
+  const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
 
   const load = async () => {
     setLoading(true);
     try {
-      const r = await api.get('/chain/qta/state');
-      setState(r.data?.state || null);
+      const r = await api.get('/chain/qta/admin/health');
+      setData(r.data || null);
+    } catch (e: any) {
+      if (e.response?.status !== 401) {
+        showToast('error', t('common.error'), e.response?.data?.error || 'Failed');
+      }
+      setData(null);
     } finally {
       setLoading(false);
     }
   };
-  useEffect(() => { load(); const id = setInterval(load, 10_000); return () => clearInterval(id); }, []);
+  useEffect(() => {
+    load();
+    const id = setInterval(load, 10_000);
+    return () => clearInterval(id);
+  }, []);
 
-  if (!state) {
+  if (!data) {
     return <div className="p-12 text-center text-exchange-text-third">{loading ? t('common.loading') : '—'}</div>;
   }
 
-  const ok = !state.last_error;
-  const lastTickSec = state.last_tick_at
-    ? Math.floor((Date.now() - new Date(state.last_tick_at).getTime()) / 1000)
-    : null;
-  const stale = lastTickSec === null || lastTickSec > 600;
+  const state = data.state || {};
+  const stats = data.stats_24h || {};
+  const status: string = data.status || 'unknown';
+  const tickSec: number | null = data.tick_age_sec ?? null;
+
+  const STATUS_LABEL: Record<string, string> = {
+    ok: t('admin.chainStatusOk'),
+    stale: t('admin.chainStatusStale'),
+    error: t('admin.chainStatusError'),
+    idle: t('admin.chainStatusIdle'),
+    unknown: t('admin.chainStatusUnknown'),
+  };
+
+  const isHealthy = status === 'ok';
 
   return (
     <div className="space-y-6">
+      {/* Health hero */}
       <div className={`rounded-2xl border-2 p-6 flex items-center gap-5 ${
-        ok && !stale
+        isHealthy
           ? 'bg-gradient-to-br from-exchange-buy/10 to-exchange-buy/5 border-exchange-buy/40'
           : 'bg-gradient-to-br from-exchange-sell/10 to-exchange-sell/5 border-exchange-sell/40'
       }`}>
         <div className={`w-14 h-14 rounded-2xl flex items-center justify-center ${
-          ok && !stale ? 'bg-exchange-buy/20 text-exchange-buy' : 'bg-exchange-sell/20 text-exchange-sell'
+          isHealthy ? 'bg-exchange-buy/20 text-exchange-buy' : 'bg-exchange-sell/20 text-exchange-sell'
         }`}>
           <Activity size={26} />
         </div>
         <div className="flex-1">
-          <div className="text-xl font-bold">
-            {ok && !stale ? t('admin.chainOnline') : t('admin.chainStale')}
+          <div className="flex items-center gap-2">
+            <div className="text-xl font-bold">
+              {isHealthy ? t('admin.chainOnline') : t('admin.chainStale')}
+            </div>
+            <span className={`text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full font-semibold ${
+              isHealthy
+                ? 'bg-exchange-buy/20 text-exchange-buy'
+                : 'bg-exchange-sell/20 text-exchange-sell'
+            }`}>
+              {STATUS_LABEL[status] || status}
+            </span>
           </div>
           <div className="text-xs text-exchange-text-third mt-1">
-            {state.network} · {t('admin.chainLastTick')} {lastTickSec === null ? '—' : `${lastTickSec}s`} {t('admin.ago')}
+            {data.network} · {t('admin.chainLastTick')} {tickSec === null ? '—' : `${tickSec}s`} {t('admin.ago')}
           </div>
         </div>
+        <button
+          onClick={load}
+          className="text-xs px-3 py-1.5 rounded-lg border border-exchange-border hover:bg-exchange-hover/40"
+        >
+          <RefreshCw size={12} className={`inline mr-1 ${loading ? 'animate-spin' : ''}`} />
+          {t('common.refresh')}
+        </button>
       </div>
 
+      {/* Chain state cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <Card label={t('admin.chainHead')} value={state.head_block?.toLocaleString?.() || '0'} />
         <Card label={t('admin.chainScanned')} value={state.last_scanned_block?.toLocaleString?.() || '0'} />
         <Card label={t('admin.chainValidators')} value={String(state.validators_online ?? 0)} />
         <Card label={t('admin.chainBlockTime')} value={`${state.block_time_ms || 2000} ms`} />
         <Card label={t('admin.chainConfs')} value={String(state.required_confs ?? 12)} />
-        <Card label={t('admin.chainSigScheme')} value={state.signature_scheme} pill />
-        <Card label={t('admin.chainNetwork')} value={state.network} pill />
+        <Card label={t('admin.chainSigScheme')} value={state.signature_scheme || '—'} pill />
+        <Card label={t('admin.chainNetwork')} value={state.network || data.network || '—'} pill />
         <Card label={t('admin.chainHotBalance')} value={`${state.hot_wallet_balance || '0'} QTA`} />
+      </div>
+
+      {/* 24h stats */}
+      <div>
+        <div className="text-xs text-exchange-text-third uppercase tracking-wider mb-2">24h</div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+          <Card
+            label={t('admin.chain24hCredited')}
+            value={`${stats.deposits_credited ?? 0}  ·  ${(stats.deposits_credited_amount ?? 0).toLocaleString?.() || 0} QTA`}
+          />
+          <Card
+            label={t('admin.chain24hBroadcast')}
+            value={`${stats.withdrawals_broadcast ?? 0}  ·  ${(stats.withdrawals_broadcast_amount ?? 0).toLocaleString?.() || 0} QTA`}
+          />
+          <Card
+            label={t('admin.chain24hFailed')}
+            value={String(stats.withdrawals_failed ?? 0)}
+          />
+        </div>
       </div>
 
       {state.last_error && (
@@ -1986,21 +2180,291 @@ function ChainHealthTab({ t }: any) {
 }
 
 function RiskTab({ t }: any) {
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [cbReason, setCbReason] = useState('');
+  const [ipInput, setIpInput] = useState('');
+  const [ipReason, setIpReason] = useState('');
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const r = await api.get('/risk/state');
+      setData(r.data || null);
+    } catch (e: any) {
+      if (e.response?.status !== 401) {
+        showToast('error', t('common.error'), e.response?.data?.error || 'Failed');
+      }
+      setData(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { load(); }, []);
+
+  const toggleCb = async (enabled: boolean) => {
+    setBusy('cb');
+    try {
+      await api.post('/risk/circuit-breaker', { enabled, reason: cbReason });
+      showToast(
+        'success',
+        enabled ? t('admin.riskCircuitBreakerOn') : t('admin.riskCircuitBreakerOff'),
+        ''
+      );
+      setCbReason('');
+      load();
+    } catch (e: any) {
+      showToast('error', t('common.error'), e.response?.data?.error || 'Failed');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const toggle2fa = async (enabled: boolean) => {
+    setBusy('2fa');
+    try {
+      await api.post('/risk/force-2fa', { enabled });
+      showToast(
+        'success',
+        enabled ? t('admin.riskForce2faOn') : t('admin.riskForce2faOff'),
+        ''
+      );
+      load();
+    } catch (e: any) {
+      showToast('error', t('common.error'), e.response?.data?.error || 'Failed');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const addIp = async () => {
+    const ip = ipInput.trim();
+    if (!ip) return;
+    if (!/^[0-9a-fA-F:.\/]+$/.test(ip) || ip.length > 64) {
+      showToast('error', t('common.error'), t('admin.riskInvalidIp'));
+      return;
+    }
+    setBusy('ipAdd');
+    try {
+      await api.post('/risk/ip-block', { ip, reason: ipReason });
+      showToast('success', t('admin.riskIpAdded'), ip);
+      setIpInput('');
+      setIpReason('');
+      load();
+    } catch (e: any) {
+      showToast('error', t('common.error'), e.response?.data?.error || 'Failed');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const removeIp = async (ip: string) => {
+    setBusy(`ipRm:${ip}`);
+    try {
+      await api.post('/risk/ip-unblock', { ip });
+      showToast('success', t('admin.riskIpRemoved'), ip);
+      load();
+    } catch (e: any) {
+      showToast('error', t('common.error'), e.response?.data?.error || 'Failed');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  if (!data) {
+    return <div className="p-12 text-center text-exchange-text-third">{loading ? t('common.loading') : '—'}</div>;
+  }
+
+  const cbEnabled = !!data.circuit_breaker?.enabled;
+  const f2faEnabled = !!data.force_2fa?.enabled;
+  const blocklist: string[] = data.ip_blocklist || [];
+
   return (
-    <div className="space-y-4">
-      <div className="rounded-2xl border border-exchange-border bg-exchange-card p-6">
+    <div className="space-y-5">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Shield size={20} className="text-exchange-sell" />
+          <div className="text-base font-bold">{t('admin.riskTitle')}</div>
+        </div>
+        <button
+          onClick={load}
+          className="text-xs px-3 py-1.5 rounded-lg border border-exchange-border hover:bg-exchange-hover/40"
+        >
+          <RefreshCw size={12} className={`inline mr-1 ${loading ? 'animate-spin' : ''}`} />
+          {t('common.refresh')}
+        </button>
+      </div>
+
+      {/* Circuit breaker */}
+      <div className={`rounded-2xl border-2 p-5 ${
+        cbEnabled
+          ? 'border-exchange-sell/40 bg-gradient-to-br from-exchange-sell/10 to-exchange-sell/5'
+          : 'border-exchange-border bg-exchange-card'
+      }`}>
+        <div className="flex items-start gap-4">
+          <div className={`w-11 h-11 rounded-xl flex items-center justify-center ${
+            cbEnabled ? 'bg-exchange-sell/20 text-exchange-sell' : 'bg-exchange-hover/40 text-exchange-text-secondary'
+          }`}>
+            <AlertTriangle size={20} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <div className="text-sm font-bold">{t('admin.riskCircuitBreaker')}</div>
+              <span className={`text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full font-semibold ${
+                cbEnabled
+                  ? 'bg-exchange-sell/20 text-exchange-sell'
+                  : 'bg-exchange-buy/20 text-exchange-buy'
+              }`}>
+                {cbEnabled ? t('admin.riskEnabled') : t('admin.riskDisabled')}
+              </span>
+            </div>
+            <div className="text-xs text-exchange-text-third mt-1 leading-relaxed">
+              {t('admin.riskCircuitBreakerDesc')}
+            </div>
+            {cbEnabled && data.circuit_breaker?.reason && (
+              <div className="mt-2 text-xs font-mono text-exchange-sell break-all">
+                {data.circuit_breaker.reason}
+              </div>
+            )}
+            {!cbEnabled && (
+              <input
+                value={cbReason}
+                onChange={(e) => setCbReason(e.target.value)}
+                placeholder={t('admin.riskReason')}
+                className="mt-3 w-full px-3 py-2 text-xs rounded-lg bg-exchange-bg border border-exchange-border focus:border-exchange-yellow/60 outline-none"
+              />
+            )}
+          </div>
+          <button
+            onClick={() => toggleCb(!cbEnabled)}
+            disabled={busy === 'cb'}
+            className={`px-4 py-2 rounded-lg text-xs font-semibold disabled:opacity-50 ${
+              cbEnabled
+                ? 'bg-exchange-buy/20 text-exchange-buy hover:bg-exchange-buy/30'
+                : 'bg-exchange-sell/20 text-exchange-sell hover:bg-exchange-sell/30'
+            }`}
+          >
+            <Zap size={12} className="inline mr-1" />
+            {cbEnabled ? t('admin.riskDisabled') : t('admin.riskEnabled')}
+          </button>
+        </div>
+      </div>
+
+      {/* Force 2FA */}
+      <div className={`rounded-2xl border-2 p-5 ${
+        f2faEnabled
+          ? 'border-exchange-yellow/40 bg-gradient-to-br from-exchange-yellow/10 to-exchange-yellow/5'
+          : 'border-exchange-border bg-exchange-card'
+      }`}>
+        <div className="flex items-start gap-4">
+          <div className={`w-11 h-11 rounded-xl flex items-center justify-center ${
+            f2faEnabled ? 'bg-exchange-yellow/20 text-exchange-yellow' : 'bg-exchange-hover/40 text-exchange-text-secondary'
+          }`}>
+            <KeyRound size={20} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <div className="text-sm font-bold">{t('admin.riskForce2fa')}</div>
+              <span className={`text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full font-semibold ${
+                f2faEnabled
+                  ? 'bg-exchange-yellow/20 text-exchange-yellow'
+                  : 'bg-exchange-hover/40 text-exchange-text-third'
+              }`}>
+                {f2faEnabled ? t('admin.riskEnabled') : t('admin.riskDisabled')}
+              </span>
+            </div>
+            <div className="text-xs text-exchange-text-third mt-1 leading-relaxed">
+              {t('admin.riskForce2faDesc')}
+            </div>
+          </div>
+          <button
+            onClick={() => toggle2fa(!f2faEnabled)}
+            disabled={busy === '2fa'}
+            className={`px-4 py-2 rounded-lg text-xs font-semibold disabled:opacity-50 ${
+              f2faEnabled
+                ? 'bg-exchange-hover/40 text-exchange-text-secondary hover:bg-exchange-hover/60'
+                : 'bg-exchange-yellow/20 text-exchange-yellow hover:bg-exchange-yellow/30'
+            }`}
+          >
+            {f2faEnabled ? t('admin.riskDisabled') : t('admin.riskEnabled')}
+          </button>
+        </div>
+      </div>
+
+      {/* IP blocklist */}
+      <div className="rounded-2xl border-2 border-exchange-border bg-exchange-card p-5">
         <div className="flex items-center gap-3 mb-3">
-          <Ban size={20} className="text-exchange-sell" />
-          <div className="text-base font-bold">{t('admin.riskComingSoon')}</div>
+          <div className="w-11 h-11 rounded-xl flex items-center justify-center bg-exchange-hover/40 text-exchange-text-secondary">
+            <Ban size={20} />
+          </div>
+          <div className="flex-1">
+            <div className="text-sm font-bold">{t('admin.riskIpBlocklist')}</div>
+            <div className="text-xs text-exchange-text-third mt-0.5 leading-relaxed">
+              {t('admin.riskIpBlocklistDesc')}
+            </div>
+          </div>
         </div>
-        <div className="text-xs text-exchange-text-third leading-relaxed">
-          {t('admin.riskComingSoonDesc')}
+
+        {/* Add form */}
+        <div className="flex flex-col sm:flex-row gap-2 mb-4">
+          <input
+            value={ipInput}
+            onChange={(e) => setIpInput(e.target.value)}
+            placeholder={t('admin.riskIpPlaceholder')}
+            className="flex-1 px-3 py-2 text-xs font-mono rounded-lg bg-exchange-bg border border-exchange-border focus:border-exchange-yellow/60 outline-none"
+          />
+          <input
+            value={ipReason}
+            onChange={(e) => setIpReason(e.target.value)}
+            placeholder={t('admin.riskReason')}
+            className="flex-1 px-3 py-2 text-xs rounded-lg bg-exchange-bg border border-exchange-border focus:border-exchange-yellow/60 outline-none"
+          />
+          <button
+            onClick={addIp}
+            disabled={busy === 'ipAdd' || !ipInput.trim()}
+            className="px-4 py-2 rounded-lg text-xs font-semibold bg-exchange-sell/20 text-exchange-sell hover:bg-exchange-sell/30 disabled:opacity-50 whitespace-nowrap"
+          >
+            <Plus size={12} className="inline mr-1" />
+            {t('admin.riskAddIp')}
+          </button>
         </div>
-        <ul className="mt-3 space-y-1 text-xs text-exchange-text-secondary list-disc list-inside">
-          <li>{t('admin.riskFeatureIp')}</li>
-          <li>{t('admin.riskFeature2fa')}</li>
-          <li>{t('admin.riskFeatureCb')}</li>
-        </ul>
+
+        {/* Blocklist table */}
+        {blocklist.length === 0 ? (
+          <div className="text-xs text-exchange-text-third py-6 text-center border border-dashed border-exchange-border rounded-lg">
+            {t('admin.riskNoBlocklist')}
+          </div>
+        ) : (
+          <div className="overflow-hidden rounded-lg border border-exchange-border">
+            <table className="w-full text-sm">
+              <thead className="bg-exchange-hover/40 text-[11px] uppercase tracking-wider text-exchange-text-third">
+                <tr>
+                  <th className="text-left px-3 py-2">IP / CIDR</th>
+                  <th className="text-right px-3 py-2 w-32">{t('admin.actions')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {blocklist.map((ip) => (
+                  <tr key={ip} className="border-t border-exchange-border">
+                    <td className="px-3 py-2 font-mono text-xs">{ip}</td>
+                    <td className="px-3 py-2 text-right">
+                      <button
+                        onClick={() => removeIp(ip)}
+                        disabled={busy === `ipRm:${ip}`}
+                        className="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-exchange-hover/40 hover:bg-exchange-sell/20 hover:text-exchange-sell disabled:opacity-50"
+                      >
+                        <Trash2 size={11} className="inline mr-1" />
+                        {t('admin.riskRemove')}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );
