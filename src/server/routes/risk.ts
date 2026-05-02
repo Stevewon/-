@@ -25,6 +25,7 @@ import { Hono } from 'hono';
 import { authMiddleware, adminMiddleware } from '../middleware/auth';
 import type { AppEnv } from '../index';
 import { logAdminAction } from '../utils/audit';
+import { invalidateRiskCache } from '../lib/risk';
 
 const risk = new Hono<AppEnv>();
 
@@ -45,6 +46,10 @@ async function setMarker(c: any, key: string, value: string): Promise<void> {
      VALUES (?, ?, ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
   ).bind(key, value, now).run();
+  // Phase F: drop the in-isolate risk cache so the next request observes
+  // the new value within the current isolate. Other isolates pick it up
+  // within CACHE_TTL_MS (30 s).
+  invalidateRiskCache();
 }
 
 function parseList(s: string | null): string[] {

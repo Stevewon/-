@@ -4,6 +4,7 @@ import { authMiddleware } from '../middleware/auth';
 import { requireKyc } from '../middleware/kyc';
 import { rateLimit } from '../middleware/rateLimit';
 import { getUserFeeTier, recordFeeLedger, type FeeTier } from '../utils/fees';
+import { getRiskState } from '../lib/risk';
 
 const app = new Hono<AppEnv>();
 
@@ -25,6 +26,21 @@ function floorToDecimals(n: number, decimals: number): number {
 
 // Place order — requires approved KYC (gates all trading)
 app.post('/', authMiddleware, rlPlaceOrder, requireKyc('approved'), async (c) => {
+  // Phase F: global circuit breaker. When admin flips this on (Risk tab),
+  // all *new* order placement halts immediately; existing resting orders
+  // remain on the book and can still be cancelled by the user.
+  const risk = await getRiskState(c);
+  if (risk.circuit_breaker.enabled) {
+    return c.json(
+      {
+        error: 'Trading temporarily halted by exchange operator',
+        reason: risk.circuit_breaker.reason || null,
+        circuit_breaker: true,
+      },
+      503,
+    );
+  }
+
   const user = c.get('user');
   const body = await c.req.json();
   let { market_symbol, side, type, price, amount, time_in_force, stop_price } = body;

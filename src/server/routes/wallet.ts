@@ -5,6 +5,7 @@ import { requireKyc } from '../middleware/kyc';
 import { rateLimit } from '../middleware/rateLimit';
 import { verifyTotp } from '../utils/totp';
 import { tmplWithdrawSubmitted, fireAndForgetMail, metaFromReq } from '../utils/mailer';
+import { getRiskState } from '../lib/risk';
 
 const app = new Hono<AppEnv>();
 
@@ -200,16 +201,32 @@ app.post('/withdraw', authMiddleware, rlWithdraw, requireKyc('approved'), async 
   }
 
   // Load user + coin meta
-  const [u, coin] = await Promise.all([
+  const [u, coin, risk] = await Promise.all([
     c.env.DB.prepare(
       'SELECT two_factor_enabled, two_factor_secret FROM users WHERE id = ?'
     ).bind(user.id).first<any>(),
     c.env.DB.prepare('SELECT symbol, price_usd FROM coins WHERE symbol = ?').bind(coin_symbol).first<any>(),
+    getRiskState(c),
   ]);
   if (!coin) return c.json({ error: 'Coin not found' }, 404);
 
-  // 2FA if configured (highly recommended to enforce before we add the "gate all")
-  if (u?.two_factor_enabled) {
+  // Phase F: forced 2FA on withdrawals. When admin enables risk_force_2fa,
+  // every withdrawal must clear a TOTP challenge regardless of the user's
+  // own 2FA setting. If the user hasn't set up 2FA at all, withdrawals are
+  // hard-blocked until they do.
+  const forced2fa = risk.force_2fa.enabled;
+  if (forced2fa && !u?.two_factor_enabled) {
+    return c.json(
+      {
+        error: '2FA setup required by exchange policy. Enable 2FA before withdrawing.',
+        requires_2fa_setup: true,
+      },
+      403,
+    );
+  }
+
+  // 2FA if configured OR forced by admin policy.
+  if (u?.two_factor_enabled || forced2fa) {
     if (!totp_code) return c.json({ error: '2FA code required', requires_2fa: true }, 401);
     const ok = await verifyTotp(u.two_factor_secret, String(totp_code));
     if (!ok) return c.json({ error: 'Invalid 2FA code' }, 401);

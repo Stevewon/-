@@ -1,5 +1,6 @@
 import type { Context, Next } from 'hono';
 import type { AppEnv } from '../index';
+import { getRiskState, getClientIp, isIpBlocked } from '../lib/risk';
 
 // Simple JWT (HMAC-SHA256) for Cloudflare Workers
 async function sign(payload: any, secret: string): Promise<string> {
@@ -38,6 +39,19 @@ export async function generateToken(
 }
 
 export async function authMiddleware(c: Context<AppEnv>, next: Next) {
+  // Phase F: IP blocklist enforcement. Run before token parsing so that a
+  // banned host can't even probe with a fresh token. Cached for 30 s per
+  // worker isolate (see lib/risk.ts), so the cost on the hot path is one
+  // map lookup most of the time.
+  const risk = await getRiskState(c);
+  if (risk.ip_blocklist.length > 0) {
+    const ip = getClientIp(c);
+    const matched = isIpBlocked(ip, risk.ip_blocklist);
+    if (matched) {
+      return c.json({ error: 'Access denied (IP blocked)', matched }, 403);
+    }
+  }
+
   const token = c.req.header('Authorization')?.replace('Bearer ', '');
   if (!token) return c.json({ error: 'Authentication required' }, 401);
 
