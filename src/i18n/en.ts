@@ -1157,6 +1157,22 @@ const en = {
   'admin.pqAuditCount': 'Count',
   'admin.pqStubTitle': 'phase-h2-stub:',
   'admin.pqStubBody': 'In this phase only the schema and UI are live; actual Dilithium2 verification ships next sprint together with the WASM module. Existing HMAC keys remain 100% compatible.',
+
+  // Admin — External Trading API (Sprint 5 Phase I1)
+  'admin.extTradingApi': 'External Trading API',
+  'admin.extTradingApiDesc': 'Monitor the HMAC-signed /api/v1/* gate state and activity.',
+  'admin.extTradingApiState': 'State',
+  'admin.extTradingApiPhase': 'Integration phase',
+  'admin.extTradingApiSkew': 'Timestamp skew window',
+  'admin.extTradingApiNonceTotal': 'Total nonces',
+  'admin.extTradingApiNonce24h': 'Nonces (last 24h)',
+  'admin.extTradingApiNonce1h': 'Nonces (last 1h)',
+  'admin.extTradingApiTurnOn': 'Enable',
+  'admin.extTradingApiTurnOff': 'Disable',
+  'admin.extTradingApiNowOn': 'External Trading API has been enabled.',
+  'admin.extTradingApiNowOff': 'External Trading API has been disabled.',
+  'admin.extTradingApiConfirmEnable': 'Enable the External Trading API gate? Signed /api/v1/* calls will start being accepted immediately.',
+  'admin.extTradingApiOffNotice': 'Gate is off — all /api/v1/* calls return 503 SERVICE_DISABLED. Enable once operational checks pass.',
   'admin.refresh': 'Refresh',
 
   // Admin futures common

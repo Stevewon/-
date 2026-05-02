@@ -1148,6 +1148,23 @@ const ko = {
   'admin.pqAuditCount': '횟수',
   'admin.pqStubTitle': 'phase-h2-stub:',
   'admin.pqStubBody': '현재 단계에서는 스키마와 UI만 활성화되어 있고, 실제 Dilithium2 서명 검증은 다음 스프린트에서 WASM 모듈과 함께 활성화됩니다. 기존 HMAC 키는 100% 호환됩니다.',
+
+  // Admin — External Trading API (Sprint 5 Phase I1)
+  'admin.extTradingApi': '외부 트레이딩 API',
+  'admin.extTradingApiDesc': 'HMAC 서명 기반 /api/v1/* 게이트의 상태와 활동을 모니터링합니다.',
+  'admin.extTradingApiState': '현재 상태',
+  'admin.extTradingApiPhase': '통합 단계',
+  'admin.extTradingApiSkew': '타임스탬프 허용 오차',
+  'admin.extTradingApiNonceTotal': '총 논스 수',
+  'admin.extTradingApiNonce24h': '최근 24시간 논스',
+  'admin.extTradingApiNonce1h': '최근 1시간 논스',
+  'admin.extTradingApiTurnOn': '활성화',
+  'admin.extTradingApiTurnOff': '비활성화',
+  'admin.extTradingApiNowOn': '외부 트레이딩 API가 활성화되었습니다.',
+  'admin.extTradingApiNowOff': '외부 트레이딩 API가 비활성화되었습니다.',
+  'admin.extTradingApiConfirmEnable': '외부 트레이딩 API 게이트를 활성화하시겠습니까? 활성화 즉시 서명된 /api/v1/* 호출을 받게 됩니다.',
+  'admin.extTradingApiOffNotice': '게이트가 꺼져 있어 /api/v1/* 호출은 모두 503 SERVICE_DISABLED를 반환합니다. 운영 검증이 끝나면 활성화하세요.',
+
   'admin.refresh': '새로고침',
 
   // Admin futures common

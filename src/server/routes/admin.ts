@@ -1192,4 +1192,125 @@ app.get('/api-keys/stats', async (c) => {
   }
 });
 
+// ===========================================================================
+// External Trading API (Sprint 5 Phase I1) — admin observability + toggle
+// ---------------------------------------------------------------------------
+// GET  /api/admin/external-trading-api/stats
+//   Surfaces the four system_markers + nonce-table activity counters so the
+//   admin UI can render an at-a-glance card without issuing five separate
+//   queries.
+// POST /api/admin/external-trading-api/toggle
+//   Flips system_markers.external_trading_api_enabled between 'on' and 'off'.
+//   Optional body { enabled: boolean } pins the value; otherwise the marker
+//   toggles. Updates are written through admin_audit_logs so the change is
+//   discoverable in the existing audit trail.
+// ===========================================================================
+app.get('/external-trading-api/stats', async (c) => {
+  try {
+    const markersRes = await c.env.DB.prepare(
+      `SELECT key, value FROM system_markers
+        WHERE key IN (
+          'external_trading_api_enabled',
+          'external_trading_api_integration',
+          'external_trading_api_max_skew_sec'
+        )`,
+    ).all<{ key: string; value: string }>();
+    const markers: Record<string, string> = {};
+    for (const r of markersRes.results ?? []) markers[r.key] = r.value;
+
+    // Nonce activity — total + last 24h. Wrapped so a missing table on a
+    // fresh dev db doesn't 503 the whole card.
+    let nonces = { total: 0, last24h: 0, last1h: 0 };
+    try {
+      const nowSec = Math.floor(Date.now() / 1000);
+      const dayAgo = nowSec - 24 * 3600;
+      const hourAgo = nowSec - 3600;
+      const totalRow = await c.env.DB.prepare(
+        'SELECT COUNT(*) AS n FROM api_key_nonces',
+      ).first<{ n: number }>();
+      const dayRow = await c.env.DB.prepare(
+        'SELECT COUNT(*) AS n FROM api_key_nonces WHERE ts >= ?',
+      ).bind(dayAgo).first<{ n: number }>();
+      const hourRow = await c.env.DB.prepare(
+        'SELECT COUNT(*) AS n FROM api_key_nonces WHERE ts >= ?',
+      ).bind(hourAgo).first<{ n: number }>();
+      nonces = {
+        total: Number(totalRow?.n ?? 0),
+        last24h: Number(dayRow?.n ?? 0),
+        last1h: Number(hourRow?.n ?? 0),
+      };
+    } catch { /* table not migrated yet — leave zeros */ }
+
+    return c.json({
+      ok: true,
+      enabled: (markers['external_trading_api_enabled'] ?? 'off') === 'on',
+      integration_phase: markers['external_trading_api_integration'] ?? 'phase-i1-stub',
+      max_skew_sec: parseInt(markers['external_trading_api_max_skew_sec'] ?? '60', 10) || 60,
+      nonces,
+      fetched_at: new Date().toISOString(),
+    });
+  } catch (e: any) {
+    return c.json(
+      { error: 'external_trading_api_stats unavailable', detail: String(e?.message || e) },
+      503,
+    );
+  }
+});
+
+app.post('/external-trading-api/toggle', async (c) => {
+  const me = c.get('user') as { id: string; email: string; role: string };
+  if (me.role !== 'admin') {
+    return c.json({ error: 'admin role required' }, 403);
+  }
+
+  let desired: 'on' | 'off' | null = null;
+  try {
+    const body = await c.req.json<{ enabled?: boolean }>();
+    if (typeof body?.enabled === 'boolean') {
+      desired = body.enabled ? 'on' : 'off';
+    }
+  } catch { /* no body — treat as toggle */ }
+
+  // If no explicit value, flip whatever is currently set.
+  if (!desired) {
+    const cur = await c.env.DB.prepare(
+      "SELECT value FROM system_markers WHERE key = 'external_trading_api_enabled'",
+    ).first<{ value: string }>();
+    desired = (cur?.value ?? 'off') === 'on' ? 'off' : 'on';
+  }
+
+  try {
+    await c.env.DB.prepare(
+      `INSERT INTO system_markers (key, value)
+       VALUES ('external_trading_api_enabled', ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    )
+      .bind(desired)
+      .run();
+  } catch (e: any) {
+    return c.json(
+      { error: 'failed to update marker', detail: String(e?.message || e) },
+      503,
+    );
+  }
+
+  // Best-effort audit log entry (mirrors other admin mutators).
+  try {
+    await c.env.DB.prepare(
+      `INSERT INTO admin_audit_logs (id, admin_user_id, admin_email, action, target, details, created_at)
+       VALUES (?, ?, ?, 'external_trading_api_toggle', ?, ?, datetime('now'))`,
+    )
+      .bind(
+        crypto.randomUUID(),
+        me.id,
+        me.email || '',
+        'system_markers/external_trading_api_enabled',
+        JSON.stringify({ value: desired }),
+      )
+      .run();
+  } catch { /* swallow — audit best-effort */ }
+
+  return c.json({ ok: true, enabled: desired === 'on' });
+});
+
 export default app;

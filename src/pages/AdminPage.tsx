@@ -3298,6 +3298,108 @@ function PqApiKeysTab({ t }: any) {
           <span className="font-semibold">{t('admin.pqStubTitle')}</span> {t('admin.pqStubBody')}
         </p>
       </div>
+
+      {/* Sprint 5 Phase I1 — External Trading API gate */}
+      <ExternalTradingApiCard t={t} />
+    </div>
+  );
+}
+
+// ===========================================================================
+// External Trading API card — Sprint 5 Phase I1
+// ---------------------------------------------------------------------------
+// Standalone subcomponent so its 30s polling cycle is independent of the
+// PQ stats poll above. Renders four marker tiles, three nonce activity
+// counters, and an on/off toggle button. The toggle hits
+// POST /admin/external-trading-api/toggle which writes to system_markers
+// and audit-logs the change.
+// ===========================================================================
+function ExternalTradingApiCard({ t }: any) {
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [toggling, setToggling] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const res = await api.get('/admin/external-trading-api/stats');
+      setData(res.data);
+    } catch (e: any) {
+      showToast('error', t('admin.extTradingApi'), e?.response?.data?.error || 'Failed');
+    }
+    setLoading(false);
+  };
+  useEffect(() => {
+    load();
+    const id = setInterval(load, 30000);
+    return () => clearInterval(id);
+  }, []);
+
+  const toggle = async () => {
+    if (!data) return;
+    const next = !data.enabled;
+    if (next && !confirm(t('admin.extTradingApiConfirmEnable'))) return;
+    setToggling(true);
+    try {
+      const res = await api.post('/admin/external-trading-api/toggle', { enabled: next });
+      showToast(
+        'success',
+        t('admin.extTradingApi'),
+        res.data?.enabled ? t('admin.extTradingApiNowOn') : t('admin.extTradingApiNowOff'),
+      );
+      await load();
+    } catch (e: any) {
+      showToast('error', t('admin.extTradingApi'), e?.response?.data?.error || 'Failed');
+    }
+    setToggling(false);
+  };
+
+  const enabled = !!data?.enabled;
+  const phase = data?.integration_phase || 'phase-i1-stub';
+  const skew = data?.max_skew_sec ?? 60;
+  const nonces = data?.nonces || { total: 0, last24h: 0, last1h: 0 };
+
+  return (
+    <div className="rounded-xl border border-exchange-border bg-exchange-card p-4">
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <h3 className="text-sm font-semibold text-exchange-text">{t('admin.extTradingApi')}</h3>
+          <p className="text-[11px] text-exchange-text-third mt-0.5">
+            {t('admin.extTradingApiDesc')}
+          </p>
+        </div>
+        <button
+          onClick={toggle}
+          disabled={loading || toggling || !data}
+          className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors disabled:opacity-50 ${
+            enabled
+              ? 'bg-exchange-sell/15 hover:bg-exchange-sell/25 text-exchange-sell'
+              : 'bg-exchange-buy/15 hover:bg-exchange-buy/25 text-exchange-buy'
+          }`}
+        >
+          {toggling ? '...' : enabled ? t('admin.extTradingApiTurnOff') : t('admin.extTradingApiTurnOn')}
+        </button>
+      </div>
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <Card label={t('admin.extTradingApiState')} value={enabled ? 'on' : 'off'} pill />
+        <Card label={t('admin.extTradingApiPhase')} value={phase} pill />
+        <Card label={t('admin.extTradingApiSkew')} value={`${skew}s`} mono />
+        <Card label={t('admin.extTradingApiNonceTotal')} value={String(nonces.total ?? 0)} mono />
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 mt-3">
+        <Card label={t('admin.extTradingApiNonce24h')} value={String(nonces.last24h ?? 0)} mono />
+        <Card label={t('admin.extTradingApiNonce1h')} value={String(nonces.last1h ?? 0)} mono />
+      </div>
+
+      {!enabled && (
+        <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
+          <p className="text-[11px] text-amber-300 leading-relaxed">
+            {t('admin.extTradingApiOffNotice')}
+          </p>
+        </div>
+      )}
     </div>
   );
 }
