@@ -1,5 +1,5 @@
 /**
- * QTA native chain routes — Phase B (stub).
+ * QTA native chain routes — Phase B (stub) + Phase D (admin observability).
  *
  * Endpoints:
  *   POST /chain/qta/deposit-address          : issue / fetch user's deposit address
@@ -7,9 +7,12 @@
  *   POST /chain/qta/withdraw                 : enqueue a withdrawal (admin must approve)
  *   GET  /chain/qta/withdrawals              : list current user's withdrawals
  *   GET  /chain/qta/state                    : public chain state (head, scheme, confs)
- *   GET  /chain/qta/admin/withdrawals        : (admin) list pending withdrawals
+ *   GET  /chain/qta/admin/withdrawals        : (admin) list withdrawals by status
  *   POST /chain/qta/admin/withdrawals/:id/approve : (admin) approve + sign + broadcast (mock)
  *   POST /chain/qta/admin/withdrawals/:id/reject  : (admin) reject with reason
+ *   GET  /chain/qta/admin/wallets            : (admin, Phase D) hot/cold balances + user address search
+ *   GET  /chain/qta/admin/health             : (admin, Phase D) chain_state + 24h tick stats
+ *   GET  /chain/qta/admin/deposits           : (admin, Phase D) recent deposits (audit)
  *
  * All write paths require auth; admin paths require admin role.
  */
@@ -244,6 +247,202 @@ chain.post('/qta/admin/withdrawals/:id/reject', authMiddleware, adminMiddleware,
   });
 
   return c.json({ ok: true, id, status: 'rejected' });
+});
+
+// ===========================================================================
+// Phase D — Admin observability endpoints
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// GET /qta/admin/wallets
+//   Returns hot wallet balance, aggregated user-address count, total credited
+//   deposit volume, and (optional) per-user search by email or address.
+// ---------------------------------------------------------------------------
+chain.get('/qta/admin/wallets', authMiddleware, adminMiddleware, async (c) => {
+  const network = currentNetwork(c.env);
+  const q = (c.req.query('q') || '').trim();
+
+  // Hot wallet snapshot from chain_state
+  const stateRow = await c.env.DB.prepare(
+    `SELECT network, hot_wallet_addr, hot_wallet_balance, head_block,
+            validators_online, signature_scheme, last_tick_at, last_error
+     FROM qta_chain_state
+     WHERE network = ?`
+  ).bind(network).first<any>();
+
+  // Aggregate stats across all users
+  const aggDeposits = await c.env.DB.prepare(
+    `SELECT
+       COUNT(*) AS total_count,
+       COALESCE(SUM(CASE WHEN status = 'credited' THEN CAST(amount AS REAL) ELSE 0 END), 0) AS credited_amount,
+       COUNT(CASE WHEN status = 'credited' THEN 1 END) AS credited_count,
+       COUNT(CASE WHEN status = 'confirming' THEN 1 END) AS confirming_count,
+       COUNT(CASE WHEN status = 'detected' THEN 1 END) AS detected_count
+     FROM qta_deposits
+     WHERE network = ?`
+  ).bind(network).first<any>();
+
+  const aggWithdrawals = await c.env.DB.prepare(
+    `SELECT
+       COUNT(*) AS total_count,
+       COALESCE(SUM(CASE WHEN status = 'confirmed' THEN CAST(amount AS REAL) ELSE 0 END), 0) AS confirmed_amount,
+       COUNT(CASE WHEN status = 'pending' THEN 1 END) AS pending_count,
+       COUNT(CASE WHEN status = 'broadcasting' THEN 1 END) AS broadcasting_count,
+       COUNT(CASE WHEN status = 'confirmed' THEN 1 END) AS confirmed_count,
+       COUNT(CASE WHEN status = 'failed' THEN 1 END) AS failed_count,
+       COUNT(CASE WHEN status = 'rejected' THEN 1 END) AS rejected_count
+     FROM qta_withdrawals
+     WHERE network = ?`
+  ).bind(network).first<any>();
+
+  const addrCount = await c.env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM qta_addresses WHERE network = ? AND is_active = 1`
+  ).bind(network).first<any>();
+
+  // Optional user search (by email or QTA address)
+  let users: any[] = [];
+  if (q.length > 0) {
+    const like = `%${q}%`;
+    const { results } = await c.env.DB.prepare(
+      `SELECT a.id, a.user_id, a.address, a.pubkey, a.network, a.created_at,
+              u.email
+       FROM qta_addresses a
+       LEFT JOIN users u ON u.id = a.user_id
+       WHERE a.network = ?
+         AND a.is_active = 1
+         AND (u.email LIKE ? OR a.address LIKE ?)
+       ORDER BY a.created_at DESC
+       LIMIT 50`
+    ).bind(network, like, like).all<any>();
+    users = results || [];
+  }
+
+  return c.json({
+    ok: true,
+    network,
+    hot_wallet: {
+      address: stateRow?.hot_wallet_addr || null,
+      balance: stateRow?.hot_wallet_balance || '0',
+      head_block: stateRow?.head_block || 0,
+      validators_online: stateRow?.validators_online || 0,
+      signature_scheme: stateRow?.signature_scheme || 'CRYSTALS-Dilithium3',
+      last_tick_at: stateRow?.last_tick_at || null,
+      last_error: stateRow?.last_error || null,
+    },
+    deposits: {
+      total: aggDeposits?.total_count || 0,
+      credited: aggDeposits?.credited_count || 0,
+      confirming: aggDeposits?.confirming_count || 0,
+      detected: aggDeposits?.detected_count || 0,
+      credited_amount: aggDeposits?.credited_amount || 0,
+    },
+    withdrawals: {
+      total: aggWithdrawals?.total_count || 0,
+      pending: aggWithdrawals?.pending_count || 0,
+      broadcasting: aggWithdrawals?.broadcasting_count || 0,
+      confirmed: aggWithdrawals?.confirmed_count || 0,
+      failed: aggWithdrawals?.failed_count || 0,
+      rejected: aggWithdrawals?.rejected_count || 0,
+      confirmed_amount: aggWithdrawals?.confirmed_amount || 0,
+    },
+    addresses_active: addrCount?.n || 0,
+    users,
+    query: q || null,
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /qta/admin/health
+//   Chain state + 24h tick statistics (deposits credited, withdrawals
+//   broadcast, errors, latest tick freshness).
+// ---------------------------------------------------------------------------
+chain.get('/qta/admin/health', authMiddleware, adminMiddleware, async (c) => {
+  const network = currentNetwork(c.env);
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
+  const state = await c.env.DB.prepare(
+    `SELECT network, last_scanned_block, head_block, hot_wallet_addr,
+            hot_wallet_balance, validators_online, signature_scheme,
+            block_time_ms, required_confs, last_tick_at, last_error, updated_at
+     FROM qta_chain_state
+     WHERE network = ?`
+  ).bind(network).first<any>();
+
+  const credited24h = await c.env.DB.prepare(
+    `SELECT COUNT(*) AS n,
+            COALESCE(SUM(CAST(amount AS REAL)), 0) AS total_amount
+     FROM qta_deposits
+     WHERE network = ? AND status = 'credited' AND credited_at >= ?`
+  ).bind(network, since).first<any>();
+
+  const broadcast24h = await c.env.DB.prepare(
+    `SELECT COUNT(*) AS n,
+            COALESCE(SUM(CAST(amount AS REAL)), 0) AS total_amount
+     FROM qta_withdrawals
+     WHERE network = ? AND broadcast_at >= ?`
+  ).bind(network, since).first<any>();
+
+  const failed24h = await c.env.DB.prepare(
+    `SELECT COUNT(*) AS n
+     FROM qta_withdrawals
+     WHERE network = ? AND status = 'failed' AND updated_at >= ?`
+  ).bind(network, since).first<any>();
+
+  // Tick freshness — derive seconds since last_tick_at
+  let tick_age_sec: number | null = null;
+  if (state?.last_tick_at) {
+    const t = new Date(state.last_tick_at).getTime();
+    if (!isNaN(t)) tick_age_sec = Math.max(0, Math.floor((Date.now() - t) / 1000));
+  }
+
+  // Health rollup: ok if tick within last 10 min and no last_error.
+  const STALE_SECS = 600;
+  const status =
+    !state ? 'unknown'
+    : state.last_error ? 'error'
+    : tick_age_sec === null ? 'idle'
+    : tick_age_sec > STALE_SECS ? 'stale'
+    : 'ok';
+
+  return c.json({
+    ok: true,
+    status,
+    network,
+    state: state || null,
+    tick_age_sec,
+    stats_24h: {
+      deposits_credited: credited24h?.n || 0,
+      deposits_credited_amount: credited24h?.total_amount || 0,
+      withdrawals_broadcast: broadcast24h?.n || 0,
+      withdrawals_broadcast_amount: broadcast24h?.total_amount || 0,
+      withdrawals_failed: failed24h?.n || 0,
+    },
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /qta/admin/deposits
+//   Recent deposits across all users (audit / forensics).
+//   Optional ?status=credited|confirming|detected|orphaned, ?limit=200
+// ---------------------------------------------------------------------------
+chain.get('/qta/admin/deposits', authMiddleware, adminMiddleware, async (c) => {
+  const network = currentNetwork(c.env);
+  const status = (c.req.query('status') || '').trim();
+  const limit = Math.min(parseInt(c.req.query('limit') || '50', 10) || 50, 200);
+
+  let sql = `SELECT d.id, d.user_id, u.email, d.address, d.tx_hash, d.block_height,
+                    d.amount, d.confirmations, d.required_confs, d.status,
+                    d.credited_at, d.network, d.created_at
+             FROM qta_deposits d
+             LEFT JOIN users u ON u.id = d.user_id
+             WHERE d.network = ?`;
+  const binds: any[] = [network];
+  if (status) { sql += ` AND d.status = ?`; binds.push(status); }
+  sql += ` ORDER BY d.created_at DESC LIMIT ?`;
+  binds.push(limit);
+
+  const { results } = await c.env.DB.prepare(sql).bind(...binds).all<any>();
+  return c.json({ ok: true, deposits: results || [], count: (results || []).length });
 });
 
 // ---------------------------------------------------------------------------
