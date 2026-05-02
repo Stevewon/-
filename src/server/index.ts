@@ -13,6 +13,7 @@ import riskRoutes from './routes/risk';
 import bridgeRoutes from './routes/bridge';
 import futuresRoutes from './routes/futures';
 import marginRoutes from './routes/margin';
+import v1Routes from './routes/v1';
 import { installObservability, captureError } from './utils/observability';
 
 export type Env = {
@@ -38,7 +39,19 @@ export type Env = {
 };
 
 export type AppVars = {
-  user: { id: string; email: string; role: string };
+  // JWT path sets the slim shape; api-key path sets the extended shape with
+  // `via: 'api_key'`. Optional fields keep both call-sites compatible.
+  user: {
+    id: string;
+    email: string;
+    role: string;
+    tv?: number;
+    via?: 'jwt' | 'api_key';
+    api_key_id?: string;
+  };
+  // Sprint 5 Phase I1 — set by src/server/middleware/api-key-auth.ts.
+  apiKey?: import('./middleware/api-key-auth').ApiKeyRecord;
+  apiKeyBody?: string;
 };
 
 export type AppEnv = { Bindings: Env; Variables: AppVars };
@@ -131,6 +144,7 @@ app.route('/api/risk', riskRoutes);
 app.route('/api/bridge', bridgeRoutes);
 app.route('/api/futures', futuresRoutes);
 app.route('/api/margin', marginRoutes);
+app.route('/api/v1', v1Routes);
 
 // ============================================================================
 // Health checks (Sprint 3+ #3)
