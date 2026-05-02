@@ -1,5 +1,5 @@
 import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
-import { BarChart3, Wallet, LayoutGrid, Shield, LogIn, LogOut, User, ClipboardList } from 'lucide-react';
+import { BarChart3, Wallet, LayoutGrid, Shield, LogIn, LogOut, User, ClipboardList, TrendingUp, Layers } from 'lucide-react';
 import useStore from '../../store/useStore';
 import { useI18n } from '../../i18n';
 import QuantaLogo from '../common/QuantaLogo';
@@ -26,6 +26,8 @@ export default function Layout() {
     { path: '/trade/BTC-USDT', label: t('nav.trade'), icon: BarChart3 },
     { path: '/markets', label: t('nav.markets'), icon: LayoutGrid },
     ...(user ? [
+      { path: '/futures', label: t('futures.title') || 'Futures', icon: TrendingUp },
+      { path: '/margin', label: t('margin.title') || 'Margin', icon: Layers },
       { path: '/orders', label: t('nav.orders'), icon: ClipboardList },
       { path: '/wallet', label: t('nav.wallet'), icon: Wallet },
     ] : []),

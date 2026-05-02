@@ -2787,19 +2787,19 @@ function FuturesMarketsTab({ t }: any) {
   async function togglePause() {
     try {
       await api.post('/futures/admin/pause', { paused: !paused });
-      toast.success(!paused ? t('admin.futuresPaused') : t('admin.futuresActive'));
+      showToast('success', !paused ? t('admin.futuresPaused') : t('admin.futuresActive'));
       load();
-    } catch (e: any) { toast.error(e?.response?.data?.error || 'Failed'); }
+    } catch (e: any) { showToast('error', e?.response?.data?.error || 'Failed'); }
   }
 
   async function upsert() {
-    if (!form.symbol) { toast.error('symbol'); return; }
+    if (!form.symbol) { showToast('error', 'symbol'); return; }
     try {
       await api.post('/futures/admin/contracts', form);
-      toast.success('OK');
+      showToast('success', 'OK');
       setShowAdd(false);
       load();
-    } catch (e: any) { toast.error(e?.response?.data?.error || 'Failed'); }
+    } catch (e: any) { showToast('error', e?.response?.data?.error || 'Failed'); }
   }
 
   return (
@@ -2887,9 +2887,9 @@ function FuturesPositionsTab({ t }: any) {
     if (!mark) return;
     try {
       await api.post(`/futures/admin/positions/${id}/liquidate`, { mark_price: mark });
-      toast.success('OK');
+      showToast('success', 'OK');
       load();
-    } catch (e: any) { toast.error(e?.response?.data?.error || 'Failed'); }
+    } catch (e: any) { showToast('error', e?.response?.data?.error || 'Failed'); }
   }
 
   const rows = tab === 'risk' ? atRisk : positions;
@@ -3092,9 +3092,9 @@ function MarginAccountsTab({ t }: any) {
   async function togglePause() {
     try {
       await api.post('/margin/admin/pause', { paused: !paused });
-      toast.success(!paused ? t('admin.marginPaused') : t('admin.marginActive'));
+      showToast('success', !paused ? t('admin.marginPaused') : t('admin.marginActive'));
       setPaused(!paused);
-    } catch (e: any) { toast.error(e?.response?.data?.error || 'Failed'); }
+    } catch (e: any) { showToast('error', e?.response?.data?.error || 'Failed'); }
   }
 
   return (

@@ -32,6 +32,8 @@ const ForgotPasswordPage = lazy(() => import('./pages/ForgotPasswordPage'));
 const ResetPasswordPage = lazy(() => import('./pages/ResetPasswordPage'));
 const VerifyEmailPage = lazy(() => import('./pages/VerifyEmailPage'));
 const NotFoundPage = lazy(() => import('./pages/NotFoundPage'));
+const FuturesPage = lazy(() => import('./pages/FuturesPage'));
+const MarginPage = lazy(() => import('./pages/MarginPage'));
 
 // Loading fallback
 function PageLoader() {
@@ -94,6 +96,8 @@ export default function App() {
           <Route path="profile/notifications" element={<ProtectedRoute><NotificationSettingsPage /></ProtectedRoute>} />
           <Route path="profile/price-alerts" element={<ProtectedRoute><PriceAlertsPage /></ProtectedRoute>} />
           <Route path="wallet" element={<ProtectedRoute><WalletPage /></ProtectedRoute>} />
+          <Route path="futures" element={<ProtectedRoute><FuturesPage /></ProtectedRoute>} />
+          <Route path="margin" element={<ProtectedRoute><MarginPage /></ProtectedRoute>} />
           <Route path="admin" element={<ProtectedRoute><AdminPage /></ProtectedRoute>} />
           <Route path="*" element={<NotFoundPage />} />
         </Route>
