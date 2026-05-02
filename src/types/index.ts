@@ -27,6 +27,8 @@ export interface LoginHistoryEntry {
   created_at: string;
 }
 
+export type ApiKeySignatureAlg = 'hmac-sha256' | 'dilithium2' | 'hybrid';
+
 export interface ApiKey {
   id: string;
   user_id: string;
@@ -38,6 +40,11 @@ export interface ApiKey {
   last_used_at: string | null;
   created_at: string;
   expires_at: string | null;
+  // Sprint 4 Phase H2 — PQ fields (nullable for legacy rows)
+  signature_alg?: ApiKeySignatureAlg;
+  public_key?: string | null;
+  pq_key_version?: number;
+  last_pq_verify_at?: number | null;
 }
 
 export interface Coin {

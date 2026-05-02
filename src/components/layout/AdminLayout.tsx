@@ -5,7 +5,7 @@ import {
   BarChart3, Coins, Megaphone, Receipt, FileText, Server,
   RefreshCw, Bell, ExternalLink, LogOut, Menu, X, Monitor,
   Wallet as WalletIcon, ListChecks, Link2, ShieldAlert, Repeat,
-  TrendingUp, Layers, Zap, Percent,
+  TrendingUp, Layers, Zap, Percent, KeyRound,
 } from 'lucide-react';
 import useStore from '../../store/useStore';
 import { useI18n } from '../../i18n';
@@ -20,7 +20,9 @@ export type AdminTab =
   | 'bridge'
   // Sprint 4 Phase H1 — Futures + Margin
   | 'futuresMarkets' | 'futuresPositions' | 'liquidations' | 'fundingHistory'
-  | 'marginAccounts';
+  | 'marginAccounts'
+  // Sprint 4 Phase H2 — PQ API keys
+  | 'pqApiKeys';
 
 interface Props {
   active: AdminTab;
@@ -90,6 +92,12 @@ export default function AdminLayout({
         { key: 'liquidations',     label: t('admin.liquidations'),     icon: Zap },
         { key: 'fundingHistory',   label: t('admin.fundingHistory'),   icon: Percent },
         { key: 'marginAccounts',   label: t('admin.marginAccounts'),   icon: WalletIcon },
+      ],
+    },
+    {
+      title: t('admin.groupSecurity'),
+      items: [
+        { key: 'pqApiKeys', label: t('admin.pqApiKeys'), icon: KeyRound },
       ],
     },
     {

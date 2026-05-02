@@ -111,6 +111,7 @@ export default function AdminPage() {
       {tab === 'liquidations'     && <LiquidationsTab t={t} />}
       {tab === 'fundingHistory'   && <FundingHistoryTab t={t} />}
       {tab === 'marginAccounts'   && <MarginAccountsTab t={t} />}
+      {tab === 'pqApiKeys'        && <PqApiKeysTab t={t} />}
     </AdminLayout>
   );
 }
@@ -3153,6 +3154,149 @@ function MarginAccountsTab({ t }: any) {
             })}
           </tbody>
         </table>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// Sprint 4 Phase H2-B — Admin: PQ API key observability tab
+// Backed by GET /api/admin/api-keys/stats. Read-only in this phase; flipping
+// pq_api_keys_required / pq_api_keys_wasm_ready will land in a follow-up
+// sprint together with the WASM Dilithium2 verifier.
+// ============================================================================
+function PqApiKeysTab({ t }: any) {
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const res = await api.get('/admin/api-keys/stats');
+      setData(res.data);
+    } catch (e: any) {
+      showToast('error', t('admin.pqApiKeys'), e?.response?.data?.error || 'Failed');
+    }
+    setLoading(false);
+  };
+  useEffect(() => {
+    load();
+    const id = setInterval(load, 30000);
+    return () => clearInterval(id);
+  }, []);
+
+  const dist = data?.distribution || { 'hmac-sha256': 0, 'dilithium2': 0, 'hybrid': 0 };
+  const totalKeys = (dist['hmac-sha256'] || 0) + (dist['dilithium2'] || 0) + (dist['hybrid'] || 0);
+  const pct = (n: number) => (totalKeys > 0 ? Math.round((n / totalKeys) * 100) : 0);
+  const m = data?.markers || { enabled: false, required: false, wasm_ready: false, integration_phase: 'phase-h2-stub' };
+  const audit = data?.pq_audit_24h || { total: 0, by_outcome: [] };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-bold text-exchange-text">{t('admin.pqApiKeys')}</h2>
+          <p className="text-xs text-exchange-text-third mt-0.5">{t('admin.pqApiKeysDesc')}</p>
+        </div>
+        <button
+          onClick={load}
+          disabled={loading}
+          className="px-3 py-1.5 text-xs rounded-lg bg-exchange-hover hover:bg-exchange-hover/70 text-exchange-text-secondary disabled:opacity-50"
+        >
+          {loading ? '...' : t('admin.refresh')}
+        </button>
+      </div>
+
+      {/* Marker / phase summary */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <Card label={t('admin.pqIntegrationPhase')} value={m.integration_phase || 'phase-h2-stub'} pill />
+        <Card label={t('admin.pqEnabled')} value={m.enabled ? 'on' : 'off'} pill />
+        <Card label={t('admin.pqRequired')} value={m.required ? 'on' : 'off'} pill />
+        <Card label={t('admin.pqWasmReady')} value={m.wasm_ready ? 'on' : 'off'} pill />
+      </div>
+
+      {/* Algorithm distribution */}
+      <div className="rounded-xl border border-exchange-border bg-exchange-card p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold text-exchange-text">{t('admin.pqDistribution')}</h3>
+          <span className="text-[11px] text-exchange-text-third">
+            {t('admin.pqDistTotal')}: <span className="text-exchange-text font-semibold">{totalKeys}</span>
+          </span>
+        </div>
+        <div className="space-y-3">
+          {(['hmac-sha256', 'dilithium2', 'hybrid'] as const).map((alg) => {
+            const n = dist[alg] || 0;
+            const p = pct(n);
+            const colorBar =
+              alg === 'hmac-sha256' ? 'bg-exchange-text-third' :
+              alg === 'dilithium2'  ? 'bg-purple-500' :
+                                      'bg-amber-500';
+            const colorTxt =
+              alg === 'hmac-sha256' ? 'text-exchange-text-secondary' :
+              alg === 'dilithium2'  ? 'text-purple-400' :
+                                      'text-amber-400';
+            return (
+              <div key={alg}>
+                <div className="flex items-center justify-between text-xs mb-1">
+                  <span className={`font-semibold ${colorTxt}`}>{t(`apikey.alg_${alg.replace('-', '_')}`)}</span>
+                  <span className="text-exchange-text-third">
+                    <span className="text-exchange-text font-semibold">{n}</span> ({p}%)
+                  </span>
+                </div>
+                <div className="h-2 rounded-full bg-exchange-hover overflow-hidden">
+                  <div className={`h-full ${colorBar}`} style={{ width: `${p}%` }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* PQ audit (last 24h) */}
+      <div className="rounded-xl border border-exchange-border bg-exchange-card p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold text-exchange-text">{t('admin.pqAudit24h')}</h3>
+          <span className="text-[11px] text-exchange-text-third">
+            {t('admin.pqAuditTotal')}: <span className="text-exchange-text font-semibold">{audit.total || 0}</span>
+          </span>
+        </div>
+        {(audit.by_outcome || []).length === 0 ? (
+          <p className="text-xs text-exchange-text-third">{t('admin.pqAuditEmpty')}</p>
+        ) : (
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-left text-exchange-text-third border-b border-exchange-border">
+                <th className="py-1.5 font-medium">{t('admin.pqAuditOutcome')}</th>
+                <th className="py-1.5 font-medium text-right">{t('admin.pqAuditCount')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {audit.by_outcome.map((row: any) => (
+                <tr key={row.outcome} className="border-b border-exchange-border/50">
+                  <td className="py-1.5">
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                      row.outcome === 'ok'                ? 'bg-exchange-buy/10 text-exchange-buy' :
+                      row.outcome === 'wasm_unavailable'  ? 'bg-exchange-yellow/10 text-exchange-yellow' :
+                      row.outcome === 'expired'           ? 'bg-amber-500/10 text-amber-400' :
+                      row.outcome === 'replay'            ? 'bg-exchange-sell/10 text-exchange-sell' :
+                                                            'bg-exchange-sell/10 text-exchange-sell'
+                    }`}>
+                      {row.outcome}
+                    </span>
+                  </td>
+                  <td className="py-1.5 text-right font-mono">{row.n}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Stub-phase notice */}
+      <div className="rounded-xl border border-purple-500/30 bg-purple-500/5 p-4">
+        <p className="text-xs text-purple-300 leading-relaxed">
+          <span className="font-semibold">{t('admin.pqStubTitle')}</span> {t('admin.pqStubBody')}
+        </p>
       </div>
     </div>
   );
