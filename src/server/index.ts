@@ -9,6 +9,7 @@ import notificationRoutes from './routes/notifications';
 import priceAlertRoutes from './routes/priceAlerts';
 import profileRoutes from './routes/profile';
 import chainRoutes from './routes/chain';
+import riskRoutes from './routes/risk';
 import { installObservability, captureError } from './utils/observability';
 
 export type Env = {
@@ -117,6 +118,7 @@ app.route('/api/notifications', notificationRoutes);
 app.route('/api/price-alerts', priceAlertRoutes);
 app.route('/api/profile', profileRoutes);
 app.route('/api/chain', chainRoutes);
+app.route('/api/risk', riskRoutes);
 
 // ============================================================================
 // Health checks (Sprint 3+ #3)
