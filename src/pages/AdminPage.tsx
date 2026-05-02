@@ -6,6 +6,7 @@ import {
   Coins, Send, ArrowDownToLine, Megaphone, Wallet, Hash, Bell,
   FileText, Receipt, Server, Database, HardDrive,
   Shield, AlertTriangle, Zap, Plus, Trash2,
+  Repeat, ArrowRightLeft, Pause, Play,
 } from 'lucide-react';
 import useStore from '../store/useStore';
 import { useI18n } from '../i18n';
@@ -103,6 +104,7 @@ export default function AdminPage() {
       {tab === 'chainWallets' && <ChainWalletsTab t={t} />}
       {tab === 'chainQueue'   && <ChainQueueTab t={t} />}
       {tab === 'chainHealth'  && <ChainHealthTab t={t} />}
+      {tab === 'bridge'       && <BridgeTab t={t} />}
       {tab === 'risk'         && <RiskTab t={t} />}
     </AdminLayout>
   );
@@ -2465,6 +2467,289 @@ function RiskTab({ t }: any) {
             </table>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// BridgeTab — Sprint 4 Phase G — QTA <-> ETH bridge admin
+// ---------------------------------------------------------------------------
+function BridgeTab({ t }: any) {
+  const [data, setData] = useState<any>(null);
+  const [pubState, setPubState] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [direction, setDirection] = useState<string>('');
+  const [status, setStatus] = useState<string>('');
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (status) params.set('status', status);
+      if (direction) params.set('direction', direction);
+      const [r1, r2] = await Promise.all([
+        api.get(`/bridge/admin/transfers?${params.toString()}`),
+        api.get('/bridge/state'),
+      ]);
+      setData(r1.data || null);
+      setPubState(r2.data?.state || null);
+    } catch (e: any) {
+      if (e.response?.status !== 401) {
+        showToast('error', t('common.error'), e.response?.data?.error || 'Failed');
+      }
+      setData(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => {
+    load();
+    const id = setInterval(load, 15_000);
+    return () => clearInterval(id);
+  }, [status, direction]);
+
+  const advance = async (id: string) => {
+    setBusy(id);
+    try {
+      const r = await api.post(`/bridge/admin/transfers/${id}/advance`);
+      showToast('success', t('admin.bridgeAdvanced'), r.data?.transfer?.status || '');
+      load();
+    } catch (e: any) {
+      showToast('error', t('common.error'), e.response?.data?.error || 'Failed');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const fail = async (id: string) => {
+    const reason = prompt(t('admin.bridgeFailReason') || 'Reason?') || '';
+    if (!reason) return;
+    setBusy(id);
+    try {
+      await api.post(`/bridge/admin/transfers/${id}/fail`, { reason });
+      showToast('success', t('admin.bridgeFailed'), '');
+      load();
+    } catch (e: any) {
+      showToast('error', t('common.error'), e.response?.data?.error || 'Failed');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const togglePause = async (paused: boolean) => {
+    setBusy('pause');
+    try {
+      await api.post('/bridge/admin/pause', { paused });
+      showToast(
+        'success',
+        paused ? t('admin.bridgePaused') : t('admin.bridgeResumed'),
+        ''
+      );
+      load();
+    } catch (e: any) {
+      showToast('error', t('common.error'), e.response?.data?.error || 'Failed');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  if (!data || !pubState) {
+    return <div className="p-12 text-center text-exchange-text-third">{loading ? t('common.loading') : '—'}</div>;
+  }
+
+  const agg = data.aggregate || {};
+  const br = data.bridge || {};
+  const paused = !!pubState.paused;
+  const transfers = data.transfers || [];
+
+  const DIRECTIONS: Array<{ key: string; label: string }> = [
+    { key: '',           label: t('admin.bridgeAll') },
+    { key: 'qta_to_eth', label: t('admin.bridgeQtaToEth') },
+    { key: 'eth_to_qta', label: t('admin.bridgeEthToQta') },
+  ];
+  const STATUSES: Array<{ key: string; label: string }> = [
+    { key: '',             label: t('admin.bridgeAll') },
+    { key: 'pending_lock', label: 'pending_lock' },
+    { key: 'locked',       label: 'locked' },
+    { key: 'minting',      label: 'minting' },
+    { key: 'minted',       label: 'minted' },
+    { key: 'pending_burn', label: 'pending_burn' },
+    { key: 'burned',       label: 'burned' },
+    { key: 'releasing',    label: 'releasing' },
+    { key: 'released',     label: 'released' },
+    { key: 'failed',       label: 'failed' },
+  ];
+
+  return (
+    <div className="space-y-6">
+      {/* Hero — bridge status */}
+      <div className={`rounded-2xl border-2 p-6 flex items-center gap-5 ${
+        paused
+          ? 'bg-gradient-to-br from-exchange-sell/10 to-exchange-sell/5 border-exchange-sell/40'
+          : 'bg-gradient-to-br from-exchange-yellow/10 to-exchange-yellow/5 border-exchange-yellow/30'
+      }`}>
+        <div className={`w-14 h-14 rounded-2xl flex items-center justify-center ${
+          paused ? 'bg-exchange-sell/20 text-exchange-sell' : 'bg-exchange-yellow/20 text-exchange-yellow'
+        }`}>
+          <ArrowRightLeft size={26} />
+        </div>
+        <div className="flex-1">
+          <div className="flex items-center gap-2">
+            <div className="text-xl font-bold">{t('admin.bridge')}</div>
+            <span className={`text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full font-semibold ${
+              paused
+                ? 'bg-exchange-sell/20 text-exchange-sell'
+                : 'bg-exchange-buy/20 text-exchange-buy'
+            }`}>
+              {paused ? t('admin.bridgePausedLabel') : t('admin.bridgeActiveLabel')}
+            </span>
+          </div>
+          <div className="text-xs text-exchange-text-third mt-1">
+            {data.network} · {pubState.integration_phase} · fee {br.fee_bps ?? 30} bps
+          </div>
+        </div>
+        <button
+          onClick={() => togglePause(!paused)}
+          disabled={busy === 'pause'}
+          className={`px-4 py-2 rounded-lg text-xs font-semibold disabled:opacity-50 ${
+            paused
+              ? 'bg-exchange-buy/20 text-exchange-buy hover:bg-exchange-buy/30'
+              : 'bg-exchange-sell/20 text-exchange-sell hover:bg-exchange-sell/30'
+          }`}
+        >
+          {paused
+            ? <><Play size={12} className="inline mr-1" />{t('admin.bridgeResume')}</>
+            : <><Pause size={12} className="inline mr-1" />{t('admin.bridgePause')}</>
+          }
+        </button>
+        <button
+          onClick={load}
+          className="text-xs px-3 py-1.5 rounded-lg border border-exchange-border hover:bg-exchange-hover/40"
+        >
+          <RefreshCw size={12} className={`inline mr-1 ${loading ? 'animate-spin' : ''}`} />
+          {t('common.refresh')}
+        </button>
+      </div>
+
+      {/* KPI grid */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <Card label={t('admin.bridgeTotalLocked')}  value={`${br.total_locked || '0'} QTA`} />
+        <Card label={t('admin.bridgeTotalMinted')}  value={`${br.total_minted || '0'} qQTA`} />
+        <Card label={t('admin.bridgeTransfers')}    value={String(agg.total ?? 0)} />
+        <Card label={t('admin.bridgePending')}      value={String(agg.pending ?? 0)} />
+        <Card label={t('admin.bridgeInFlight')}     value={String(agg.in_flight ?? 0)} />
+        <Card label={t('admin.bridgeBroadcasting')} value={String(agg.broadcasting ?? 0)} />
+        <Card label={t('admin.bridgeCompleted')}    value={String(agg.completed ?? 0)} />
+        <Card label={t('admin.bridgeFailedKpi')}    value={String(agg.failed ?? 0)} />
+      </div>
+
+      {/* Filters */}
+      <div className="rounded-xl border border-exchange-border bg-exchange-card p-3 flex flex-wrap items-center gap-3">
+        <div className="text-[11px] uppercase tracking-wider text-exchange-text-third">
+          {t('admin.bridgeDirection')}
+        </div>
+        <div className="flex flex-wrap gap-1">
+          {DIRECTIONS.map((d) => (
+            <button
+              key={d.key || 'all-d'}
+              onClick={() => setDirection(d.key)}
+              className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold ${
+                direction === d.key
+                  ? 'bg-exchange-yellow/20 text-exchange-yellow'
+                  : 'text-exchange-text-secondary hover:bg-exchange-hover/40'
+              }`}
+            >
+              {d.label}
+            </button>
+          ))}
+        </div>
+        <div className="text-[11px] uppercase tracking-wider text-exchange-text-third ml-2">
+          {t('admin.chainStatus')}
+        </div>
+        <select
+          value={status}
+          onChange={(e) => setStatus(e.target.value)}
+          className="px-2 py-1 text-[11px] rounded-lg bg-exchange-bg border border-exchange-border outline-none"
+        >
+          {STATUSES.map((s) => (
+            <option key={s.key || 'all'} value={s.key}>{s.label}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* Transfers table */}
+      <div className="rounded-xl border border-exchange-border bg-exchange-card overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-exchange-hover/40 text-[11px] uppercase tracking-wider text-exchange-text-third">
+            <tr>
+              <th className="text-left px-3 py-2.5">{t('admin.user')}</th>
+              <th className="text-center px-3 py-2.5">{t('admin.bridgeDirection')}</th>
+              <th className="text-right px-3 py-2.5">{t('admin.amount')}</th>
+              <th className="text-left px-3 py-2.5">QTA → / ← ETH</th>
+              <th className="text-center px-3 py-2.5">{t('admin.chainStatus')}</th>
+              <th className="text-center px-3 py-2.5">{t('admin.actions')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {transfers.length === 0 && (
+              <tr>
+                <td colSpan={6} className="text-center py-12 text-exchange-text-third">
+                  {loading ? t('common.loading') : t('admin.bridgeNoTransfers')}
+                </td>
+              </tr>
+            )}
+            {transfers.map((tr: any) => {
+              const dirArrow = tr.direction === 'qta_to_eth' ? '→ ETH' : '← QTA';
+              const isTerminal = tr.status === 'minted' || tr.status === 'released' ||
+                                 tr.status === 'failed' || tr.status === 'cancelled';
+              return (
+                <tr key={tr.id} className="border-t border-exchange-border">
+                  <td className="px-3 py-2 truncate max-w-[180px]">{tr.email || tr.user_id}</td>
+                  <td className="px-3 py-2 text-center text-[11px] font-semibold text-exchange-text-secondary">
+                    {dirArrow}
+                  </td>
+                  <td className="px-3 py-2 text-right font-semibold">{tr.amount}</td>
+                  <td className="px-3 py-2 font-mono text-[10px] truncate max-w-[260px] text-exchange-text-third">
+                    {tr.direction === 'qta_to_eth' ? (tr.eth_address || '—') : (tr.qta_address || '—')}
+                  </td>
+                  <td className="px-3 py-2 text-center">
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${
+                      tr.status === 'minted' || tr.status === 'released'
+                        ? 'bg-exchange-buy/20 text-exchange-buy'
+                        : tr.status === 'failed'
+                        ? 'bg-exchange-sell/20 text-exchange-sell'
+                        : 'bg-exchange-yellow/15 text-exchange-yellow'
+                    }`}>
+                      {tr.status}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2 text-center">
+                    {!isTerminal && (
+                      <>
+                        <button
+                          onClick={() => advance(tr.id)}
+                          disabled={busy === tr.id}
+                          className="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-exchange-buy/20 text-exchange-buy hover:bg-exchange-buy/30 disabled:opacity-50 mr-1.5"
+                        >
+                          {t('admin.bridgeAdvance')}
+                        </button>
+                        <button
+                          onClick={() => fail(tr.id)}
+                          disabled={busy === tr.id}
+                          className="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-exchange-sell/20 text-exchange-sell hover:bg-exchange-sell/30 disabled:opacity-50"
+                        >
+                          {t('admin.bridgeMarkFail')}
+                        </button>
+                      </>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   );

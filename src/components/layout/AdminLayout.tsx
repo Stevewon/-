@@ -4,7 +4,7 @@ import {
   Activity, Users, ShieldCheck, ArrowDownToLine, ArrowUpFromLine,
   BarChart3, Coins, Megaphone, Receipt, FileText, Server,
   RefreshCw, Bell, ExternalLink, LogOut, Menu, X, Monitor,
-  Wallet as WalletIcon, ListChecks, Link2, ShieldAlert,
+  Wallet as WalletIcon, ListChecks, Link2, ShieldAlert, Repeat,
 } from 'lucide-react';
 import useStore from '../../store/useStore';
 import { useI18n } from '../../i18n';
@@ -14,7 +14,9 @@ export type AdminTab =
   | 'overview' | 'users' | 'kyc' | 'deposits' | 'withdrawals'
   | 'trades' | 'coins' | 'broadcast' | 'fees' | 'audit' | 'system'
   // Sprint 4 Phase C — QTA chain admin
-  | 'chainWallets' | 'chainQueue' | 'chainHealth' | 'risk';
+  | 'chainWallets' | 'chainQueue' | 'chainHealth' | 'risk'
+  // Sprint 4 Phase G — QTA <-> ETH bridge
+  | 'bridge';
 
 interface Props {
   active: AdminTab;
@@ -72,6 +74,7 @@ export default function AdminLayout({
         { key: 'chainWallets', label: t('admin.chainWallets'), icon: WalletIcon },
         { key: 'chainQueue',   label: t('admin.chainQueue'),   icon: ListChecks },
         { key: 'chainHealth',  label: t('admin.chainHealth'),  icon: Link2 },
+        { key: 'bridge',       label: t('admin.bridge'),       icon: Repeat },
         { key: 'risk',         label: t('admin.risk'),         icon: ShieldAlert },
       ],
     },

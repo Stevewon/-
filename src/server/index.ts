@@ -10,6 +10,7 @@ import priceAlertRoutes from './routes/priceAlerts';
 import profileRoutes from './routes/profile';
 import chainRoutes from './routes/chain';
 import riskRoutes from './routes/risk';
+import bridgeRoutes from './routes/bridge';
 import { installObservability, captureError } from './utils/observability';
 
 export type Env = {
@@ -26,6 +27,12 @@ export type Env = {
   QTA_NETWORK?: string;             // 'qta-mainnet' | 'qta-testnet'
   QTA_RPC_URL?: string;
   QTA_HOT_WALLET_PRIVATE_KEY?: string;
+  // Sprint 4 Phase G — QTA <-> ETH bridge (all optional, mock by default)
+  BRIDGE_DRIVER?: string;           // 'mock' | 'real'
+  BRIDGE_NETWORK?: string;          // 'mainnet' | 'sepolia'
+  ETH_RPC_URL?: string;
+  BRIDGE_PRIVATE_KEY?: string;      // bridge custodian wallet (signs mint/burn)
+  QQTA_CONTRACT_ADDR?: string;
 };
 
 export type AppVars = {
@@ -119,6 +126,7 @@ app.route('/api/price-alerts', priceAlertRoutes);
 app.route('/api/profile', profileRoutes);
 app.route('/api/chain', chainRoutes);
 app.route('/api/risk', riskRoutes);
+app.route('/api/bridge', bridgeRoutes);
 
 // ============================================================================
 // Health checks (Sprint 3+ #3)
