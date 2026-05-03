@@ -34,6 +34,7 @@ const VerifyEmailPage = lazy(() => import('./pages/VerifyEmailPage'));
 const NotFoundPage = lazy(() => import('./pages/NotFoundPage'));
 const FuturesPage = lazy(() => import('./pages/FuturesPage'));
 const MarginPage = lazy(() => import('./pages/MarginPage'));
+const AdminLoginPage = lazy(() => import('./pages/AdminLoginPage'));
 
 // Loading fallback
 function PageLoader() {
@@ -50,6 +51,19 @@ function PageLoader() {
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const user = useStore((s) => s.user);
   if (!user) return <Navigate to="/login" replace />;
+  return <>{children}</>;
+}
+
+/**
+ * /admin gate — sends unauthenticated visitors to /admin/login (NOT the
+ * public /login form), and bounces non-admin users back to the trade
+ * dashboard. This keeps the admin entry point a single self-contained URL
+ * and never leaks admin URLs into the public marketing login.
+ */
+function AdminProtectedRoute({ children }: { children: React.ReactNode }) {
+  const user = useStore((s) => s.user);
+  if (!user) return <Navigate to="/admin/login" replace />;
+  if (user.role !== 'admin') return <Navigate to="/trade/BTC-USDT" replace />;
   return <>{children}</>;
 }
 
@@ -72,6 +86,7 @@ export default function App() {
         {/* Standalone pages (no Layout header/footer) */}
         <Route path="/home" element={<HomePage />} />
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/admin/login" element={<AdminLoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
@@ -98,7 +113,7 @@ export default function App() {
           <Route path="wallet" element={<ProtectedRoute><WalletPage /></ProtectedRoute>} />
           <Route path="futures" element={<ProtectedRoute><FuturesPage /></ProtectedRoute>} />
           <Route path="margin" element={<ProtectedRoute><MarginPage /></ProtectedRoute>} />
-          <Route path="admin" element={<ProtectedRoute><AdminPage /></ProtectedRoute>} />
+          <Route path="admin" element={<AdminProtectedRoute><AdminPage /></AdminProtectedRoute>} />
           <Route path="*" element={<NotFoundPage />} />
         </Route>
       </Routes>

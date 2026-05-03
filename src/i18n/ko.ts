@@ -1149,6 +1149,14 @@ const ko = {
   'admin.pqStubTitle': 'phase-h2-stub:',
   'admin.pqStubBody': '현재 단계에서는 스키마와 UI만 활성화되어 있고, 실제 Dilithium2 서명 검증은 다음 스프린트에서 WASM 모듈과 함께 활성화됩니다. 기존 HMAC 키는 100% 호환됩니다.',
 
+  // Admin — dedicated login page (/admin/login)
+  'admin.loginTitle': '관리자 콘솔',
+  'admin.loginHeading': '관리자로 로그인',
+  'admin.loginSubheading': '관리자 권한을 가진 운영자만 접근할 수 있습니다. 모든 작업은 감사 로그에 기록됩니다.',
+  'admin.loginCta': '관리자로 로그인',
+  'admin.loginNotAdmin': '이 계정은 관리자 권한이 없습니다.',
+  'admin.loginAuditNotice': '모든 로그인 시도는 감사 로그에 기록됩니다.',
+
   // Admin — External Trading API (Sprint 5 Phase I1)
   'admin.extTradingApi': '외부 트레이딩 API',
   'admin.extTradingApiDesc': 'HMAC 서명 기반 /api/v1/* 게이트의 상태와 활동을 모니터링합니다.',

@@ -1158,6 +1158,14 @@ const en = {
   'admin.pqStubTitle': 'phase-h2-stub:',
   'admin.pqStubBody': 'In this phase only the schema and UI are live; actual Dilithium2 verification ships next sprint together with the WASM module. Existing HMAC keys remain 100% compatible.',
 
+  // Admin — dedicated login page (/admin/login)
+  'admin.loginTitle': 'Admin Console',
+  'admin.loginHeading': 'Sign in to administer',
+  'admin.loginSubheading': 'Restricted to operators with the admin role. All actions are audit-logged.',
+  'admin.loginCta': 'Sign in to admin',
+  'admin.loginNotAdmin': 'This account does not have administrator privileges.',
+  'admin.loginAuditNotice': 'Every login attempt is recorded in the audit log.',
+
   // Admin — External Trading API (Sprint 5 Phase I1)
   'admin.extTradingApi': 'External Trading API',
   'admin.extTradingApiDesc': 'Monitor the HMAC-signed /api/v1/* gate state and activity.',
