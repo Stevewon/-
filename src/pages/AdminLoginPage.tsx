@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Eye, EyeOff, Lock, Mail, ShieldCheck, AlertCircle } from 'lucide-react';
+import { Eye, EyeOff, ShieldCheck, AlertCircle } from 'lucide-react';
 import useStore from '../store/useStore';
 import { useI18n } from '../i18n';
 import api from '../utils/api';
@@ -125,18 +125,14 @@ export default function AdminLoginPage() {
               <label className="text-[11px] font-medium text-exchange-text-secondary uppercase tracking-wider">
                 {t('auth.email') || 'Email'}
               </label>
-              <div className="relative mt-2">
-                <Mail className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-exchange-text-third" />
-                <input
-                  type="email"
-                  autoComplete="username"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="admin@quantaex.io"
-                  className="w-full pl-12 pr-4 py-3.5 text-base rounded-xl bg-exchange-bg border border-exchange-border text-exchange-text placeholder:text-exchange-text-third/60 focus:border-exchange-yellow/60 focus:outline-none"
-                  disabled={loading || needs2fa}
-                />
-              </div>
+              <input
+                type="email"
+                autoComplete="username"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full mt-2 px-4 py-3.5 text-base rounded-xl bg-exchange-bg border border-exchange-border text-exchange-text focus:border-exchange-yellow/60 focus:outline-none"
+                disabled={loading || needs2fa}
+              />
             </div>
 
             {/* Password */}
@@ -145,7 +141,6 @@ export default function AdminLoginPage() {
                 {t('auth.password') || 'Password'}
               </label>
               <div className="relative mt-2">
-                <Lock className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-exchange-text-third" />
                 <input
                   type={showPw ? 'text' : 'password'}
                   autoComplete="current-password"
@@ -153,8 +148,7 @@ export default function AdminLoginPage() {
                   onChange={(e) => setPassword(e.target.value)}
                   onKeyDown={onPwKey}
                   onKeyUp={onPwKey}
-                  placeholder="••••••••"
-                  className="w-full pl-12 pr-12 py-3.5 text-base rounded-xl bg-exchange-bg border border-exchange-border text-exchange-text placeholder:text-exchange-text-third/60 focus:border-exchange-yellow/60 focus:outline-none"
+                  className="w-full px-4 pr-12 py-3.5 text-base rounded-xl bg-exchange-bg border border-exchange-border text-exchange-text focus:border-exchange-yellow/60 focus:outline-none"
                   disabled={loading || needs2fa}
                 />
                 <button
