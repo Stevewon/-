@@ -130,7 +130,7 @@ export default function AdminLoginPage() {
                 autoComplete="username"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full mt-2 px-4 py-3.5 text-base rounded-xl bg-exchange-bg border border-exchange-border text-exchange-text focus:border-exchange-yellow/60 focus:outline-none"
+                className="w-full mt-2 pl-2 pr-4 py-3.5 text-base rounded-xl bg-exchange-bg border border-exchange-border text-exchange-text focus:border-exchange-yellow/60 focus:outline-none"
                 disabled={loading || needs2fa}
               />
             </div>
@@ -148,7 +148,7 @@ export default function AdminLoginPage() {
                   onChange={(e) => setPassword(e.target.value)}
                   onKeyDown={onPwKey}
                   onKeyUp={onPwKey}
-                  className="w-full px-4 pr-12 py-3.5 text-base rounded-xl bg-exchange-bg border border-exchange-border text-exchange-text focus:border-exchange-yellow/60 focus:outline-none"
+                  className="w-full pl-2 pr-12 py-3.5 text-base rounded-xl bg-exchange-bg border border-exchange-border text-exchange-text focus:border-exchange-yellow/60 focus:outline-none"
                   disabled={loading || needs2fa}
                 />
                 <button
