@@ -104,80 +104,22 @@ export default function AdminLoginPage() {
   };
 
   return (
-    <div className="min-h-screen w-full flex items-center justify-center bg-exchange-bg px-4 sm:px-6 py-10">
-      <div className="w-full max-w-[1400px] grid grid-cols-1 md:grid-cols-2 gap-8 lg:gap-12 items-stretch">
-        {/* LEFT — Brand / hero panel (hidden on phones, shown md+) */}
-        <div className="hidden md:flex flex-col justify-between rounded-3xl border border-exchange-border bg-gradient-to-br from-exchange-card via-exchange-card to-exchange-bg p-8 lg:p-12 shadow-xl overflow-hidden relative min-h-[520px]">
-          <div className="absolute -top-24 -right-24 w-72 h-72 rounded-full bg-exchange-yellow/10 blur-3xl pointer-events-none" />
-          <div className="absolute -bottom-24 -left-24 w-72 h-72 rounded-full bg-exchange-yellow/5 blur-3xl pointer-events-none" />
-
-          <div className="relative">
-            <div className="flex items-center gap-3 mb-8">
-              <div className="w-12 h-12 rounded-2xl bg-exchange-yellow/15 border border-exchange-yellow/30 flex items-center justify-center">
-                <ShieldCheck className="w-6 h-6 text-exchange-yellow" />
-              </div>
-              <div>
-                <div className="text-[11px] uppercase tracking-[0.22em] text-exchange-text-third">
-                  QuantaEX
-                </div>
-                <div className="text-xl font-bold text-exchange-text">
-                  {t('admin.loginTitle') || 'Admin Console'}
-                </div>
-              </div>
-            </div>
-
-            <h2 className="text-3xl lg:text-4xl xl:text-5xl font-extrabold text-exchange-text leading-tight mb-4">
-              {t('admin.loginHeroTitle') || 'Operate the exchange with confidence.'}
-            </h2>
-            <p className="text-base text-exchange-text-secondary leading-relaxed max-w-md">
-              {t('admin.loginHeroSubtitle') ||
-                'Restricted, audit-logged operator console for QuantaEX. Every action you take here is signed, time-stamped, and reviewable.'}
-            </p>
+    <div className="min-h-screen w-full flex items-center justify-center bg-exchange-bg px-4 py-10">
+      <div className="w-full max-w-md rounded-3xl border border-exchange-border bg-exchange-card p-10 shadow-2xl">
+        {/* Brand */}
+        <div className="flex flex-col items-center mb-8">
+          <div className="w-14 h-14 rounded-2xl bg-exchange-yellow/15 border border-exchange-yellow/30 flex items-center justify-center mb-4">
+            <ShieldCheck className="w-7 h-7 text-exchange-yellow" />
           </div>
-
-          <div className="relative grid grid-cols-3 gap-4 mt-10">
-            <div className="rounded-xl border border-exchange-border bg-exchange-bg/40 p-4">
-              <div className="text-[10px] uppercase tracking-wider text-exchange-text-third mb-1">Audit</div>
-              <div className="text-sm font-semibold text-exchange-text">100% logged</div>
-            </div>
-            <div className="rounded-xl border border-exchange-border bg-exchange-bg/40 p-4">
-              <div className="text-[10px] uppercase tracking-wider text-exchange-text-third mb-1">Auth</div>
-              <div className="text-sm font-semibold text-exchange-text">2FA + role</div>
-            </div>
-            <div className="rounded-xl border border-exchange-border bg-exchange-bg/40 p-4">
-              <div className="text-[10px] uppercase tracking-wider text-exchange-text-third mb-1">Crypto</div>
-              <div className="text-sm font-semibold text-exchange-text">PQ-ready</div>
-            </div>
-          </div>
+          <h1 className="text-2xl font-bold text-exchange-yellow mb-1">
+            QuantaEX Admin
+          </h1>
+          <p className="text-sm text-exchange-text-third text-center">
+            관리자 비밀번호를 입력하세요
+          </p>
         </div>
 
-        {/* RIGHT — Login form panel */}
-        <div className="flex flex-col justify-center w-full">
-          {/* Mobile-only brand strip */}
-          <div className="md:hidden flex items-center justify-center gap-2 mb-6">
-            <div className="w-10 h-10 rounded-xl bg-exchange-yellow/15 border border-exchange-yellow/30 flex items-center justify-center">
-              <ShieldCheck className="w-5 h-5 text-exchange-yellow" />
-            </div>
-            <div>
-              <div className="text-[11px] uppercase tracking-[0.18em] text-exchange-text-third">
-                QuantaEX
-              </div>
-              <div className="text-base font-bold text-exchange-text">
-                {t('admin.loginTitle') || 'Admin Console'}
-              </div>
-            </div>
-          </div>
-
-          <div className="rounded-3xl border border-exchange-border bg-exchange-card p-8 lg:p-10 shadow-xl">
-            <h1 className="text-2xl font-bold text-exchange-text mb-2">
-              {t('admin.loginHeading') || 'Sign in to administer'}
-            </h1>
-            <p className="text-sm text-exchange-text-third mb-7">
-              {t('admin.loginSubheading') ||
-                'Restricted to operators with the admin role. All actions are audit-logged.'}
-            </p>
-
-          <form onSubmit={handleSubmit} className="space-y-5">
+        <form onSubmit={handleSubmit} className="space-y-4">
             {/* Email */}
             <div>
               <label className="text-[11px] font-medium text-exchange-text-secondary uppercase tracking-wider">
@@ -276,14 +218,12 @@ export default function AdminLoginPage() {
                 ? t('auth.verify') || 'Verify'
                 : t('admin.loginCta') || 'Sign in to admin'}
             </button>
-          </form>
+        </form>
 
-            <p className="mt-6 text-center text-[11px] text-exchange-text-third">
-              {t('admin.loginAuditNotice') ||
-                'Every login attempt is recorded in the audit log.'}
-            </p>
-          </div>
-        </div>
+        <p className="mt-6 text-center text-[11px] text-exchange-text-third">
+          {t('admin.loginAuditNotice') ||
+            'Every login attempt is recorded in the audit log.'}
+        </p>
       </div>
     </div>
   );
