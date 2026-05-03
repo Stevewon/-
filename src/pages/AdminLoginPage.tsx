@@ -104,10 +104,10 @@ export default function AdminLoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-exchange-bg px-6 py-10">
-      <div className="w-full max-w-6xl grid grid-cols-1 lg:grid-cols-2 gap-10 items-stretch">
-        {/* LEFT — Brand / hero panel (hidden on small screens, shown lg+) */}
-        <div className="hidden lg:flex flex-col justify-between rounded-3xl border border-exchange-border bg-gradient-to-br from-exchange-card via-exchange-card to-exchange-bg p-10 shadow-xl overflow-hidden relative">
+    <div className="min-h-screen w-full flex items-center justify-center bg-exchange-bg px-4 sm:px-6 py-10">
+      <div className="w-full max-w-[1400px] grid grid-cols-1 md:grid-cols-2 gap-8 lg:gap-12 items-stretch">
+        {/* LEFT — Brand / hero panel (hidden on phones, shown md+) */}
+        <div className="hidden md:flex flex-col justify-between rounded-3xl border border-exchange-border bg-gradient-to-br from-exchange-card via-exchange-card to-exchange-bg p-8 lg:p-12 shadow-xl overflow-hidden relative min-h-[520px]">
           <div className="absolute -top-24 -right-24 w-72 h-72 rounded-full bg-exchange-yellow/10 blur-3xl pointer-events-none" />
           <div className="absolute -bottom-24 -left-24 w-72 h-72 rounded-full bg-exchange-yellow/5 blur-3xl pointer-events-none" />
 
@@ -126,10 +126,10 @@ export default function AdminLoginPage() {
               </div>
             </div>
 
-            <h2 className="text-3xl xl:text-4xl font-extrabold text-exchange-text leading-tight mb-4">
+            <h2 className="text-3xl lg:text-4xl xl:text-5xl font-extrabold text-exchange-text leading-tight mb-4">
               {t('admin.loginHeroTitle') || 'Operate the exchange with confidence.'}
             </h2>
-            <p className="text-sm text-exchange-text-secondary leading-relaxed max-w-md">
+            <p className="text-base text-exchange-text-secondary leading-relaxed max-w-md">
               {t('admin.loginHeroSubtitle') ||
                 'Restricted, audit-logged operator console for QuantaEX. Every action you take here is signed, time-stamped, and reviewable.'}
             </p>
@@ -152,9 +152,9 @@ export default function AdminLoginPage() {
         </div>
 
         {/* RIGHT — Login form panel */}
-        <div className="flex flex-col justify-center">
+        <div className="flex flex-col justify-center w-full">
           {/* Mobile-only brand strip */}
-          <div className="lg:hidden flex items-center justify-center gap-2 mb-6">
+          <div className="md:hidden flex items-center justify-center gap-2 mb-6">
             <div className="w-10 h-10 rounded-xl bg-exchange-yellow/15 border border-exchange-yellow/30 flex items-center justify-center">
               <ShieldCheck className="w-5 h-5 text-exchange-yellow" />
             </div>
