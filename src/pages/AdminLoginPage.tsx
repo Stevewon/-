@@ -122,7 +122,7 @@ export default function AdminLoginPage() {
         <form onSubmit={handleSubmit} className="space-y-4">
             {/* Email */}
             <div>
-              <label className="text-[11px] font-medium text-exchange-text-secondary uppercase tracking-wider">
+              <label className="block px-1 text-[11px] font-medium text-exchange-text-secondary uppercase tracking-wider">
                 {t('auth.email') || 'Email'}
               </label>
               <input
@@ -130,14 +130,14 @@ export default function AdminLoginPage() {
                 autoComplete="username"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full mt-2 px-5 py-3.5 text-base rounded-xl bg-exchange-bg border border-exchange-border text-exchange-text focus:border-exchange-yellow/60 focus:outline-none"
+                className="w-full mt-2 px-4 py-3.5 text-base rounded-xl bg-exchange-bg border border-exchange-border text-exchange-text focus:border-exchange-yellow/60 focus:outline-none"
                 disabled={loading || needs2fa}
               />
             </div>
 
             {/* Password */}
             <div>
-              <label className="text-[11px] font-medium text-exchange-text-secondary uppercase tracking-wider">
+              <label className="block px-1 text-[11px] font-medium text-exchange-text-secondary uppercase tracking-wider">
                 {t('auth.password') || 'Password'}
               </label>
               <div className="relative mt-2">
@@ -148,7 +148,7 @@ export default function AdminLoginPage() {
                   onChange={(e) => setPassword(e.target.value)}
                   onKeyDown={onPwKey}
                   onKeyUp={onPwKey}
-                  className="w-full pl-5 pr-12 py-3.5 text-base rounded-xl bg-exchange-bg border border-exchange-border text-exchange-text focus:border-exchange-yellow/60 focus:outline-none"
+                  className="w-full pl-4 pr-12 py-3.5 text-base rounded-xl bg-exchange-bg border border-exchange-border text-exchange-text focus:border-exchange-yellow/60 focus:outline-none"
                   disabled={loading || needs2fa}
                 />
                 <button
