@@ -211,8 +211,9 @@ export function isPqWasmAvailable(): boolean {
  * Live since Sprint 5 PQ-Live A. Returns the original outcomes so any
  * callsite written against the stub continues to behave correctly.
  *
- * IMPORTANT: ml_dsa44.verify(publicKey, message, signature) is the
- * argument order — a swap silently rejects every signature.
+ * IMPORTANT: @noble/post-quantum 0.6.x exposes ml_dsa44.verify with the
+ * argument order ml_dsa44.verify(signature, message, publicKey). A swap
+ * silently rejects every signature, so we keep this comment explicit.
  */
 export async function verifyPqSignature(input: PqVerifyInput): Promise<PqVerifyResult> {
   // Cheap structural checks first — reject malformed input before any
@@ -245,7 +246,8 @@ export async function verifyPqSignature(input: PqVerifyInput): Promise<PqVerifyR
   try {
     const pub = base64Decode(input.publicKey);
     const sig = base64Decode(input.signature);
-    const ok = ml_dsa44.verify(pub, input.message, sig);
+    // ml_dsa44.verify(sig, msg, publicKey) — see @noble/post-quantum 0.6.x.
+    const ok = ml_dsa44.verify(sig, input.message, pub);
     return ok
       ? { ok: true, outcome: 'ok' }
       : { ok: false, outcome: 'bad_signature', detail: 'dilithium2_verify_false' };
