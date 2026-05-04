@@ -1172,6 +1172,8 @@ const ko = {
   'admin.extTradingApiNowOff': '외부 트레이딩 API가 비활성화되었습니다.',
   'admin.extTradingApiConfirmEnable': '외부 트레이딩 API 게이트를 활성화하시겠습니까? 활성화 즉시 서명된 /api/v1/* 호출을 받게 됩니다.',
   'admin.extTradingApiOffNotice': '게이트가 꺼져 있어 /api/v1/* 호출은 모두 503 SERVICE_DISABLED를 반환합니다. 운영 검증이 끝나면 활성화하세요.',
+  'admin.extTradingApiBetaTitle': 'phase-c1-beta',
+  'admin.extTradingApiBetaBody': '베타 롤아웃 단계입니다. 모든 API 키는 ip_whitelist를 반드시 채워야 하며, 비어있는 키는 403 BETA_REQUIRES_IP_WHITELIST 로 거부됩니다. 베타 검증이 끝나면 phase-prod 로 전환하세요.',
 
   'admin.refresh': '새로고침',
 

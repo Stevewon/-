@@ -319,6 +319,29 @@ export function apiKeyAuth(options: ApiKeyAuthOptions = {}) {
     }
 
     // 6) IP whitelist (per-key, in addition to the global blocklist).
+    //
+    //    Phase C1 beta safety guard: when integration_phase is
+    //    'phase-c1-beta', we REQUIRE every key to declare a non-empty
+    //    ip_whitelist. Keys without a whitelist would otherwise be
+    //    reachable from any source IP, which is unsafe during the
+    //    beta rollout window. The guard self-disables once the phase
+    //    advances to 'phase-prod' (or anything other than the literal
+    //    'phase-c1-beta'), so existing HMAC keys keep working.
+    if (markers.integrationPhase === 'phase-c1-beta') {
+      const wl = (row.ip_whitelist ?? '').trim();
+      if (!wl) {
+        return c.json(
+          {
+            error:
+              'Beta rollout requires every API key to declare an ip_whitelist. ' +
+              'Edit the key in /profile/api-keys and add your source IP.',
+            code: 'BETA_REQUIRES_IP_WHITELIST',
+            integration_phase: markers.integrationPhase,
+          },
+          403,
+        );
+      }
+    }
     if (!isIpAllowedAgainstWhitelist(ip, row.ip_whitelist)) {
       return c.json(
         { error: 'Source IP is not in this key\u2019s whitelist.', code: 'IP_NOT_ALLOWED' },

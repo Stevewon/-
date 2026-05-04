@@ -3400,6 +3400,15 @@ function ExternalTradingApiCard({ t }: any) {
           </p>
         </div>
       )}
+
+      {phase === 'phase-c1-beta' && (
+        <div className="mt-3 rounded-lg border border-purple-500/30 bg-purple-500/5 p-3">
+          <p className="text-[11px] text-purple-300 leading-relaxed">
+            <span className="font-semibold">{t('admin.extTradingApiBetaTitle')}:</span>{' '}
+            {t('admin.extTradingApiBetaBody')}
+          </p>
+        </div>
+      )}
     </div>
   );
 }

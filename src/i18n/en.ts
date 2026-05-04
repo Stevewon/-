@@ -1181,6 +1181,8 @@ const en = {
   'admin.extTradingApiNowOff': 'External Trading API has been disabled.',
   'admin.extTradingApiConfirmEnable': 'Enable the External Trading API gate? Signed /api/v1/* calls will start being accepted immediately.',
   'admin.extTradingApiOffNotice': 'Gate is off — all /api/v1/* calls return 503 SERVICE_DISABLED. Enable once operational checks pass.',
+  'admin.extTradingApiBetaTitle': 'phase-c1-beta',
+  'admin.extTradingApiBetaBody': 'Beta rollout active — every API key MUST declare a non-empty ip_whitelist. Keys without a whitelist are rejected with 403 BETA_REQUIRES_IP_WHITELIST. Advance the phase marker to phase-prod once beta validation completes.',
   'admin.refresh': 'Refresh',
 
   // Admin futures common
