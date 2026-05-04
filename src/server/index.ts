@@ -835,27 +835,24 @@ app.get('*', async (c) => {
 // CF Pages Functions + Workers unified export
 export default {
   fetch: app.fetch,
-  async scheduled(event: any, env: Env, ctx: any) {
-    const cron: string = event?.cron || '';
-
-    // Nonce sweep — runs every 15 minutes (cron expression "*/15 * * * *").
-    // Falls back to running on any tick that does not match the price-alert
-    // cron, so a single trigger schedule is enough.
-    if (cron.startsWith('*/15')) {
-      const { sweepExpiredNonces } = await import('./lib/nonce-sweep');
-      ctx.waitUntil(
-        sweepExpiredNonces(env)
-          .then((r) => console.log('[cron] nonce sweep:', r))
-          .catch((e) => console.error('[cron] nonce sweep failed:', e)),
-      );
-      return;
-    }
-
-    // Default tick — price alerts.
+  async scheduled(_event: any, env: Env, ctx: any) {
+    // Cloudflare Pages projects manage cron schedules via the dashboard
+    // (Settings > Functions > Cron Triggers), so we cannot declare them
+    // in wrangler.jsonc. Every tick runs BOTH workloads — price-alert
+    // checks (cheap, idempotent) and the nonce sweep (deletes rows older
+    // than 24h, no-op when there is nothing to prune). Frequency is
+    // therefore controlled by whatever cron schedule the dashboard has
+    // registered; the recommended cadence is */15 * * * *.
     ctx.waitUntil(
       checkPriceAlerts(env)
         .then((r) => console.log('[cron] price-alert check:', r))
-        .catch((e) => console.error('[cron] price-alert check failed:', e))
+        .catch((e) => console.error('[cron] price-alert check failed:', e)),
+    );
+    ctx.waitUntil(
+      import('./lib/nonce-sweep')
+        .then(({ sweepExpiredNonces }) => sweepExpiredNonces(env))
+        .then((r) => console.log('[cron] nonce sweep:', r))
+        .catch((e) => console.error('[cron] nonce sweep failed:', e)),
     );
   },
 };
