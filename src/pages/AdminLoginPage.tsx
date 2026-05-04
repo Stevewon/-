@@ -104,8 +104,8 @@ export default function AdminLoginPage() {
   };
 
   return (
-    <div className="min-h-screen w-full flex items-center justify-center bg-exchange-bg px-4 py-10">
-      <div className="w-full max-w-md rounded-3xl border border-exchange-border bg-exchange-card p-10 shadow-2xl">
+    <div className="min-h-screen w-screen overflow-x-hidden flex items-center justify-center bg-exchange-bg px-4 py-10">
+      <div className="w-full max-w-sm sm:max-w-md mx-auto rounded-3xl border border-exchange-border bg-exchange-card p-6 sm:p-8 shadow-2xl">
         {/* Brand */}
         <div className="flex flex-col items-center mb-8">
           <div className="w-14 h-14 rounded-2xl bg-exchange-yellow/15 border border-exchange-yellow/30 flex items-center justify-center mb-4">
