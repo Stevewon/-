@@ -103,118 +103,190 @@ export default function AdminLoginPage() {
     }
   };
 
+  // Inline styles — bypasses Tailwind purge / CDN cache. Forces wide layout.
+  const wrapStyle: React.CSSProperties = {
+    minHeight: '100vh',
+    width: '100%',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: '#0b0e11',
+    padding: '24px',
+    boxSizing: 'border-box',
+  };
+  const cardStyle: React.CSSProperties = {
+    width: '100%',
+    maxWidth: '720px',
+    background: '#15181f',
+    border: '1px solid #2a2e39',
+    borderRadius: '24px',
+    padding: '64px 72px',
+    boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)',
+    boxSizing: 'border-box',
+  };
+  const labelStyle: React.CSSProperties = {
+    display: 'block',
+    padding: '0 4px',
+    fontSize: '12px',
+    fontWeight: 500,
+    letterSpacing: '0.08em',
+    textTransform: 'uppercase',
+    color: '#9aa1ad',
+    marginBottom: '10px',
+  };
+  const inputStyle: React.CSSProperties = {
+    width: '100%',
+    padding: '16px 20px',
+    fontSize: '16px',
+    borderRadius: '12px',
+    background: '#0b0e11',
+    border: '1px solid #2a2e39',
+    color: '#eaecef',
+    outline: 'none',
+    boxSizing: 'border-box',
+  };
+  const pwInputStyle: React.CSSProperties = {
+    ...inputStyle,
+    paddingRight: '56px',
+  };
+  const btnStyle: React.CSSProperties = {
+    width: '100%',
+    padding: '16px',
+    fontSize: '16px',
+    fontWeight: 600,
+    borderRadius: '12px',
+    background: '#f0b90b',
+    color: '#000',
+    border: 'none',
+    cursor: canSubmit ? 'pointer' : 'not-allowed',
+    opacity: canSubmit ? 1 : 0.5,
+    transition: 'background 0.2s',
+  };
+
   return (
-    <div className="min-h-screen w-screen overflow-x-hidden flex items-center justify-center bg-exchange-bg px-6 py-10">
-      <div className="w-full max-w-[480px] mx-auto rounded-3xl border border-exchange-border bg-exchange-card px-14 py-12 shadow-2xl">
+    <div style={wrapStyle}>
+      <div style={cardStyle}>
         {/* Brand */}
-        <div className="flex flex-col items-center mb-8">
-          <div className="w-14 h-14 rounded-2xl bg-exchange-yellow/15 border border-exchange-yellow/30 flex items-center justify-center mb-4">
-            <ShieldCheck className="w-7 h-7 text-exchange-yellow" />
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: '40px' }}>
+          <div
+            style={{
+              width: '64px',
+              height: '64px',
+              borderRadius: '16px',
+              background: 'rgba(240,185,11,0.15)',
+              border: '1px solid rgba(240,185,11,0.3)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              marginBottom: '20px',
+            }}
+          >
+            <ShieldCheck style={{ width: '32px', height: '32px', color: '#f0b90b' }} />
           </div>
-          <h1 className="text-2xl font-bold text-exchange-yellow mb-1">
+          <h1 style={{ fontSize: '28px', fontWeight: 700, color: '#f0b90b', margin: '0 0 6px 0' }}>
             QuantaEX Admin
           </h1>
-          <p className="text-sm text-exchange-text-third text-center">
+          <p style={{ fontSize: '14px', color: '#9aa1ad', textAlign: 'center', margin: 0 }}>
             관리자 비밀번호를 입력하세요
           </p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Email */}
-            <div>
-              <label className="block px-1 text-[11px] font-medium text-exchange-text-secondary uppercase tracking-wider">
-                {t('auth.email') || 'Email'}
-              </label>
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          {/* Email */}
+          <div>
+            <label style={labelStyle}>{t('auth.email') || 'Email'}</label>
+            <input
+              type="email"
+              autoComplete="username"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              style={inputStyle}
+              disabled={loading || needs2fa}
+            />
+          </div>
+
+          {/* Password */}
+          <div>
+            <label style={labelStyle}>{t('auth.password') || 'Password'}</label>
+            <div style={{ position: 'relative' }}>
               <input
-                type="email"
-                autoComplete="username"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full mt-2 pl-9 pr-4 py-3.5 text-base rounded-xl bg-exchange-bg border border-exchange-border text-exchange-text focus:border-exchange-yellow/60 focus:outline-none"
+                type={showPw ? 'text' : 'password'}
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                onKeyDown={onPwKey}
+                onKeyUp={onPwKey}
+                style={pwInputStyle}
                 disabled={loading || needs2fa}
               />
+              <button
+                type="button"
+                onClick={() => setShowPw((v) => !v)}
+                tabIndex={-1}
+                style={{
+                  position: 'absolute',
+                  right: '12px',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  background: 'transparent',
+                  border: 'none',
+                  cursor: 'pointer',
+                  color: '#9aa1ad',
+                  padding: '6px',
+                }}
+              >
+                {showPw ? <EyeOff style={{ width: '20px', height: '20px' }} /> : <Eye style={{ width: '20px', height: '20px' }} />}
+              </button>
             </div>
+            {capsOn && (
+              <p style={{ fontSize: '11px', color: '#f0b90b', marginTop: '6px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <AlertCircle style={{ width: '12px', height: '12px' }} /> {t('auth.capsOn') || 'Caps Lock is on'}
+              </p>
+            )}
+          </div>
 
-            {/* Password */}
+          {/* 2FA */}
+          {needs2fa && (
             <div>
-              <label className="block px-1 text-[11px] font-medium text-exchange-text-secondary uppercase tracking-wider">
-                {t('auth.password') || 'Password'}
-              </label>
-              <div className="relative mt-2">
-                <input
-                  type={showPw ? 'text' : 'password'}
-                  autoComplete="current-password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  onKeyDown={onPwKey}
-                  onKeyUp={onPwKey}
-                  className="w-full pl-9 pr-12 py-3.5 text-base rounded-xl bg-exchange-bg border border-exchange-border text-exchange-text focus:border-exchange-yellow/60 focus:outline-none"
-                  disabled={loading || needs2fa}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPw((v) => !v)}
-                  tabIndex={-1}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 text-exchange-text-third hover:text-exchange-text"
-                >
-                  {showPw ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-                </button>
-              </div>
-              {capsOn && (
-                <p className="text-[11px] text-exchange-yellow mt-1.5 flex items-center gap-1">
-                  <AlertCircle className="w-3 h-3" /> {t('auth.capsOn') || 'Caps Lock is on'}
-                </p>
-              )}
+              <label style={labelStyle}>{t('auth.totpLabel') || 'Authenticator code'}</label>
+              <input
+                type="text"
+                inputMode="numeric"
+                pattern="\d{6}"
+                maxLength={6}
+                value={totp}
+                onChange={(e) => setTotp(e.target.value.replace(/\D/g, ''))}
+                placeholder="123456"
+                style={{ ...inputStyle, fontSize: '20px', textAlign: 'center', fontFamily: 'monospace', letterSpacing: '0.5em' }}
+                autoFocus
+              />
+              <p style={{ fontSize: '11px', color: '#9aa1ad', marginTop: '6px' }}>
+                {t('auth.totpHint') || '6-digit code from your authenticator app'}
+              </p>
             </div>
+          )}
 
-            {/* 2FA */}
-            {needs2fa && (
-              <div>
-                <label className="text-[11px] font-medium text-exchange-text-secondary uppercase tracking-wider">
-                  {t('auth.totpLabel') || 'Authenticator code'}
-                </label>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  pattern="\d{6}"
-                  maxLength={6}
-                  value={totp}
-                  onChange={(e) => setTotp(e.target.value.replace(/\D/g, ''))}
-                  placeholder="123456"
-                  className="w-full mt-2 px-4 py-3.5 text-xl text-center font-mono tracking-[0.5em] rounded-xl bg-exchange-bg border border-exchange-border text-exchange-text focus:border-exchange-yellow/60 focus:outline-none"
-                  autoFocus
-                />
-                <p className="text-[11px] text-exchange-text-third mt-1.5">
-                  {t('auth.totpHint') || '6-digit code from your authenticator app'}
-                </p>
-              </div>
-            )}
+          {/* Error */}
+          {error && (
+            <div style={{ borderRadius: '8px', border: '1px solid rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.05)', padding: '10px' }}>
+              <p style={{ fontSize: '12px', color: '#ef4444', display: 'flex', alignItems: 'flex-start', gap: '8px', margin: 0 }}>
+                <AlertCircle style={{ width: '14px', height: '14px', flexShrink: 0, marginTop: '2px' }} />
+                <span>{error}</span>
+              </p>
+            </div>
+          )}
 
-            {/* Error */}
-            {error && (
-              <div className="rounded-lg border border-exchange-sell/30 bg-exchange-sell/5 p-2.5">
-                <p className="text-xs text-exchange-sell flex items-start gap-2">
-                  <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-                  <span>{error}</span>
-                </p>
-              </div>
-            )}
-
-            {/* Submit */}
-            <button
-              type="submit"
-              disabled={!canSubmit}
-              className="w-full py-3.5 text-base font-semibold rounded-xl bg-exchange-yellow hover:bg-exchange-yellow/90 text-black disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              {loading
-                ? '...'
-                : needs2fa
-                ? t('auth.verify') || 'Verify'
-                : t('admin.loginCta') || 'Sign in to admin'}
-            </button>
+          {/* Submit */}
+          <button type="submit" disabled={!canSubmit} style={btnStyle}>
+            {loading
+              ? '...'
+              : needs2fa
+              ? t('auth.verify') || 'Verify'
+              : t('admin.loginCta') || 'Sign in to admin'}
+          </button>
         </form>
 
-        <p className="mt-6 text-center text-[11px] text-exchange-text-third">
+        <p style={{ marginTop: '28px', textAlign: 'center', fontSize: '11px', color: '#9aa1ad' }}>
           {t('admin.loginAuditNotice') ||
             'Every login attempt is recorded in the audit log.'}
         </p>
