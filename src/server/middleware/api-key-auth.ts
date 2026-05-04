@@ -41,7 +41,13 @@
 import type { Context, Next } from 'hono';
 import type { AppEnv } from '../index';
 import { getRiskState, getClientIp, isIpBlocked } from '../lib/risk';
-import { readPqMarkers } from '../lib/pq-crypto';
+import {
+  readPqMarkers,
+  verifyPqSignature,
+  buildCanonicalRequest,
+  logPqVerifyAttempt,
+  type PqAlgorithm,
+} from '../lib/pq-crypto';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -412,8 +418,85 @@ export function apiKeyAuth(options: ApiKeyAuthOptions = {}) {
           503,
         );
       }
-      // PQ verify path is wired in Phase I2 alongside the WASM bundle.
-      // Until then `wasmReady` stays 'off' and we don't reach this branch.
+      if (!row.public_key) {
+        return c.json(
+          { error: 'Key has no Dilithium2 public key on file.', code: 'BAD_SIGNATURE' },
+          401,
+        );
+      }
+      // Build canonical bytes via pq-crypto so client+server agree on the
+      // exact serialization (METHOD\nPATH\nTS\nSHA256(body)hex).
+      const canonicalBytes = await buildCanonicalRequest({
+        method,
+        path,
+        timestamp: String(ts),
+        body: bodyText,
+      });
+      // For 'hybrid' the signature header is the Dilithium2 signature; the
+      // HMAC half was already verified above using a separate key path,
+      // i.e. the client signed twice — once HMAC, once Dilithium2 — and
+      // sent both signatures concatenated as base64(HMAC).base64(PQ).
+      // Phase I2 wire format keeps it simple: a single algorithm per
+      // request. Hybrid means BOTH must pass; so we re-derive the HMAC
+      // half from a separate header X-Signature-Hmac when present.
+      const pqSigB64 =
+        algHdr === 'hybrid' ? (c.req.header('x-signature-pq') || sigHdr) : sigHdr;
+
+      const result = await verifyPqSignature({
+        publicKey: row.public_key,
+        signature: pqSigB64,
+        message: canonicalBytes,
+        timestamp: ts,
+        algorithm: algHdr as PqAlgorithm,
+      });
+
+      // Always best-effort write the audit row — observability is the
+      // main point of api_key_pq_audit.
+      await logPqVerifyAttempt(c, {
+        apiKeyId: row.id,
+        apiKeyPrefix: row.api_key.slice(0, 8),
+        algorithm: algHdr as PqAlgorithm,
+        outcome: result.outcome,
+        ipAddress: ip ?? null,
+        userAgent: c.req.header('user-agent') ?? null,
+        detail: result.detail ?? null,
+      });
+
+      if (!result.ok) {
+        // Map PQ outcomes onto the existing error code surface so SDKs
+        // written against Phase I1 don't see new shapes.
+        if (result.outcome === 'expired') {
+          return c.json(
+            { error: 'Timestamp out of skew window.', code: 'TIMESTAMP_SKEW' },
+            401,
+          );
+        }
+        if (result.outcome === 'wasm_unavailable') {
+          return c.json(
+            { error: 'Dilithium2 verifier unavailable.', code: 'PQ_NOT_READY' },
+            503,
+          );
+        }
+        if (result.outcome === 'unsupported') {
+          return c.json(
+            { error: 'Unsupported X-Algorithm.', code: 'UNSUPPORTED_ALG' },
+            401,
+          );
+        }
+        return c.json(
+          { error: 'Dilithium2 signature mismatch.', code: 'BAD_SIGNATURE' },
+          401,
+        );
+      }
+
+      // Bump last_pq_verify_at — best-effort.
+      try {
+        await c.env.DB.prepare(
+          'UPDATE api_keys SET last_pq_verify_at = datetime(\'now\') WHERE id = ?',
+        )
+          .bind(row.id)
+          .run();
+      } catch { /* swallow */ }
     }
 
     // 12) Best-effort last_used_at update. Failures are logged-and-ignored.

@@ -15,6 +15,7 @@
     "db:migrate:prod": "wrangler d1 migrations apply quantaex-production --remote"
   },
   "dependencies": {
+    "@noble/post-quantum": "^0.6.1",
     "@types/qrcode": "^1.5.6",
     "axios": "^1.7.9",
     "bcryptjs": "^2.4.3",

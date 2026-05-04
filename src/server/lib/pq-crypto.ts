@@ -1,25 +1,32 @@
 /**
- * Post-Quantum cryptography helpers — Sprint 4 Phase H2 (PQ-Only stub).
+ * Post-Quantum cryptography helpers — Sprint 5 Phase S5-2 PQ-Live A.
  *
  * Goal:
  *   Provide a stable, edge-friendly verification API for Dilithium2-signed
- *   API requests. The actual NIST PQC verifier (WASM) is intentionally not
- *   bundled in this phase; it lands in a follow-up sprint behind the
- *   `pq_api_keys_wasm_ready` system_marker.
+ *   API requests. The actual NIST PQC verifier is now wired through
+ *   @noble/post-quantum's ml_dsa44 implementation (NIST FIPS 204 = the
+ *   standardized Dilithium2 parameter set).
  *
- * Design rules (carried over from Phase B/G/H1 stub-first approach):
- *   - Public function signatures are final and stable so the route layer
- *     can be wired now and the verifier swapped in later without churn.
- *   - When WASM is unavailable we DO NOT silently pass — we return an
- *     explicit `wasm_unavailable` outcome so the middleware can decide
- *     whether to refuse (`pq_api_keys_required=on`) or fall back to HMAC.
+ * Why ml_dsa44 (not a WASM module):
+ *   - Pure JS, zero native deps, ~30 KB bundle delta, Cloudflare Workers
+ *     compatible without `nodejs_compat` (uses only Web Crypto + Uint8Array).
+ *   - Constant key/signature lengths (1312 / 2420 bytes) match the
+ *     api_keys schema exactly — no migration needed.
+ *   - Marker name `pq_api_keys_wasm_ready` is preserved for backward
+ *     compatibility even though the implementation is JS, not WASM.
+ *
+ * Design rules (carried over from Phase B/G/H1/H2 stub-first approach):
+ *   - Public function signatures are unchanged — middleware that called
+ *     the stub continues to compile against the live verifier.
+ *   - When the verifier rejects we ALWAYS return a structured outcome and
+ *     NEVER throw across the middleware boundary.
  *   - Backward compatibility: any code path that touches an `hmac-sha256`
  *     key MUST NOT call into this module.
  *
  * Markers consumed (read-only here, written by admin tools):
  *   - pq_api_keys_enabled       : master switch for the PQ pipeline
  *   - pq_api_keys_required      : when 'on', hmac-only keys must be refused
- *   - pq_api_keys_wasm_ready    : 'on' once Dilithium2 WASM is bundled
+ *   - pq_api_keys_wasm_ready    : 'on' once the verifier is live (S5-2)
  *
  * Audit trail (writes go to api_key_pq_audit via logPqVerifyAttempt):
  *   outcome ∈ { ok, bad_signature, expired, replay, unsupported, wasm_unavailable }
@@ -27,6 +34,7 @@
 
 import type { Context } from 'hono';
 import type { AppEnv } from '../index';
+import { ml_dsa44 } from '@noble/post-quantum/ml-dsa.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -177,28 +185,38 @@ export function isValidDilithium2Signature(sigB64: string | null | undefined): b
 // strength of this stub.
 // ---------------------------------------------------------------------------
 
-let _wasmReady: boolean | null = null;
+let _verifierReady: boolean | null = null;
 
 /**
- * Hook for the future WASM loader. Returns false today so callers know
- * the verifier is not yet bundled. Cached per-isolate.
+ * Verifier readiness probe. Returns true once the ml_dsa44 module is
+ * resolved and exposes the expected `verify` function. Cached per-isolate
+ * because the bundle is static; the answer never changes within a worker.
+ *
+ * Marker name `pq_api_keys_wasm_ready` is kept for backward compatibility
+ * even though the implementation is pure JS, not WASM.
  */
 export function isPqWasmAvailable(): boolean {
-  if (_wasmReady !== null) return _wasmReady;
-  // Future: try { await import('./pq-wasm/dilithium2.wasm') } catch { ... }
-  _wasmReady = false;
-  return _wasmReady;
+  if (_verifierReady !== null) return _verifierReady;
+  try {
+    _verifierReady = typeof ml_dsa44?.verify === 'function';
+  } catch {
+    _verifierReady = false;
+  }
+  return _verifierReady;
 }
 
 /**
- * Verify a Dilithium2 signature.
+ * Verify a Dilithium2 signature against the canonical request bytes.
  *
- * Returns `{ ok: false, outcome: 'wasm_unavailable' }` while the WASM
- * verifier is not yet bundled. The middleware MUST treat that as a hard
- * failure when `pq_api_keys_required=on`.
+ * Live since Sprint 5 PQ-Live A. Returns the original outcomes so any
+ * callsite written against the stub continues to behave correctly.
+ *
+ * IMPORTANT: ml_dsa44.verify(publicKey, message, signature) is the
+ * argument order — a swap silently rejects every signature.
  */
 export async function verifyPqSignature(input: PqVerifyInput): Promise<PqVerifyResult> {
-  // Cheap structural checks first — no WASM needed to reject malformed input.
+  // Cheap structural checks first — reject malformed input before any
+  // crypto work touches CPU.
   if (!isValidDilithium2PublicKey(input.publicKey)) {
     return { ok: false, outcome: 'bad_signature', detail: 'invalid_public_key_length' };
   }
@@ -216,17 +234,28 @@ export async function verifyPqSignature(input: PqVerifyInput): Promise<PqVerifyR
   }
 
   if (!isPqWasmAvailable()) {
-    // Stable contract: never silently succeed.
-    return { ok: false, outcome: 'wasm_unavailable', detail: 'dilithium2_wasm_not_bundled' };
+    // Library failed to resolve at module-load time. The middleware
+    // treats this as a hard failure when `pq_api_keys_required=on`.
+    return { ok: false, outcome: 'wasm_unavailable', detail: 'verifier_not_loaded' };
   }
 
-  // Placeholder for future implementation:
-  //   const wasm = await loadDilithium2();
-  //   const ok  = wasm.verify(base64Decode(input.publicKey),
-  //                           input.message,
-  //                           base64Decode(input.signature));
-  //   return { ok, outcome: ok ? 'ok' : 'bad_signature' };
-  return { ok: false, outcome: 'wasm_unavailable', detail: 'verifier_not_implemented' };
+  // Decode + verify. ml_dsa44.verify never throws on malformed input in
+  // 0.6.x — it returns false. We still wrap defensively so any future
+  // upstream change can't crash the request path.
+  try {
+    const pub = base64Decode(input.publicKey);
+    const sig = base64Decode(input.signature);
+    const ok = ml_dsa44.verify(pub, input.message, sig);
+    return ok
+      ? { ok: true, outcome: 'ok' }
+      : { ok: false, outcome: 'bad_signature', detail: 'dilithium2_verify_false' };
+  } catch (err: any) {
+    return {
+      ok: false,
+      outcome: 'bad_signature',
+      detail: 'verify_threw:' + (err?.message?.slice(0, 64) || 'unknown'),
+    };
+  }
 }
 
 // ---------------------------------------------------------------------------
