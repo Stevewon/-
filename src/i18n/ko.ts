@@ -1174,6 +1174,11 @@ const ko = {
   'admin.extTradingApiOffNotice': '게이트가 꺼져 있어 /api/v1/* 호출은 모두 503 SERVICE_DISABLED를 반환합니다. 운영 검증이 끝나면 활성화하세요.',
   'admin.extTradingApiBetaTitle': 'phase-c1-beta',
   'admin.extTradingApiBetaBody': '베타 롤아웃 단계입니다. 모든 API 키는 ip_whitelist를 반드시 채워야 하며, 비어있는 키는 403 BETA_REQUIRES_IP_WHITELIST 로 거부됩니다. 베타 검증이 끝나면 phase-prod 로 전환하세요.',
+  'admin.extTradingApiLastRefresh': '마지막 갱신',
+  'admin.extTradingApiAutoRefreshOn': '자동 30초',
+  'admin.extTradingApiAutoRefreshOff': '일시정지',
+  'admin.extTradingApiAutoRefreshHint': '30초 폴링을 켜고 끕니다. 일시정지 상태에서는 표시 값이 고정되어 특정 시점을 자세히 살펴볼 수 있습니다.',
+  'admin.extTradingApiRefreshNow': '지금 갱신',
 
   'admin.refresh': '새로고침',
 

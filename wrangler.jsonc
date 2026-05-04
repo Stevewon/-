@@ -11,5 +11,8 @@
       "database_id": "5eb4f183-1dfc-4310-8872-07b014078dbc"
     }
   ],
+  "triggers": {
+    "crons": ["*/15 * * * *"]
+  },
   "vars": {}
 }

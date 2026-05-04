@@ -3318,12 +3318,18 @@ function ExternalTradingApiCard({ t }: any) {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [toggling, setToggling] = useState(false);
+  // Sprint 5 Phase D3-α: auto-refresh toggle + last-refresh timestamp.
+  // Default ON (preserves prior behaviour); operators can pause polling
+  // while inspecting a frozen value.
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [lastRefresh, setLastRefresh] = useState<number | null>(null);
 
   const load = async () => {
     setLoading(true);
     try {
       const res = await api.get('/admin/external-trading-api/stats');
       setData(res.data);
+      setLastRefresh(Date.now());
     } catch (e: any) {
       showToast('error', t('admin.extTradingApi'), e?.response?.data?.error || 'Failed');
     }
@@ -3331,9 +3337,12 @@ function ExternalTradingApiCard({ t }: any) {
   };
   useEffect(() => {
     load();
+  }, []);
+  useEffect(() => {
+    if (!autoRefresh) return;
     const id = setInterval(load, 30000);
     return () => clearInterval(id);
-  }, []);
+  }, [autoRefresh]);
 
   const toggle = async () => {
     if (!data) return;
@@ -3367,18 +3376,48 @@ function ExternalTradingApiCard({ t }: any) {
           <p className="text-[11px] text-exchange-text-third mt-0.5">
             {t('admin.extTradingApiDesc')}
           </p>
+          <p className="text-[10px] text-exchange-text-third mt-1">
+            {t('admin.extTradingApiLastRefresh')}:{' '}
+            <span className="font-mono">
+              {lastRefresh ? new Date(lastRefresh).toLocaleTimeString() : '—'}
+            </span>
+            {autoRefresh && <span className="ml-1 text-exchange-buy">● 30s</span>}
+          </p>
         </div>
-        <button
-          onClick={toggle}
-          disabled={loading || toggling || !data}
-          className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors disabled:opacity-50 ${
-            enabled
-              ? 'bg-exchange-sell/15 hover:bg-exchange-sell/25 text-exchange-sell'
-              : 'bg-exchange-buy/15 hover:bg-exchange-buy/25 text-exchange-buy'
-          }`}
-        >
-          {toggling ? '...' : enabled ? t('admin.extTradingApiTurnOff') : t('admin.extTradingApiTurnOn')}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setAutoRefresh((v) => !v)}
+            className={`px-2 py-1 text-[10px] font-semibold rounded-md transition-colors ${
+              autoRefresh
+                ? 'bg-exchange-buy/15 text-exchange-buy hover:bg-exchange-buy/25'
+                : 'bg-exchange-border/40 text-exchange-text-third hover:bg-exchange-border/60'
+            }`}
+            title={t('admin.extTradingApiAutoRefreshHint')}
+          >
+            {autoRefresh
+              ? t('admin.extTradingApiAutoRefreshOn')
+              : t('admin.extTradingApiAutoRefreshOff')}
+          </button>
+          <button
+            onClick={load}
+            disabled={loading}
+            className="px-2 py-1 text-[10px] font-semibold rounded-md bg-exchange-border/40 hover:bg-exchange-border/60 text-exchange-text-third disabled:opacity-50"
+            title={t('admin.extTradingApiRefreshNow')}
+          >
+            {loading ? '…' : '↻'}
+          </button>
+          <button
+            onClick={toggle}
+            disabled={loading || toggling || !data}
+            className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors disabled:opacity-50 ${
+              enabled
+                ? 'bg-exchange-sell/15 hover:bg-exchange-sell/25 text-exchange-sell'
+                : 'bg-exchange-buy/15 hover:bg-exchange-buy/25 text-exchange-buy'
+            }`}
+          >
+            {toggling ? '...' : enabled ? t('admin.extTradingApiTurnOff') : t('admin.extTradingApiTurnOn')}
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">

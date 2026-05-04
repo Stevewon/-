@@ -1183,6 +1183,11 @@ const en = {
   'admin.extTradingApiOffNotice': 'Gate is off — all /api/v1/* calls return 503 SERVICE_DISABLED. Enable once operational checks pass.',
   'admin.extTradingApiBetaTitle': 'phase-c1-beta',
   'admin.extTradingApiBetaBody': 'Beta rollout active — every API key MUST declare a non-empty ip_whitelist. Keys without a whitelist are rejected with 403 BETA_REQUIRES_IP_WHITELIST. Advance the phase marker to phase-prod once beta validation completes.',
+  'admin.extTradingApiLastRefresh': 'Last refresh',
+  'admin.extTradingApiAutoRefreshOn': 'Auto 30s',
+  'admin.extTradingApiAutoRefreshOff': 'Paused',
+  'admin.extTradingApiAutoRefreshHint': 'Toggle 30-second polling. When paused the displayed values stay frozen so operators can inspect a moment.',
+  'admin.extTradingApiRefreshNow': 'Refresh now',
   'admin.refresh': 'Refresh',
 
   // Admin futures common

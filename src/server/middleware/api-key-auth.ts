@@ -25,6 +25,7 @@
  *   BAD_SIGNATURE         401 — HMAC mismatch
  *   UNSUPPORTED_ALG       401 — algorithm not known
  *   PQ_NOT_READY          503 — algorithm = dilithium2/hybrid but WASM off
+ *   RATE_LIMITED          429 — per-key request rate exceeded
  *
  * Phase F integration:
  *   - IP blocklist enforced first (same as JWT path).
@@ -381,6 +382,52 @@ export function apiKeyAuth(options: ApiKeyAuthOptions = {}) {
         { error: 'This key is registered as dilithium2; HMAC headers are not accepted.', code: 'ALG_MISMATCH' },
         401,
       );
+    }
+
+    // 8.5) Per-key rate limit (Sprint 5 Phase D3-α).
+    //      Fixed-window counter on rate_limits table, bucket = 'apiv1:<key_id>'.
+    //      Default: 600 requests / 60s window (= 10 req/s sustained per key).
+    //      Fails OPEN on table errors so a missing migration cannot brick
+    //      authenticated traffic — the surrounding middleware still enforces
+    //      nonce uniqueness, which is the hard replay defense.
+    try {
+      const RATE_MAX = 600;
+      const RATE_WINDOW = 60;
+      const bucket = `apiv1:${row.id}`;
+      const nowSec = Math.floor(Date.now() / 1000);
+      const windowStart = nowSec - (nowSec % RATE_WINDOW);
+
+      const existing = await c.env.DB.prepare(
+        `SELECT count, window_start FROM rate_limits WHERE bucket = ?`,
+      ).bind(bucket).first<{ count: number; window_start: number }>();
+
+      if (!existing || existing.window_start !== windowStart) {
+        await c.env.DB.prepare(
+          `INSERT INTO rate_limits (bucket, window_start, count)
+           VALUES (?, ?, 1)
+           ON CONFLICT(bucket) DO UPDATE SET window_start = excluded.window_start, count = 1`,
+        ).bind(bucket, windowStart).run();
+      } else {
+        if (existing.count >= RATE_MAX) {
+          const retryAfter = RATE_WINDOW - (nowSec - windowStart);
+          c.header('Retry-After', String(Math.max(1, retryAfter)));
+          return c.json(
+            {
+              error: `Per-key rate limit exceeded (${RATE_MAX} req / ${RATE_WINDOW}s).`,
+              code: 'RATE_LIMITED',
+              retry_after_sec: Math.max(1, retryAfter),
+            },
+            429,
+          );
+        }
+        await c.env.DB.prepare(
+          `UPDATE rate_limits SET count = count + 1 WHERE bucket = ?`,
+        ).bind(bucket).run();
+      }
+    } catch (e) {
+      // Fail open — rate_limits table missing should not block authenticated
+      // traffic. Replay defense (step 9) still runs.
+      console.warn('[apiKeyAuth] rate-limit fallback:', e);
     }
 
     // 9) Nonce uniqueness (replay defense). Insert FIRST so the unique

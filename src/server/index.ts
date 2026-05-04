@@ -835,7 +835,23 @@ app.get('*', async (c) => {
 // CF Pages Functions + Workers unified export
 export default {
   fetch: app.fetch,
-  async scheduled(_event: any, env: Env, ctx: any) {
+  async scheduled(event: any, env: Env, ctx: any) {
+    const cron: string = event?.cron || '';
+
+    // Nonce sweep — runs every 15 minutes (cron expression "*/15 * * * *").
+    // Falls back to running on any tick that does not match the price-alert
+    // cron, so a single trigger schedule is enough.
+    if (cron.startsWith('*/15')) {
+      const { sweepExpiredNonces } = await import('./lib/nonce-sweep');
+      ctx.waitUntil(
+        sweepExpiredNonces(env)
+          .then((r) => console.log('[cron] nonce sweep:', r))
+          .catch((e) => console.error('[cron] nonce sweep failed:', e)),
+      );
+      return;
+    }
+
+    // Default tick — price alerts.
     ctx.waitUntil(
       checkPriceAlerts(env)
         .then((r) => console.log('[cron] price-alert check:', r))
