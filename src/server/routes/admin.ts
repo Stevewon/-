@@ -1154,7 +1154,7 @@ app.get('/api-keys/stats', async (c) => {
       total24h = recentFailures.reduce((acc, r) => acc + r.n, 0);
     } catch { /* audit table not migrated yet */ }
 
-    // Markers (so admin UI can show 'phase-h2-stub' badge + flip required/wasm_ready).
+    // Markers (so admin UI can show the integration phase badge + flip required/wasm_ready).
     let markers: Record<string, string> = {};
     try {
       const mr = await db.prepare(

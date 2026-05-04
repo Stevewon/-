@@ -684,7 +684,7 @@ const en = {
   'apikey.alg_dilithium2_desc': 'NIST-standard post-quantum signatures. Resistant to quantum-computer attacks.',
   'apikey.alg_hybrid': 'Hybrid (HMAC + Dilithium2)',
   'apikey.alg_hybrid_desc': 'Both algorithms must verify. Strongest available protection.',
-  'apikey.alg_pq_warn': '⚠ Post-quantum keys are currently in phase-h2-stub. The key pair is generated in your browser; the secret key can be downloaded only once and is never stored on the server.',
+  'apikey.alg_pq_warn': '⚠ Post-quantum keys (Dilithium2 / ML-DSA-44) are now live. The key pair is generated in your browser; the secret key can be downloaded only once and is never stored on the server.',
   'apikey.alg_hmac_short': 'HMAC',
   'apikey.alg_pq_short': 'PQ',
   'apikey.alg_hybrid_short': 'HYBRID',
@@ -1155,8 +1155,8 @@ const en = {
   'admin.pqAuditEmpty': 'No PQ verification attempts in the last 24 hours.',
   'admin.pqAuditOutcome': 'Outcome',
   'admin.pqAuditCount': 'Count',
-  'admin.pqStubTitle': 'phase-h2-stub:',
-  'admin.pqStubBody': 'In this phase only the schema and UI are live; actual Dilithium2 verification ships next sprint together with the WASM module. Existing HMAC keys remain 100% compatible.',
+  'admin.pqStubTitle': 'phase-s5-2-live:',
+  'admin.pqStubBody': 'Dilithium2 (ML-DSA-44) verification is live. Keys created with signature_alg=dilithium2 or hybrid are now verified server-side on every request. Existing HMAC-SHA256 keys remain 100% compatible.',
 
   // Admin — dedicated login page (/admin/login)
   'admin.loginTitle': 'Admin Console',

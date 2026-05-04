@@ -3188,7 +3188,7 @@ function PqApiKeysTab({ t }: any) {
   const dist = data?.distribution || { 'hmac-sha256': 0, 'dilithium2': 0, 'hybrid': 0 };
   const totalKeys = (dist['hmac-sha256'] || 0) + (dist['dilithium2'] || 0) + (dist['hybrid'] || 0);
   const pct = (n: number) => (totalKeys > 0 ? Math.round((n / totalKeys) * 100) : 0);
-  const m = data?.markers || { enabled: false, required: false, wasm_ready: false, integration_phase: 'phase-h2-stub' };
+  const m = data?.markers || { enabled: false, required: false, wasm_ready: false, integration_phase: 'phase-s5-2-live' };
   const audit = data?.pq_audit_24h || { total: 0, by_outcome: [] };
 
   return (
@@ -3209,7 +3209,7 @@ function PqApiKeysTab({ t }: any) {
 
       {/* Marker / phase summary */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <Card label={t('admin.pqIntegrationPhase')} value={m.integration_phase || 'phase-h2-stub'} pill />
+        <Card label={t('admin.pqIntegrationPhase')} value={m.integration_phase || 'phase-s5-2-live'} pill />
         <Card label={t('admin.pqEnabled')} value={m.enabled ? 'on' : 'off'} pill />
         <Card label={t('admin.pqRequired')} value={m.required ? 'on' : 'off'} pill />
         <Card label={t('admin.pqWasmReady')} value={m.wasm_ready ? 'on' : 'off'} pill />

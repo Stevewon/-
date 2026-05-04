@@ -1,32 +1,33 @@
 /**
- * Client-side PQ key helpers — Sprint 4 Phase H2 (PQ-Only stub).
+ * Client-side PQ key helpers — Sprint 5 Phase S5-2 PQ-Live A.
  *
- * Mirrors the server's `src/server/lib/pq-crypto.ts` byte-shape contract
- * so that when WASM Dilithium2 lands in a follow-up sprint we can swap
- * the placeholder key generation for real ML-DSA / Dilithium2 without
- * breaking any UI / network code.
+ * Mirrors the server's `src/server/lib/pq-crypto.ts` contract: same
+ * library (`@noble/post-quantum`'s ml_dsa44 = NIST FIPS 204), same
+ * canonical request bytes, same base64 encoding. Browser-generated keys
+ * are now *real* Dilithium2 / ML-DSA-44 keys that the server can
+ * actually verify against.
  *
- * Until WASM ships:
- *   - generateDilithium2KeyPair() returns a *placeholder* key pair whose
- *     bytes have the correct Dilithium2 lengths (1312 / 2528) so the
- *     server's structural validation passes, but it CANNOT be used to
- *     sign real requests. The matching server-side `verifyPqSignature`
- *     deliberately returns `wasm_unavailable` in this state, so neither
- *     side accidentally treats the placeholder as authoritative.
- *   - We label the downloaded artifact `phase-h2-stub` so future ops
- *     can identify and rotate stub keys cleanly.
+ * Security boundary:
+ *   - The secret key (2560 bytes) NEVER leaves the user's browser. We
+ *     hand it to the user exactly once via JSON download and never POST
+ *     it back to the server.
+ *   - Only the public key (1312 bytes) is uploaded — that's what the
+ *     server stores in api_keys.public_key.
  *
- * No external deps: uses Web Crypto + a small base64 helper that mirrors
- * the server-side encoder. Workers / browsers / Node18+ are all happy.
+ * Browser compatibility:
+ *   - ml_dsa44.keygen uses crypto.getRandomValues() under the hood.
+ *     Chrome / Edge / Firefox / Safari 14+ all good.
  */
 
-/** Dilithium2 raw public key length (NIST round 3). */
+import { ml_dsa44 } from '@noble/post-quantum/ml-dsa.js';
+
+/** Dilithium2 (ML-DSA-44 FIPS 204) raw public key length. */
 export const DILITHIUM2_PUBKEY_BYTES = 1312;
 
-/** Dilithium2 raw secret key length (NIST round 3). */
-export const DILITHIUM2_SECRET_BYTES = 2528;
+/** Dilithium2 (ML-DSA-44 FIPS 204) raw secret key length. */
+export const DILITHIUM2_SECRET_BYTES = 2560;
 
-/** Dilithium2 signature length. Reserved for future use. */
+/** Dilithium2 signature length (used by sign/verify). */
 export const DILITHIUM2_SIG_BYTES = 2420;
 
 export interface PqKeyPair {
@@ -36,8 +37,8 @@ export interface PqKeyPair {
   secretKey: string;
   /** Algorithm tag — matches `signature_alg` column. */
   algorithm: 'dilithium2';
-  /** Marker so future ops can identify stub keys. */
-  phase: 'phase-h2-stub';
+  /** Phase marker so ops can identify the integration stage. */
+  phase: 'phase-s5-2-live';
   /** ISO timestamp of generation. */
   createdAt: string;
 }
@@ -57,22 +58,24 @@ function bytesToBase64(bytes: Uint8Array): string {
 // ---------------------------------------------------------------------------
 
 /**
- * Generate a Dilithium2-shaped key pair using cryptographically strong
- * randomness. The bytes are the right length for server validation but
- * are NOT a usable Dilithium2 key — see file header.
+ * Generate a real Dilithium2 (ML-DSA-44 FIPS 204) key pair in the
+ * browser. The secret key bytes are returned base64-encoded for the
+ * user to download; they are NEVER transmitted to the server.
  *
- * Real implementation lands behind `pq_api_keys_wasm_ready=on`.
+ * Live since Sprint 5 PQ-Live A: pairs produced here verify against
+ * the server's pq-crypto.ts on every signed request.
  */
 export function generateDilithium2KeyPair(): PqKeyPair {
-  const pub = new Uint8Array(DILITHIUM2_PUBKEY_BYTES);
-  const sec = new Uint8Array(DILITHIUM2_SECRET_BYTES);
-  crypto.getRandomValues(pub);
-  crypto.getRandomValues(sec);
+  // ml_dsa44.keygen() returns { publicKey: Uint8Array(1312),
+  //                             secretKey: Uint8Array(2560) }.
+  // It draws randomness from crypto.getRandomValues internally, so the
+  // resulting key pair is suitable for production use.
+  const kp = ml_dsa44.keygen();
   return {
-    publicKey: bytesToBase64(pub),
-    secretKey: bytesToBase64(sec),
+    publicKey: bytesToBase64(kp.publicKey),
+    secretKey: bytesToBase64(kp.secretKey),
     algorithm: 'dilithium2',
-    phase: 'phase-h2-stub',
+    phase: 'phase-s5-2-live',
     createdAt: new Date().toISOString(),
   };
 }

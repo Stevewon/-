@@ -678,7 +678,7 @@ const ko = {
   'apikey.alg_dilithium2_desc': 'NIST 표준 양자내성 서명. 양자컴퓨터 공격에도 안전합니다.',
   'apikey.alg_hybrid': '하이브리드 (HMAC + Dilithium2)',
   'apikey.alg_hybrid_desc': '두 알고리즘 모두로 서명·검증합니다. 최고 수준의 보안.',
-  'apikey.alg_pq_warn': '⚠ 양자내성 키는 현재 phase-h2-stub 단계입니다. 키쌍은 브라우저에서 생성되며, 비밀키는 한 번만 다운로드할 수 있고 서버에 저장되지 않습니다.',
+  'apikey.alg_pq_warn': '⚠ 양자내성 키 (Dilithium2 / ML-DSA-44) 가 라이브 검증 중입니다. 키쌍은 브라우저에서 생성되며, 비밀키는 한 번만 다운로드할 수 있고 서버에 저장되지 않습니다.',
   'apikey.alg_hmac_short': 'HMAC',
   'apikey.alg_pq_short': 'PQ',
   'apikey.alg_hybrid_short': 'HYBRID',
@@ -1146,8 +1146,8 @@ const ko = {
   'admin.pqAuditEmpty': '최근 24시간 내 PQ 검증 시도가 없습니다.',
   'admin.pqAuditOutcome': '결과',
   'admin.pqAuditCount': '횟수',
-  'admin.pqStubTitle': 'phase-h2-stub:',
-  'admin.pqStubBody': '현재 단계에서는 스키마와 UI만 활성화되어 있고, 실제 Dilithium2 서명 검증은 다음 스프린트에서 WASM 모듈과 함께 활성화됩니다. 기존 HMAC 키는 100% 호환됩니다.',
+  'admin.pqStubTitle': 'phase-s5-2-live:',
+  'admin.pqStubBody': 'Dilithium2 (ML-DSA-44) 서명 검증이 라이브로 동작합니다. signature_alg=dilithium2 또는 hybrid 로 생성된 키는 모든 요청마다 서버에서 실제 검증됩니다. 기존 HMAC-SHA256 키는 100% 호환됩니다.',
 
   // Admin — dedicated login page (/admin/login)
   'admin.loginTitle': '관리자 콘솔',

@@ -43,13 +43,10 @@ UPDATE system_markers
 -- 3) Insert the markers if (and only if) prior migrations didn't seed them.
 --    The OR IGNORE clauses keep this migration idempotent on databases
 --    that already have the rows from migration 0019.
-INSERT OR IGNORE INTO system_markers (key, value, description, updated_at)
+--    NOTE: system_markers schema is (key TEXT PK, value TEXT, updated_at TEXT)
+--    — no description column. Comments live here in the migration file
+--    instead of the table.
+INSERT OR IGNORE INTO system_markers (key, value, updated_at)
 VALUES
-  ('pq_api_keys_wasm_ready',
-   'on',
-   'Dilithium2 verifier (ml_dsa44) is bundled and live as of S5-2 PQ-Live A.',
-   datetime('now')),
-  ('pq_api_keys_integration',
-   'phase-s5-2-live',
-   'Integration phase label shown in the Admin API Keys (PQ) card.',
-   datetime('now'));
+  ('pq_api_keys_wasm_ready', 'on', datetime('now')),
+  ('pq_api_keys_integration', 'phase-s5-2-live', datetime('now'));
