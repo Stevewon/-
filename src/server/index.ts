@@ -15,6 +15,7 @@ import futuresRoutes from './routes/futures';
 import marginRoutes from './routes/margin';
 import v1Routes from './routes/v1';
 import { installObservability, captureError } from './utils/observability';
+import { geoBlock, geoStatusHandler } from './middleware/geo-block';
 
 export type Env = {
   DB: D1Database;
@@ -64,6 +65,17 @@ installObservability(app as any);
 
 // CORS for API routes
 app.use('/api/*', cors());
+
+// Sprint 5 Phase G1 — Geo-blocking gate.
+// Mounted directly after CORS so cross-origin preflight succeeds, but the
+// gate runs before any route handler / auth / self-scheduler. KR/US/CN/JP
+// + sanctioned countries get HTTP 451 with code GEO_BLOCKED.
+// /api/health* and /api/geo-status are bypassed inside the middleware.
+app.use('/api/*', geoBlock());
+
+// Public country probe used by the SPA on first paint to decide whether to
+// render the app or the "region blocked" splash. Always reachable.
+app.get('/api/geo-status', geoStatusHandler());
 
 // ============================================================================
 // Self-scheduling price-alert check
