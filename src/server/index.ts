@@ -73,7 +73,11 @@ app.use('/api/*', cors());
 // each incoming request gets the chance to kick off a background check.
 // ============================================================================
 const SELF_SCHEDULE_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+// Sprint 5 Phase D3-α: nonce sweep cadence — hourly is plenty since the
+// skew window caps at 600s and we delete rows older than 24h.
+const NONCE_SWEEP_INTERVAL_MS = 60 * 60 * 1000; // 60 minutes
 let lastSelfScheduleAttempt = 0;
+let lastNonceSweepAttempt = 0;
 
 app.use('/api/*', async (c, next) => {
   // Fast path: skip the DB lookup on every request by using an in-memory
@@ -123,6 +127,49 @@ app.use('/api/*', async (c, next) => {
             lastSelfScheduleAttempt = 0;
           }
         })()
+      );
+    }
+  }
+
+  // Sprint 5 Phase D3-α: piggy-back nonce sweep on incoming traffic.
+  // Cloudflare Pages does not expose cron triggers, so we reuse the proven
+  // self-scheduler pattern with its own marker (last_nonce_sweep_at) and
+  // a longer 60-minute cadence so we don't crowd the price-alert tick.
+  if (now - lastNonceSweepAttempt > 5 * 60_000) {
+    lastNonceSweepAttempt = now;
+    const ctx = c.executionCtx as any;
+    if (ctx && typeof ctx.waitUntil === 'function') {
+      ctx.waitUntil(
+        (async () => {
+          try {
+            const row = await c.env.DB.prepare(
+              "SELECT value FROM system_state WHERE key = 'last_nonce_sweep_at'",
+            ).first<{ value: string }>();
+
+            if (!row) {
+              await c.env.DB.prepare(
+                "INSERT OR IGNORE INTO system_state (key, value) VALUES ('last_nonce_sweep_at', '0')",
+              ).run();
+            }
+
+            const last = row ? parseInt(row.value || '0', 10) : 0;
+            if (now - last < NONCE_SWEEP_INTERVAL_MS) return;
+
+            const upd = await c.env.DB.prepare(
+              `UPDATE system_state SET value = ?, updated_at = CURRENT_TIMESTAMP
+               WHERE key = 'last_nonce_sweep_at' AND CAST(value AS INTEGER) = ?`,
+            ).bind(String(now), last).run();
+
+            if (!upd.meta || upd.meta.changes === 0) return;
+
+            const { sweepExpiredNonces } = await import('./lib/nonce-sweep');
+            const result = await sweepExpiredNonces(c.env);
+            console.log('[self-scheduler] nonce sweep:', result);
+          } catch (e) {
+            captureError(c as any, e, { where: 'self-scheduler-nonce' });
+            lastNonceSweepAttempt = 0;
+          }
+        })(),
       );
     }
   }
