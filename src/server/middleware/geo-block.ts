@@ -71,6 +71,12 @@ const BLOCKED_COUNTRIES = new Set<string>([
 const BYPASS_PATH_PREFIXES = [
   '/api/health',                    // /api/health, /api/health/ready
   '/api/geo-status',                // probed by SPA on first paint
+  // Sprint 5 Phase G1.1 — External Trading API (Sprint 5 Phase I1) is
+  // protected by per-key IP whitelist + Dilithium2 PQ signatures + nonce
+  // ledger; geo-blocking would only break authenticated bot/algo traders
+  // who are already cleared by stronger controls. Web SPA flows under
+  // /api/auth, /api/orders, /api/wallet, etc. remain blocked.
+  '/api/v1',
 ];
 
 /**
