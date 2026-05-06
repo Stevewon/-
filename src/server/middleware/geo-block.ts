@@ -80,6 +80,55 @@ const BYPASS_PATH_PREFIXES = [
 ];
 
 /**
+ * Header used to carry the admin bypass token. Operators set this header on
+ * their browser (via extension, bookmarklet, or curl --header) to access the
+ * site from a blocked jurisdiction. The expected token value is read from
+ * the `ADMIN_GEO_BYPASS_TOKEN` env binding (registered via Wrangler secret).
+ *
+ * Security model:
+ *   • Token is a 32-byte hex string (256 bits of entropy) → unguessable.
+ *   • Compared in timing-safe fashion to defeat side-channel attacks.
+ *   • Header name is intentionally non-standard so that ordinary CDN logs
+ *     and browser DevTools do not surface it under "common headers".
+ *   • Token never appears in URL, error body, or response — only the
+ *     fact-of-bypass is recorded (no value).
+ *   • Bypass works ONLY for geo-block; all other auth (JWT, API key, IP
+ *     whitelist, 2FA) remains in force.
+ */
+const ADMIN_BYPASS_HEADER = 'X-Admin-Bypass';
+
+/**
+ * Constant-time string comparison. Returns true iff `a` and `b` are equal.
+ * Avoids the early-exit behaviour of `===` which can leak the matching
+ * prefix length to a remote attacker over many requests.
+ */
+function timingSafeEqual(a: string, b: string): boolean {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
+/**
+ * Returns true if the request carries a valid admin bypass token. The
+ * expected token is read from the env binding `ADMIN_GEO_BYPASS_TOKEN`.
+ * If the env var is not configured (e.g., local dev), bypass is disabled
+ * and all KR/US/etc. requests are blocked normally.
+ */
+function hasAdminBypass(req: Request, env: unknown): boolean {
+  const expected =
+    (env as { ADMIN_GEO_BYPASS_TOKEN?: string } | undefined)
+      ?.ADMIN_GEO_BYPASS_TOKEN;
+  if (!expected || expected.length < 16) return false; // not configured
+  const provided = req.headers.get(ADMIN_BYPASS_HEADER);
+  if (!provided) return false;
+  return timingSafeEqual(provided, expected);
+}
+
+/**
  * Resolve the origin country code for a request. Cloudflare populates two
  * places we can read: `request.cf.country` (preferred — set on every edge
  * request) and the `CF-IPCountry` request header (legacy fallback).
@@ -110,6 +159,16 @@ export function geoBlock(): MiddlewareHandler {
     // Bypass health/status probes regardless of origin.
     for (const prefix of BYPASS_PATH_PREFIXES) {
       if (url.pathname.startsWith(prefix)) return next();
+    }
+
+    // Admin operator bypass — header-based escape hatch for the operator's
+    // own jurisdiction (e.g., owner accessing from KR for testing/admin).
+    // Token is a Wrangler secret (`ADMIN_GEO_BYPASS_TOKEN`) and is checked
+    // in timing-safe fashion. Bypass applies ONLY to geo-block; downstream
+    // auth (JWT, 2FA, IP whitelist) is still enforced by their own
+    // middlewares.
+    if (hasAdminBypass(c.req.raw, c.env)) {
+      return next();
     }
 
     const country = resolveCountry(c.req.raw);
