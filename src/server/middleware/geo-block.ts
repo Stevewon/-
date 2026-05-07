@@ -48,7 +48,15 @@ import type { MiddlewareHandler } from 'hono';
  */
 const BLOCKED_COUNTRIES = new Set<string>([
   // Tier-1: regulatory exclusion (offshore exchange policy)
-  'KR', // Republic of Korea — VASP unregistered offshore exchange must not solicit KR users
+  // NOTE (2026-05-07, Sprint 5 Phase G1.4): KR temporarily REMOVED from
+  // block list per owner directive — initial signup acquisition phase
+  // requires Korean users to register so we can validate the end-to-end
+  // flow (auth → KYC pending → wallet → trading). Re-add 'KR' here once
+  // offshore licensing (Seychelles IBC + Marshall DAO LLC) is issued and
+  // the owner gives explicit GO. Until then, KR users see the same UX
+  // as global users; the legal-counsel sign-off is captured in the
+  // Terms-of-Service residency declaration at signup time (Step 4).
+  // 'KR', // Republic of Korea — TEMPORARILY OPENED (2026-05-07)
   'US', // United States — SEC/CFTC/FinCEN; 50-state MTL otherwise required
   'CN', // China — outright ban on crypto trading
   'JP', // Japan — JFSA license required for Japanese residents
