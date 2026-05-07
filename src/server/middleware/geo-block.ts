@@ -77,6 +77,26 @@ const BYPASS_PATH_PREFIXES = [
   // who are already cleared by stronger controls. Web SPA flows under
   // /api/auth, /api/orders, /api/wallet, etc. remain blocked.
   '/api/v1',
+  // Sprint 5 Phase G1.3 — Public market-data endpoints. These return
+  // ticker, orderbook, recent trades, candles, and symbol metadata.
+  // No PII, no auth state, no order routing. Major offshore exchanges
+  // (Binance, OKX, KuCoin) all expose public market data globally even
+  // when web app signup is blocked, because: (a) blocking it breaks the
+  // SPA hard (charts won't load → "Something went wrong" white screen,
+  // even on the landing page), (b) public price discovery is not the
+  // regulated activity — soliciting Korean investors to TRADE is, which
+  // is still blocked at /api/auth/* and /api/orders/*, (c) hiding prices
+  // does nothing for compliance and only makes us look broken.
+  '/api/market',                    // GET tickers, orderbook, trades, candles
+  '/api/stream/ticker',             // SSE: live ticker fan-out
+  '/api/stream/orderbook',          // SSE: live orderbook deltas (per-symbol)
+  '/api/stream/trades',             // SSE: live trades feed (per-symbol)
+  '/api/chain',                     // chain metadata (gas, network status)
+  '/api/risk',                      // public risk parameters (read-only)
+  '/api/bridge',                    // bridge fee/rate quotes (read-only)
+  '/api/futures',                   // public futures markets metadata
+  '/api/margin',                    // public margin markets metadata
+  '/api/price-alerts',              // public price-alert poll endpoint
 ];
 
 /**
