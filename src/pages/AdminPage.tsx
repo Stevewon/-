@@ -90,7 +90,7 @@ export default function AdminPage() {
       onPriceAlertCheck={runPriceAlertCheck}
       alertChecking={alertChecking}
     >
-      {tab === 'overview'    && <Overview stats={stats} trends={trends} topMarkets={topMarkets} activity={activity} t={t} />}
+      {tab === 'overview'    && <Overview stats={stats} trends={trends} topMarkets={topMarkets} activity={activity} t={t} onJump={(k: Tab) => setTab(k)} />}
       {tab === 'users'       && <UsersTab t={t} onUpdate={refresh} />}
       {tab === 'kyc'         && <KycTab t={t} onUpdate={refresh} />}
       {tab === 'deposits'    && <DepositsTab t={t} onUpdate={refresh} />}
@@ -119,7 +119,41 @@ export default function AdminPage() {
 // ============================================================================
 // Overview tab
 // ============================================================================
-function Overview({ stats, trends, topMarkets, activity, t }: any) {
+function Overview({ stats, trends, topMarkets, activity, t, onJump }: any) {
+  // Sprint 5 Phase A1 — "Action queue" banner: surfaces every operator
+  // task that is currently waiting on a human (KYC review, manual coin
+  // deposits, withdrawal approvals). Hidden when nothing is pending.
+  const pendingItems = [
+    {
+      key: 'kyc' as const,
+      count: Number(stats.pendingKyc || 0),
+      label: t('admin.pendingKyc'),
+      icon: ShieldCheck,
+      color: 'text-exchange-yellow',
+      ring: 'ring-exchange-yellow/40',
+      bg: 'bg-exchange-yellow/10',
+    },
+    {
+      key: 'deposits' as const,
+      count: Number(stats.pendingDeposits || 0),
+      label: t('admin.pendingDeposits'),
+      icon: ArrowDownToLine,
+      color: 'text-exchange-buy',
+      ring: 'ring-exchange-buy/40',
+      bg: 'bg-exchange-buy/10',
+    },
+    {
+      key: 'withdrawals' as const,
+      count: Number(stats.pendingWithdrawals || 0),
+      label: t('admin.pendingWithdrawals'),
+      icon: ArrowUpFromLine,
+      color: 'text-exchange-sell',
+      ring: 'ring-exchange-sell/40',
+      bg: 'bg-exchange-sell/10',
+    },
+  ];
+  const totalPending = pendingItems.reduce((s, it) => s + it.count, 0);
+
   const cards = [
     { label: t('admin.totalUsers'),     value: stats.users,              sub: `+${stats.newUsers24h||0} ${t('admin.last24h')}`, icon: Users,           color: 'text-blue-400',           bg: 'bg-blue-400/10' },
     { label: t('admin.trades24h'),      value: stats.trades24h,          sub: `${stats.trades||0} ${t('admin.total')}`,        icon: BarChart3,       color: 'text-exchange-buy',       bg: 'bg-exchange-buy/10' },
@@ -133,6 +167,52 @@ function Overview({ stats, trends, topMarkets, activity, t }: any) {
 
   return (
     <>
+      {/* ─── Action queue banner (Sprint 5 Phase A1) ─────────────────── */}
+      {totalPending > 0 && (
+        <div className="card p-3 sm:p-4 mb-4 border border-exchange-yellow/30 bg-exchange-yellow/5">
+          <div className="flex items-center gap-2 mb-2.5">
+            <div className="w-7 h-7 rounded-lg bg-exchange-yellow/15 flex items-center justify-center shrink-0">
+              <Clock size={14} className="text-exchange-yellow" />
+            </div>
+            <span className="text-sm font-semibold text-exchange-yellow">
+              {t('admin.actionQueueTitle', { n: totalPending })}
+            </span>
+            <span className="text-[11px] text-exchange-text-third hidden sm:inline">
+              · {t('admin.actionQueueHint')}
+            </span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            {pendingItems.map(({ key, count, label, icon: Icon, color, ring, bg }) => (
+              <button
+                key={key}
+                disabled={count === 0}
+                onClick={() => count > 0 && onJump?.(key)}
+                className={`flex items-center gap-2.5 p-2.5 rounded-lg border border-exchange-border ${
+                  count > 0
+                    ? `bg-exchange-card hover:${bg} hover:ring-2 hover:${ring} transition-all cursor-pointer`
+                    : 'bg-exchange-card/40 opacity-50 cursor-not-allowed'
+                }`}
+              >
+                <div className={`w-8 h-8 rounded-lg ${bg} flex items-center justify-center shrink-0`}>
+                  <Icon size={15} className={color} />
+                </div>
+                <div className="flex-1 min-w-0 text-left">
+                  <div className="text-[10px] text-exchange-text-third truncate">{label}</div>
+                  <div className={`text-lg font-bold tabular-nums ${count > 0 ? color : 'text-exchange-text-third'}`}>
+                    {count}
+                  </div>
+                </div>
+                {count > 0 && (
+                  <span className="text-[10px] text-exchange-text-secondary whitespace-nowrap">
+                    {t('admin.actionQueueGo')} →
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
         {cards.map(({ label, value, sub, icon: Icon, color, bg, isString }, i) => (
           <div key={i} className="card p-4">
@@ -636,12 +716,22 @@ function WithdrawalsTab({ t, onUpdate }: any) {
     }
   };
 
+  // Sprint 5 Phase A1 — show pending count as a yellow badge so the
+  // operator can tell at a glance how many withdrawals are awaiting
+  // approval, even when filtered to another status.
+  const pendingCount = status === 'pending' ? list.length : null;
+
   return (
     <div>
       <div className="flex items-center gap-1 mb-3 bg-exchange-card rounded-lg border border-exchange-border p-1 w-fit">
         {['pending', 'completed', 'rejected', ''].map(s => (
-          <button key={s || 'all'} onClick={() => setStatus(s)} className={`px-3 py-1 text-xs rounded-md ${status === s ? 'bg-exchange-hover text-exchange-yellow' : 'text-exchange-text-secondary'}`}>
+          <button key={s || 'all'} onClick={() => setStatus(s)} className={`px-3 py-1 text-xs rounded-md flex items-center gap-1.5 ${status === s ? 'bg-exchange-hover text-exchange-yellow' : 'text-exchange-text-secondary'}`}>
             {s === '' ? t('common.all') : s}
+            {s === 'pending' && pendingCount !== null && pendingCount > 0 && (
+              <span className="bg-exchange-yellow text-black text-[9px] font-bold rounded px-1.5 py-0.5 tabular-nums">
+                {pendingCount}
+              </span>
+            )}
           </button>
         ))}
       </div>
@@ -701,7 +791,10 @@ function WithdrawalsTab({ t, onUpdate }: any) {
 // Deposits tab (admin view + manual credit)
 // ============================================================================
 function DepositsTab({ t, onUpdate }: any) {
-  const [status, setStatus] = useState('');
+  // Sprint 5 Phase A1 — default to "pending" so the operator immediately
+  // sees the manual-deposit work queue when entering this tab. Tab order
+  // is also reshuffled to put pending first.
+  const [status, setStatus] = useState('pending');
   const [list, setList] = useState<any[]>([]);
   const [showManual, setShowManual] = useState(false);
 
@@ -716,13 +809,20 @@ function DepositsTab({ t, onUpdate }: any) {
   };
   useEffect(() => { load(); }, [status]);
 
+  const pendingCount = status === 'pending' ? list.length : null;
+
   return (
     <div>
       <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
         <div className="flex items-center gap-1 bg-exchange-card rounded-lg border border-exchange-border p-1 w-fit">
-          {['', 'pending', 'completed', 'rejected'].map(s => (
-            <button key={s || 'all'} onClick={() => setStatus(s)} className={`px-3 py-1 text-xs rounded-md ${status === s ? 'bg-exchange-hover text-exchange-yellow' : 'text-exchange-text-secondary'}`}>
+          {['pending', 'completed', 'rejected', ''].map(s => (
+            <button key={s || 'all'} onClick={() => setStatus(s)} className={`px-3 py-1 text-xs rounded-md flex items-center gap-1.5 ${status === s ? 'bg-exchange-hover text-exchange-yellow' : 'text-exchange-text-secondary'}`}>
               {s === '' ? t('common.all') : s}
+              {s === 'pending' && pendingCount !== null && pendingCount > 0 && (
+                <span className="bg-exchange-yellow text-black text-[9px] font-bold rounded px-1.5 py-0.5 tabular-nums">
+                  {pendingCount}
+                </span>
+              )}
             </button>
           ))}
         </div>
