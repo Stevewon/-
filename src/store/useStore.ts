@@ -190,33 +190,52 @@ const useStore = create<ExchangeStore>((set, get) => ({
   tradeHistory: [],
 
   fetchOpenOrders: async (market) => {
+    // Guard: only call authed endpoints when a user is present. Prevents
+    // 401/451 noise on /trade/* when a logged-out visitor lands there via
+    // the logo redirect (`/` -> `/trade/BTC-USDT`).
+    if (!get().user) return;
     try {
       const params = market ? `?status=open&market=${market}` : '?status=open';
       const res = await api.get(`/orders/my${params}`);
       set({ openOrders: res.data });
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      if ((e as any)?.__geoBlocked) return;
+      console.error(e);
+    }
   },
 
   fetchOrderHistory: async () => {
+    if (!get().user) return;
     try {
       const res = await api.get('/orders/my?status=closed');
       set({ orderHistory: res.data });
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      if ((e as any)?.__geoBlocked) return;
+      console.error(e);
+    }
   },
 
   fetchTradeHistory: async () => {
+    if (!get().user) return;
     try {
       const res = await api.get('/orders/my/trades');
       set({ tradeHistory: res.data });
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      if ((e as any)?.__geoBlocked) return;
+      console.error(e);
+    }
   },
 
   wallets: [],
   fetchWallets: async () => {
+    if (!get().user) return;
     try {
       const res = await api.get('/wallet');
       set({ wallets: res.data });
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      if ((e as any)?.__geoBlocked) return;
+      console.error(e);
+    }
   },
 }));
 
