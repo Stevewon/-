@@ -1,21 +1,26 @@
 // ============================================================================
 // Minimal transactional mailer abstraction.
 // ----------------------------------------------------------------------------
-// Selects provider via env:
-//   - RESEND_API_KEY        → resend.com
-//   - (fallback)            → no-op; logs a warning. Returns `dev` in response.
+// Provider priority (auto-fallback order):
+//   1. RESEND_API_KEY        → resend.com (paid, when configured)
+//   2. MailChannels API      → free, built into Cloudflare Workers, requires
+//                              only a single SPF DNS record (`v=spf1
+//                              include:relay.mailchannels.net ~all`). Used
+//                              when no RESEND_API_KEY is set.
+//   3. (no-op)               → only when MAIL_DEV_NOOP=1 explicitly. Returns
+//                              {sent:false, provider:'dev'}; never used in
+//                              production by accident.
 //
-// Wire into wrangler.jsonc vars / secrets:
-//   npx wrangler pages secret put RESEND_API_KEY --project-name=quantaex
-//   npx wrangler pages secret put MAIL_FROM      --project-name=quantaex
-//
-// Frontend/UX never sees the provider — only {sent:true|false, dev_token?}.
+// Sprint 5 Phase E1 (2026-05-07): MailChannels promoted to default fallback
+// so the boss can launch user signup verification immediately without paying
+// for a Resend account. DNS SPF record is the only ops requirement.
 // ============================================================================
 
 export type MailEnv = {
   RESEND_API_KEY?: string;
   MAIL_FROM?: string;
-  APP_URL?: string; // used to build verification / reset URLs
+  APP_URL?: string;        // used to build verification / reset URLs
+  MAIL_DEV_NOOP?: string;  // '1' → skip send entirely (local dev / tests)
 };
 
 export interface MailPayload {
@@ -25,9 +30,23 @@ export interface MailPayload {
   text?: string;
 }
 
+/** Parse "Name <addr@x>" or "addr@x" into {name?, email}. */
+function parseFrom(from: string): { name?: string; email: string } {
+  const m = from.match(/^\s*(.*?)\s*<\s*([^>]+)\s*>\s*$/);
+  if (m) return { name: m[1].trim() || undefined, email: m[2].trim() };
+  return { email: from.trim() };
+}
+
 export async function sendMail(env: MailEnv, payload: MailPayload): Promise<{ sent: boolean; provider: string; error?: string }> {
   const from = env.MAIL_FROM || 'QuantaEX <no-reply@quantaex.io>';
 
+  // Explicit dev no-op only when MAIL_DEV_NOOP=1; never silently disable.
+  if (env.MAIL_DEV_NOOP === '1') {
+    console.log('[mailer] MAIL_DEV_NOOP=1 — skipping send for', payload.to);
+    return { sent: false, provider: 'dev' };
+  }
+
+  // ── Provider 1: Resend (when API key is configured) ─────────────────────
   if (env.RESEND_API_KEY) {
     try {
       const r = await fetch('https://api.resend.com/emails', {
@@ -47,17 +66,56 @@ export async function sendMail(env: MailEnv, payload: MailPayload): Promise<{ se
       if (!r.ok) {
         const t = await r.text();
         console.warn('[mailer] resend failed:', r.status, t);
-        return { sent: false, provider: 'resend', error: `${r.status}` };
+        // Fall through to MailChannels rather than giving up.
+      } else {
+        return { sent: true, provider: 'resend' };
       }
-      return { sent: true, provider: 'resend' };
     } catch (e: any) {
       console.warn('[mailer] resend exception:', e);
-      return { sent: false, provider: 'resend', error: String(e?.message || e) };
+      // Fall through to MailChannels.
     }
   }
 
-  console.warn('[mailer] no provider configured — skipping send for', payload.to);
-  return { sent: false, provider: 'dev' };
+  // ── Provider 2: MailChannels (Cloudflare Workers default) ──────────────
+  // Free, no API key, requires only:
+  //   • SPF DNS: TXT @ "v=spf1 include:relay.mailchannels.net ~all"
+  //   • (Strongly recommended) DKIM per MailChannels docs.
+  // Endpoint accepts a Resend-like JSON shape but with `personalizations`.
+  try {
+    const fromParsed = parseFrom(from);
+    const r = await fetch('https://api.mailchannels.net/tx/v1/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        personalizations: [{ to: [{ email: payload.to }] }],
+        from: { email: fromParsed.email, name: fromParsed.name || 'QuantaEX' },
+        subject: payload.subject,
+        content: [
+          // Plain text MUST come before HTML per RFC 1341 multipart/alternative.
+          { type: 'text/plain', value: payload.text || stripTags(payload.html) },
+          { type: 'text/html',  value: payload.html },
+        ],
+      }),
+    });
+    if (!r.ok) {
+      const t = await r.text();
+      console.warn('[mailer] mailchannels failed:', r.status, t);
+      return { sent: false, provider: 'mailchannels', error: `${r.status}: ${t.slice(0, 200)}` };
+    }
+    return { sent: true, provider: 'mailchannels' };
+  } catch (e: any) {
+    console.warn('[mailer] mailchannels exception:', e);
+    return { sent: false, provider: 'mailchannels', error: String(e?.message || e) };
+  }
+}
+
+/** Last-resort plain-text generator from HTML, used when text is missing. */
+function stripTags(html: string): string {
+  return html.replace(/<style[\s\S]*?<\/style>/gi, '')
+             .replace(/<script[\s\S]*?<\/script>/gi, '')
+             .replace(/<[^>]+>/g, ' ')
+             .replace(/\s+/g, ' ')
+             .trim();
 }
 
 /** Very small HTML template for the transactional flows. */
