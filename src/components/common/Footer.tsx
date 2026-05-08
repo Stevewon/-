@@ -109,8 +109,64 @@ export default function Footer() {
   ];
 
   return (
-    <footer className="bg-[#0B0E11] border-t border-exchange-border mt-auto">
-      <div className="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8 pt-8 sm:pt-10 lg:pt-14 pb-6 sm:pb-8">
+    <footer className="bg-[#0B0E11] border-t border-exchange-border mt-auto" style={{ marginTop: '40px' }}>
+      {/* Desktop multi-column grid uses style block for hard-coded spec values */}
+      <style>{`
+        .qx-footer-wrapper {
+          width: 100%;
+          max-width: 1600px;
+          margin: 0 auto;
+          padding: 32px 16px 24px;
+        }
+        @media (min-width: 768px) {
+          .qx-footer-wrapper {
+            padding: 40px 24px 48px;
+          }
+        }
+        .qx-footer-grid {
+          display: grid;
+          grid-template-columns: 1.2fr repeat(5, 1fr);
+          gap: 32px;
+        }
+        @media (max-width: 1279px) {
+          .qx-footer-grid {
+            grid-template-columns: 1.2fr 1fr 1fr 1fr;
+            row-gap: 32px;
+          }
+          .qx-footer-grid .qx-footer-col-support {
+            grid-column: 2 / 5;
+          }
+        }
+        .qx-footer-col-title {
+          font-size: 14px;
+          font-weight: 700;
+          color: var(--exchange-text, #EAECEF);
+          margin-bottom: 16px;
+          letter-spacing: 0.01em;
+        }
+        .qx-footer-link-list {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+        .qx-footer-bottom {
+          margin-top: 40px;
+          padding-top: 24px;
+          border-top: 1px solid var(--exchange-border, #1F2329);
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 24px;
+          flex-wrap: wrap;
+        }
+        .qx-footer-social-grid {
+          display: grid;
+          grid-template-columns: repeat(5, 36px);
+          gap: 8px;
+          margin-bottom: 20px;
+        }
+      `}</style>
+      <div className="qx-footer-wrapper">
 
         {/* ===== MOBILE FOOTER (< md) ===== */}
         <div className="md:hidden">
@@ -163,93 +219,91 @@ export default function Footer() {
           </div>
         </div>
 
-        {/* ===== DESKTOP FOOTER (>= md) ===== */}
+        {/* ===== DESKTOP FOOTER (>= md) — 6-column grid ===== */}
         <div className="hidden md:block">
-          <div className="grid grid-cols-12 gap-6 lg:gap-10">
+          <div className="qx-footer-grid">
 
-            <div className="col-span-2">
-              <h4 className="text-sm font-bold text-exchange-text mb-5">{t('footer.community')}</h4>
-              <div className="grid grid-cols-5 gap-2 mb-6">
+            {/* Column 1 — Community / Locale (wider 1.2fr) */}
+            <div>
+              <h4 className="qx-footer-col-title">{t('footer.community')}</h4>
+              <div className="qx-footer-social-grid">
                 {socialLinks.map(({ icon: Icon, label }) => (
-                  <a key={label} href="#" target="_blank" rel="noopener noreferrer"
-                    className="w-9 h-9 rounded-full bg-exchange-hover/60 flex items-center justify-center text-exchange-text-secondary hover:text-exchange-text hover:bg-exchange-hover transition-all" title={label}>
+                  <a
+                    key={label}
+                    href="#"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title={label}
+                    className="rounded-full bg-exchange-hover/60 flex items-center justify-center text-exchange-text-secondary hover:text-exchange-text hover:bg-exchange-hover transition-all"
+                    style={{ width: '36px', height: '36px' }}
+                  >
                     <Icon size={15} />
                   </a>
                 ))}
               </div>
-              <div className="flex flex-col gap-2.5">
-                <div className="flex items-center gap-2">
-                  <Globe size={13} className="text-exchange-text-third" />
+              <div className="flex flex-col" style={{ gap: '12px' }}>
+                <div className="flex items-center" style={{ gap: '8px' }}>
+                  <Globe size={14} className="text-exchange-text-third" />
                   <LangSwitch />
                 </div>
-                <div className="flex items-center gap-2 text-xs text-exchange-text-secondary">
-                  <Globe size={13} className="text-exchange-text-third" />
+                <div className="flex items-center text-exchange-text-secondary" style={{ gap: '8px', fontSize: '13px' }}>
+                  <Globe size={14} className="text-exchange-text-third" />
                   <span>USD</span>
                 </div>
-                <div className="flex items-center gap-2 text-xs text-exchange-text-secondary">
-                  <Moon size={13} className="text-exchange-text-third" />
+                <div className="flex items-center text-exchange-text-secondary" style={{ gap: '8px', fontSize: '13px' }}>
+                  <Moon size={14} className="text-exchange-text-third" />
                   <span>{t('footer.darkMode')}</span>
                 </div>
               </div>
             </div>
 
-            <div className="col-span-2">
-              <h4 className="text-sm font-bold text-exchange-text mb-5">{t('footer.aboutUs')}</h4>
-              <div className="flex flex-col gap-[11px]">
+            {/* Column 2 — About */}
+            <div>
+              <h4 className="qx-footer-col-title">{t('footer.aboutUs')}</h4>
+              <div className="qx-footer-link-list">
                 {aboutLinks.map((l, i) => <FooterLink key={i} {...l} />)}
               </div>
             </div>
 
-            <div className="col-span-2">
-              <h4 className="text-sm font-bold text-exchange-text mb-5">{t('footer.products')}</h4>
-              <div className="flex flex-col gap-[11px]">
+            {/* Column 3 — Products */}
+            <div>
+              <h4 className="qx-footer-col-title">{t('footer.products')}</h4>
+              <div className="qx-footer-link-list">
                 {productLinks.map((l, i) => <FooterLink key={i} {...l} />)}
               </div>
             </div>
 
-            <div className="col-span-3">
-              <div className="grid grid-cols-2 gap-6">
-                <div>
-                  <h4 className="text-sm font-bold text-exchange-text mb-5">{t('footer.buyCrypto')}</h4>
-                  <div className="flex flex-col gap-[11px]">
-                    {buyLinks.map((l, i) => <FooterLink key={i} {...l} />)}
-                  </div>
-                  <h4 className="text-sm font-bold text-exchange-text mt-6 mb-5">{t('footer.service')}</h4>
-                  <div className="flex flex-col gap-[11px]">
-                    {serviceLinks.map((l, i) => <FooterLink key={i} {...l} />)}
-                  </div>
-                </div>
-                <div>
-                  <h4 className="text-sm font-bold text-exchange-text mb-5">{t('footer.support')}</h4>
-                  <div className="flex flex-col gap-[11px]">
-                    {supportLinks.map((l, i) => <FooterLink key={i} {...l} />)}
-                  </div>
-                </div>
+            {/* Column 4 — Buy Crypto */}
+            <div>
+              <h4 className="qx-footer-col-title">{t('footer.buyCrypto')}</h4>
+              <div className="qx-footer-link-list">
+                {buyLinks.map((l, i) => <FooterLink key={i} {...l} />)}
               </div>
             </div>
 
-            <div className="col-span-1 flex flex-col items-center">
-              <div className="w-16 h-16 lg:w-[72px] lg:h-[72px] bg-exchange-hover/40 rounded-lg flex items-center justify-center mb-2">
-                <svg width="36" height="36" viewBox="0 0 40 40" fill="none" className="text-exchange-text-third">
-                  <rect x="4" y="4" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="1.5" fill="none" />
-                  <rect x="24" y="4" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="1.5" fill="none" />
-                  <rect x="4" y="24" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="1.5" fill="none" />
-                  <rect x="8" y="8" width="4" height="4" fill="currentColor" />
-                  <rect x="28" y="8" width="4" height="4" fill="currentColor" />
-                  <rect x="8" y="28" width="4" height="4" fill="currentColor" />
-                  <rect x="24" y="24" width="4" height="4" fill="currentColor" />
-                  <rect x="30" y="30" width="6" height="6" rx="1" fill="currentColor" />
-                </svg>
+            {/* Column 5 — Service */}
+            <div>
+              <h4 className="qx-footer-col-title">{t('footer.service')}</h4>
+              <div className="qx-footer-link-list">
+                {serviceLinks.map((l, i) => <FooterLink key={i} {...l} />)}
               </div>
-              <span className="text-[10px] text-exchange-text-third text-center leading-tight">{t('footer.downloadApp')}</span>
+            </div>
+
+            {/* Column 6 — Support */}
+            <div className="qx-footer-col-support">
+              <h4 className="qx-footer-col-title">{t('footer.support')}</h4>
+              <div className="qx-footer-link-list">
+                {supportLinks.map((l, i) => <FooterLink key={i} {...l} />)}
+              </div>
             </div>
           </div>
 
-          <div className="border-t border-exchange-border mt-10 pt-6 flex items-center justify-between gap-6">
-            <div className="flex items-center gap-2.5">
+          {/* Bottom row — logo + copyright */}
+          <div className="qx-footer-bottom">
+            <div className="flex items-center" style={{ gap: '10px' }}>
               <QuantaLogo size={20} showText={true} />
             </div>
-            <p className="text-[11px] text-exchange-text-third text-right leading-relaxed">
+            <p className="text-exchange-text-third text-right leading-relaxed" style={{ fontSize: '12px' }}>
               &copy; 2026 {t('footer.copyright')}
               <span className="mx-1.5 text-exchange-border">|</span>
               {t('footer.disclaimer')}
