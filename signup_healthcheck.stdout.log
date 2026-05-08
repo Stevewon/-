@@ -529,3 +529,21 @@
 [2026-05-08T12:09:31.565Z] OK register=200 login=200 me=200 uid=1e8b174d email=hc_1778242170860@example.com
 [2026-05-08T12:14:32.376Z] OK register=200 login=200 me=200 uid=a614304b email=hc_1778242471596@example.com
 [2026-05-08T12:19:33.405Z] OK register=200 login=200 me=200 uid=3ed16abd email=hc_1778242772397@example.com
+[2026-05-08T12:24:34.229Z] OK register=200 login=200 me=200 uid=4122adb7 email=hc_1778243073496@example.com
+[2026-05-08T12:29:34.546Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1826}
+[2026-05-08T12:34:34.924Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1526}
+[2026-05-08T12:34:34.924Z] [ALERT] SIGNUP REGRESSION — 2 consecutive cycles failed. Check production immediately.
+[2026-05-08T12:39:35.134Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1225}
+[2026-05-08T12:39:35.135Z] [ALERT] SIGNUP REGRESSION — 3 consecutive cycles failed. Check production immediately.
+[2026-05-08T12:44:35.454Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":925}
+[2026-05-08T12:44:35.454Z] [ALERT] SIGNUP REGRESSION — 4 consecutive cycles failed. Check production immediately.
+[2026-05-08T12:49:35.814Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":625}
+[2026-05-08T12:49:35.815Z] [ALERT] SIGNUP REGRESSION — 5 consecutive cycles failed. Check production immediately.
+[2026-05-08T12:54:36.164Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":324}
+[2026-05-08T12:54:36.165Z] [ALERT] SIGNUP REGRESSION — 6 consecutive cycles failed. Check production immediately.
+[2026-05-08T12:59:36.353Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":24}
+[2026-05-08T12:59:36.354Z] [ALERT] SIGNUP REGRESSION — 7 consecutive cycles failed. Check production immediately.
+[2026-05-08T13:04:37.131Z] OK register=200 login=200 me=200 uid=782727b2 email=hc_1778245476397@example.com
+[2026-05-08T13:09:37.903Z] OK register=200 login=200 me=200 uid=981437c2 email=hc_1778245777146@example.com
+[2026-05-08T13:14:38.635Z] OK register=200 login=200 me=200 uid=e32b16b8 email=hc_1778246077998@example.com
+[2026-05-08T13:19:39.684Z] OK register=200 login=200 me=200 uid=6c7d2301 email=hc_1778246378647@example.com
