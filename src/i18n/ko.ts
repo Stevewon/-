@@ -198,6 +198,9 @@ const ko = {
 
   // Wallet: Deposit/Withdraw modals
   'wallet.network': '\ub124\ud2b8\uc6cc\ud06c',
+  'wallet.depositSubtitle': '\uc9c0\uac11 \uc8fc\uc18c\ub85c \uc554\ud638\ud654\ud3d0\ub97c \uc804\uc1a1\ud558\uc138\uc694',
+  'wallet.withdrawSubtitle': '\uc678\ubd80 \uc8fc\uc18c\ub85c \uc554\ud638\ud654\ud3d0\ub97c \uc804\uc1a1\ud558\uc138\uc694',
+  'wallet.currentBalance': '\ubcf4\uc720\ub7c9',
   'wallet.depositAddress': '\uc785\uae08 \uc8fc\uc18c',
   'wallet.minDeposit': '\ucd5c\uc18c \uc785\uae08',
   'wallet.confirmations': '\ud655\uc778 \ube14\ub85d',

@@ -198,6 +198,9 @@ const en = {
 
   // Wallet: Deposit/Withdraw modals
   'wallet.network': 'Network',
+  'wallet.depositSubtitle': 'Send crypto to your wallet address',
+  'wallet.withdrawSubtitle': 'Send crypto to an external address',
+  'wallet.currentBalance': 'Balance',
   'wallet.depositAddress': 'Deposit Address',
   'wallet.minDeposit': 'Min Deposit',
   'wallet.confirmations': 'Confirmations',

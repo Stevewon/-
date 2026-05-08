@@ -1,0 +1,529 @@
+[2026-05-07T05:28:55.485Z] Signup healthcheck daemon started — interval=300s host=https://quantaex.io
+[2026-05-07T05:28:56.488Z] [ALERT] profile exception (uid=dee0fcf6-488f-4bc7-aee6-97afef53c0ea): Unexpected token '<', "<!DOCTYPE "... is not valid JSON
+[2026-05-07T05:33:38.662Z] Signup healthcheck daemon started — interval=300s host=https://quantaex.io
+[2026-05-07T05:33:39.809Z] OK register=200 login=200 me=200 uid=891da007 email=hc_1778132018667@example.com
+[2026-05-07T05:38:40.848Z] OK register=200 login=200 me=200 uid=449afa14 email=hc_1778132319813@example.com
+[2026-05-07T05:43:41.707Z] OK register=200 login=200 me=200 uid=da4e1b63 email=hc_1778132620933@example.com
+[2026-05-07T05:48:41.931Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":679}
+[2026-05-07T05:53:42.300Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":378}
+[2026-05-07T05:53:42.300Z] [ALERT] SIGNUP REGRESSION — 2 consecutive cycles failed. Check production immediately.
+[2026-05-07T05:58:42.751Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":78}
+[2026-05-07T05:58:42.752Z] [ALERT] SIGNUP REGRESSION — 3 consecutive cycles failed. Check production immediately.
+[2026-05-07T06:03:43.544Z] OK register=200 login=200 me=200 uid=3ca6859f email=hc_1778133822763@example.com
+[2026-05-07T06:08:44.337Z] OK register=200 login=200 me=200 uid=b476e38d email=hc_1778134123638@example.com
+[2026-05-07T06:13:45.360Z] OK register=200 login=200 me=200 uid=bd338319 email=hc_1778134424364@example.com
+[2026-05-07T06:18:46.425Z] OK register=200 login=200 me=200 uid=bf45c62e email=hc_1778134725414@example.com
+[2026-05-07T06:23:47.337Z] OK register=200 login=200 me=200 uid=3196e499 email=hc_1778135026463@example.com
+[2026-05-07T06:28:47.618Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1873}
+[2026-05-07T06:33:47.999Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1573}
+[2026-05-07T06:33:47.999Z] [ALERT] SIGNUP REGRESSION — 2 consecutive cycles failed. Check production immediately.
+[2026-05-07T06:38:48.350Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1272}
+[2026-05-07T06:38:48.350Z] [ALERT] SIGNUP REGRESSION — 3 consecutive cycles failed. Check production immediately.
+[2026-05-07T06:43:48.606Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":972}
+[2026-05-07T06:43:48.607Z] [ALERT] SIGNUP REGRESSION — 4 consecutive cycles failed. Check production immediately.
+[2026-05-07T06:48:48.858Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":672}
+[2026-05-07T06:48:48.859Z] [ALERT] SIGNUP REGRESSION — 5 consecutive cycles failed. Check production immediately.
+[2026-05-07T06:53:49.187Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":371}
+[2026-05-07T06:53:49.187Z] [ALERT] SIGNUP REGRESSION — 6 consecutive cycles failed. Check production immediately.
+[2026-05-07T06:58:49.367Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":71}
+[2026-05-07T06:58:49.367Z] [ALERT] SIGNUP REGRESSION — 7 consecutive cycles failed. Check production immediately.
+[2026-05-07T07:03:50.462Z] OK register=200 login=200 me=200 uid=d9bee4db email=hc_1778137429407@example.com
+[2026-05-07T07:08:51.565Z] OK register=200 login=200 me=200 uid=52b5be19 email=hc_1778137730507@example.com
+[2026-05-07T07:13:52.856Z] OK register=200 login=200 me=200 uid=2ee1c3d1 email=hc_1778138031607@example.com
+[2026-05-07T07:18:53.800Z] OK register=200 login=200 me=200 uid=340fec44 email=hc_1778138332907@example.com
+[2026-05-07T07:23:54.752Z] OK register=200 login=200 me=200 uid=a6bf95ec email=hc_1778138633813@example.com
+[2026-05-07T07:28:54.938Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1866}
+[2026-05-07T07:33:55.272Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1565}
+[2026-05-07T07:33:55.272Z] [ALERT] SIGNUP REGRESSION — 2 consecutive cycles failed. Check production immediately.
+[2026-05-07T07:38:55.605Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1265}
+[2026-05-07T07:38:55.605Z] [ALERT] SIGNUP REGRESSION — 3 consecutive cycles failed. Check production immediately.
+[2026-05-07T07:43:56.050Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":965}
+[2026-05-07T07:43:56.050Z] [ALERT] SIGNUP REGRESSION — 4 consecutive cycles failed. Check production immediately.
+[2026-05-07T07:48:56.377Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":664}
+[2026-05-07T07:48:56.377Z] [ALERT] SIGNUP REGRESSION — 5 consecutive cycles failed. Check production immediately.
+[2026-05-07T07:53:56.674Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":364}
+[2026-05-07T07:53:56.674Z] [ALERT] SIGNUP REGRESSION — 6 consecutive cycles failed. Check production immediately.
+[2026-05-07T07:58:57.058Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":63}
+[2026-05-07T07:58:57.059Z] [ALERT] SIGNUP REGRESSION — 7 consecutive cycles failed. Check production immediately.
+[2026-05-07T08:03:58.439Z] OK register=200 login=200 me=200 uid=9e51a196 email=hc_1778141037159@example.com
+[2026-05-07T08:08:59.203Z] OK register=200 login=200 me=200 uid=9c02620e email=hc_1778141338464@example.com
+[2026-05-07T08:14:00.079Z] OK register=200 login=200 me=200 uid=695da33e email=hc_1778141639303@example.com
+[2026-05-07T08:19:01.245Z] OK register=200 login=200 me=200 uid=cc1e2fec email=hc_1778141940168@example.com
+[2026-05-07T08:24:02.042Z] OK register=200 login=200 me=200 uid=d053a915 email=hc_1778142241255@example.com
+[2026-05-07T08:29:02.451Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1858}
+[2026-05-07T08:34:02.685Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1558}
+[2026-05-07T08:34:02.685Z] [ALERT] SIGNUP REGRESSION — 2 consecutive cycles failed. Check production immediately.
+[2026-05-07T08:39:03.042Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1258}
+[2026-05-07T08:39:03.042Z] [ALERT] SIGNUP REGRESSION — 3 consecutive cycles failed. Check production immediately.
+[2026-05-07T08:44:03.414Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":957}
+[2026-05-07T08:44:03.415Z] [ALERT] SIGNUP REGRESSION — 4 consecutive cycles failed. Check production immediately.
+[2026-05-07T08:49:03.655Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":657}
+[2026-05-07T08:49:03.655Z] [ALERT] SIGNUP REGRESSION — 5 consecutive cycles failed. Check production immediately.
+[2026-05-07T08:54:04.030Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":357}
+[2026-05-07T08:54:04.030Z] [ALERT] SIGNUP REGRESSION — 6 consecutive cycles failed. Check production immediately.
+[2026-05-07T08:59:04.360Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":56}
+[2026-05-07T08:59:04.361Z] [ALERT] SIGNUP REGRESSION — 7 consecutive cycles failed. Check production immediately.
+[2026-05-07T09:04:05.614Z] OK register=200 login=200 me=200 uid=43f9a686 email=hc_1778144644407@example.com
+[2026-05-07T09:13:58.082Z] OK register=200 login=200 me=200 uid=c8330eb3 email=hc_1778145237239@example.com
+[2026-05-07T09:18:59.267Z] OK register=200 login=200 me=200 uid=d9bb6551 email=hc_1778145538129@example.com
+[2026-05-07T09:24:00.069Z] OK register=200 login=200 me=200 uid=cff6fcd6 email=hc_1778145839296@example.com
+[2026-05-07T09:29:01.354Z] OK register=200 login=200 me=200 uid=8c27fd7d email=hc_1778146140129@example.com
+[2026-05-07T09:34:02.013Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1559}
+[2026-05-07T09:39:02.361Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1258}
+[2026-05-07T09:39:02.361Z] [ALERT] SIGNUP REGRESSION — 2 consecutive cycles failed. Check production immediately.
+[2026-05-07T09:44:02.674Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":958}
+[2026-05-07T09:44:02.674Z] [ALERT] SIGNUP REGRESSION — 3 consecutive cycles failed. Check production immediately.
+[2026-05-07T09:49:02.832Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":658}
+[2026-05-07T09:49:02.832Z] [ALERT] SIGNUP REGRESSION — 4 consecutive cycles failed. Check production immediately.
+[2026-05-07T09:54:03.044Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":357}
+[2026-05-07T09:54:03.044Z] [ALERT] SIGNUP REGRESSION — 5 consecutive cycles failed. Check production immediately.
+[2026-05-07T09:59:03.563Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":57}
+[2026-05-07T09:59:03.564Z] [ALERT] SIGNUP REGRESSION — 6 consecutive cycles failed. Check production immediately.
+[2026-05-07T10:04:04.460Z] OK register=200 login=200 me=200 uid=d42122a8 email=hc_1778148243586@example.com
+[2026-05-07T10:09:05.298Z] OK register=200 login=200 me=200 uid=a71b6d00 email=hc_1778148544487@example.com
+[2026-05-07T10:14:06.048Z] OK register=200 login=200 me=200 uid=55451a60 email=hc_1778148845385@example.com
+[2026-05-07T10:19:07.061Z] OK register=200 login=200 me=200 uid=8d0a175a email=hc_1778149146086@example.com
+[2026-05-07T10:24:07.899Z] OK register=200 login=200 me=200 uid=dc9a0c69 email=hc_1778149447086@example.com
+[2026-05-07T10:29:08.149Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1852}
+[2026-05-07T10:34:08.413Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1552}
+[2026-05-07T10:34:08.413Z] [ALERT] SIGNUP REGRESSION — 2 consecutive cycles failed. Check production immediately.
+[2026-05-07T10:39:08.711Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1252}
+[2026-05-07T10:39:08.711Z] [ALERT] SIGNUP REGRESSION — 3 consecutive cycles failed. Check production immediately.
+[2026-05-07T10:44:09.073Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":951}
+[2026-05-07T10:44:09.074Z] [ALERT] SIGNUP REGRESSION — 4 consecutive cycles failed. Check production immediately.
+[2026-05-07T10:49:09.347Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":651}
+[2026-05-07T10:49:09.348Z] [ALERT] SIGNUP REGRESSION — 5 consecutive cycles failed. Check production immediately.
+[2026-05-07T10:54:09.540Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":351}
+[2026-05-07T10:54:09.540Z] [ALERT] SIGNUP REGRESSION — 6 consecutive cycles failed. Check production immediately.
+[2026-05-07T10:59:09.801Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":51}
+[2026-05-07T10:59:09.802Z] [ALERT] SIGNUP REGRESSION — 7 consecutive cycles failed. Check production immediately.
+[2026-05-07T11:04:10.913Z] OK register=200 login=200 me=200 uid=d5f51595 email=hc_1778151849885@example.com
+[2026-05-07T11:09:11.825Z] OK register=200 login=200 me=200 uid=80436669 email=hc_1778152150936@example.com
+[2026-05-07T11:14:13.062Z] OK register=200 login=200 me=200 uid=869b62de email=hc_1778152451885@example.com
+[2026-05-07T11:19:14.136Z] OK register=200 login=200 me=200 uid=0e3c253e email=hc_1778152753086@example.com
+[2026-05-07T11:24:15.107Z] OK register=200 login=200 me=200 uid=cf3c580f email=hc_1778153054137@example.com
+[2026-05-07T11:29:15.313Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1845}
+[2026-05-07T11:34:15.670Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1545}
+[2026-05-07T11:34:15.670Z] [ALERT] SIGNUP REGRESSION — 2 consecutive cycles failed. Check production immediately.
+[2026-05-07T11:39:15.846Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1245}
+[2026-05-07T11:39:15.847Z] [ALERT] SIGNUP REGRESSION — 3 consecutive cycles failed. Check production immediately.
+[2026-05-07T11:44:16.083Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":944}
+[2026-05-07T11:44:16.083Z] [ALERT] SIGNUP REGRESSION — 4 consecutive cycles failed. Check production immediately.
+[2026-05-07T11:49:16.259Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":644}
+[2026-05-07T11:49:16.259Z] [ALERT] SIGNUP REGRESSION — 5 consecutive cycles failed. Check production immediately.
+[2026-05-07T11:54:16.626Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":344}
+[2026-05-07T11:54:16.626Z] [ALERT] SIGNUP REGRESSION — 6 consecutive cycles failed. Check production immediately.
+[2026-05-07T11:59:16.894Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":44}
+[2026-05-07T11:59:16.894Z] [ALERT] SIGNUP REGRESSION — 7 consecutive cycles failed. Check production immediately.
+[2026-05-07T12:04:19.525Z] OK register=200 login=200 me=200 uid=e69a7de0 email=hc_1778155456929@example.com
+[2026-05-07T12:09:20.503Z] OK register=200 login=200 me=200 uid=2548dbc3 email=hc_1778155759594@example.com
+[2026-05-07T12:14:21.520Z] OK register=200 login=200 me=200 uid=8ba024e2 email=hc_1778156060535@example.com
+[2026-05-07T12:19:22.656Z] OK register=200 login=200 me=200 uid=f8e25bb3 email=hc_1778156361586@example.com
+[2026-05-07T12:24:23.540Z] OK register=200 login=200 me=200 uid=719625b1 email=hc_1778156662681@example.com
+[2026-05-07T12:29:23.796Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1837}
+[2026-05-07T12:34:24.143Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1536}
+[2026-05-07T12:34:24.143Z] [ALERT] SIGNUP REGRESSION — 2 consecutive cycles failed. Check production immediately.
+[2026-05-07T12:39:24.345Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1236}
+[2026-05-07T12:39:24.345Z] [ALERT] SIGNUP REGRESSION — 3 consecutive cycles failed. Check production immediately.
+[2026-05-07T12:44:24.742Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":936}
+[2026-05-07T12:44:24.742Z] [ALERT] SIGNUP REGRESSION — 4 consecutive cycles failed. Check production immediately.
+[2026-05-07T12:49:25.089Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":635}
+[2026-05-07T12:49:25.089Z] [ALERT] SIGNUP REGRESSION — 5 consecutive cycles failed. Check production immediately.
+[2026-05-07T12:54:25.402Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":335}
+[2026-05-07T12:54:25.402Z] [ALERT] SIGNUP REGRESSION — 6 consecutive cycles failed. Check production immediately.
+[2026-05-07T12:59:25.596Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":35}
+[2026-05-07T12:59:25.596Z] [ALERT] SIGNUP REGRESSION — 7 consecutive cycles failed. Check production immediately.
+[2026-05-07T13:04:26.633Z] OK register=200 login=200 me=200 uid=0892b82b email=hc_1778159065629@example.com
+[2026-05-07T13:09:27.747Z] OK register=200 login=200 me=200 uid=d864f28a email=hc_1778159366677@example.com
+[2026-05-07T13:18:21.139Z] OK register=200 login=200 me=200 uid=11af662f email=hc_1778159899713@example.com
+[2026-05-07T13:23:22.303Z] OK register=200 login=200 me=200 uid=69903e3f email=hc_1778160201228@example.com
+[2026-05-07T13:28:23.335Z] OK register=200 login=200 me=200 uid=cc670dfa email=hc_1778160502398@example.com
+[2026-05-07T13:33:23.566Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1597}
+[2026-05-07T13:38:23.798Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1297}
+[2026-05-07T13:38:23.801Z] [ALERT] SIGNUP REGRESSION — 2 consecutive cycles failed. Check production immediately.
+[2026-05-07T13:43:24.000Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":997}
+[2026-05-07T13:43:24.001Z] [ALERT] SIGNUP REGRESSION — 3 consecutive cycles failed. Check production immediately.
+[2026-05-07T13:48:24.217Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":696}
+[2026-05-07T13:48:24.218Z] [ALERT] SIGNUP REGRESSION — 4 consecutive cycles failed. Check production immediately.
+[2026-05-07T13:53:24.526Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":396}
+[2026-05-07T13:53:24.526Z] [ALERT] SIGNUP REGRESSION — 5 consecutive cycles failed. Check production immediately.
+[2026-05-07T13:58:24.701Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":96}
+[2026-05-07T13:58:24.701Z] [ALERT] SIGNUP REGRESSION — 6 consecutive cycles failed. Check production immediately.
+[2026-05-07T14:03:25.678Z] OK register=200 login=200 me=200 uid=d946491c email=hc_1778162604748@example.com
+[2026-05-07T14:08:26.471Z] OK register=200 login=200 me=200 uid=40d91ff3 email=hc_1778162905693@example.com
+[2026-05-07T14:13:27.330Z] OK register=200 login=200 me=200 uid=ed0f1ac4 email=hc_1778163206498@example.com
+[2026-05-07T14:18:28.453Z] OK register=200 login=200 me=200 uid=453e00d3 email=hc_1778163507430@example.com
+[2026-05-07T14:23:29.383Z] OK register=200 login=200 me=200 uid=937d20b5 email=hc_1778163808507@example.com
+[2026-05-07T14:28:29.677Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1891}
+[2026-05-07T14:33:29.889Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1591}
+[2026-05-07T14:33:29.890Z] [ALERT] SIGNUP REGRESSION — 2 consecutive cycles failed. Check production immediately.
+[2026-05-07T14:38:30.154Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1290}
+[2026-05-07T14:38:30.154Z] [ALERT] SIGNUP REGRESSION — 3 consecutive cycles failed. Check production immediately.
+[2026-05-07T14:43:30.399Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":990}
+[2026-05-07T14:43:30.400Z] [ALERT] SIGNUP REGRESSION — 4 consecutive cycles failed. Check production immediately.
+[2026-05-07T14:48:30.668Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":690}
+[2026-05-07T14:48:30.668Z] [ALERT] SIGNUP REGRESSION — 5 consecutive cycles failed. Check production immediately.
+[2026-05-07T14:53:30.997Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":390}
+[2026-05-07T14:53:30.997Z] [ALERT] SIGNUP REGRESSION — 6 consecutive cycles failed. Check production immediately.
+[2026-05-07T14:58:31.253Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":89}
+[2026-05-07T14:58:31.254Z] [ALERT] SIGNUP REGRESSION — 7 consecutive cycles failed. Check production immediately.
+[2026-05-07T15:03:32.500Z] OK register=200 login=200 me=200 uid=c5693a4f email=hc_1778166211354@example.com
+[2026-05-07T15:08:33.415Z] OK register=200 login=200 me=200 uid=1e226fbf email=hc_1778166512548@example.com
+[2026-05-07T15:13:34.505Z] OK register=200 login=200 me=200 uid=0c6442ee email=hc_1778166813500@example.com
+[2026-05-07T15:18:35.301Z] OK register=200 login=200 me=200 uid=51ab58fe email=hc_1778167114548@example.com
+[2026-05-07T15:23:36.224Z] OK register=200 login=200 me=200 uid=34608222 email=hc_1778167415398@example.com
+[2026-05-07T15:28:36.503Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1884}
+[2026-05-07T15:33:36.968Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1584}
+[2026-05-07T15:33:36.969Z] [ALERT] SIGNUP REGRESSION — 2 consecutive cycles failed. Check production immediately.
+[2026-05-07T15:38:37.208Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1283}
+[2026-05-07T15:38:37.208Z] [ALERT] SIGNUP REGRESSION — 3 consecutive cycles failed. Check production immediately.
+[2026-05-07T15:43:37.520Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":983}
+[2026-05-07T15:43:37.520Z] [ALERT] SIGNUP REGRESSION — 4 consecutive cycles failed. Check production immediately.
+[2026-05-07T15:48:37.701Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":683}
+[2026-05-07T15:48:37.701Z] [ALERT] SIGNUP REGRESSION — 5 consecutive cycles failed. Check production immediately.
+[2026-05-07T15:53:38.031Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":383}
+[2026-05-07T15:53:38.032Z] [ALERT] SIGNUP REGRESSION — 6 consecutive cycles failed. Check production immediately.
+[2026-05-07T15:58:38.278Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":82}
+[2026-05-07T15:58:38.278Z] [ALERT] SIGNUP REGRESSION — 7 consecutive cycles failed. Check production immediately.
+[2026-05-07T16:03:39.247Z] OK register=200 login=200 me=200 uid=7b2a17c8 email=hc_1778169818298@example.com
+[2026-05-07T16:08:40.290Z] OK register=200 login=200 me=200 uid=40d91424 email=hc_1778170119292@example.com
+[2026-05-07T16:13:41.268Z] OK register=200 login=200 me=200 uid=9bfbb162 email=hc_1778170420344@example.com
+[2026-05-07T16:18:42.065Z] OK register=200 login=200 me=200 uid=0456a27c email=hc_1778170721276@example.com
+[2026-05-07T16:23:43.034Z] OK register=200 login=200 me=200 uid=b96dd886 email=hc_1778171022092@example.com
+[2026-05-07T16:28:43.404Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1877}
+[2026-05-07T16:33:43.845Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1577}
+[2026-05-07T16:33:43.846Z] [ALERT] SIGNUP REGRESSION — 2 consecutive cycles failed. Check production immediately.
+[2026-05-07T16:38:44.122Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1276}
+[2026-05-07T16:38:44.123Z] [ALERT] SIGNUP REGRESSION — 3 consecutive cycles failed. Check production immediately.
+[2026-05-07T16:43:44.433Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":976}
+[2026-05-07T16:43:44.433Z] [ALERT] SIGNUP REGRESSION — 4 consecutive cycles failed. Check production immediately.
+[2026-05-07T16:48:44.682Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":676}
+[2026-05-07T16:48:44.683Z] [ALERT] SIGNUP REGRESSION — 5 consecutive cycles failed. Check production immediately.
+[2026-05-07T16:53:45.043Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":376}
+[2026-05-07T16:53:45.044Z] [ALERT] SIGNUP REGRESSION — 6 consecutive cycles failed. Check production immediately.
+[2026-05-07T16:58:45.314Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":75}
+[2026-05-07T16:58:45.315Z] [ALERT] SIGNUP REGRESSION — 7 consecutive cycles failed. Check production immediately.
+[2026-05-07T17:03:46.092Z] OK register=200 login=200 me=200 uid=24d086d1 email=hc_1778173425348@example.com
+[2026-05-07T17:08:47.077Z] OK register=200 login=200 me=200 uid=bf8b2054 email=hc_1778173726098@example.com
+[2026-05-07T17:13:49.399Z] OK register=200 login=200 me=200 uid=3ef6a86a email=hc_1778174028453@example.com
+[2026-05-07T17:18:50.184Z] OK register=200 login=200 me=200 uid=e2a01012 email=hc_1778174329474@example.com
+[2026-05-07T17:23:50.987Z] OK register=200 login=200 me=200 uid=70aaacdd email=hc_1778174630271@example.com
+[2026-05-07T17:28:51.271Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1869}
+[2026-05-07T17:33:51.532Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1569}
+[2026-05-07T17:33:51.533Z] [ALERT] SIGNUP REGRESSION — 2 consecutive cycles failed. Check production immediately.
+[2026-05-07T17:38:51.816Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1269}
+[2026-05-07T17:38:51.817Z] [ALERT] SIGNUP REGRESSION — 3 consecutive cycles failed. Check production immediately.
+[2026-05-07T17:43:52.094Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":968}
+[2026-05-07T17:43:52.095Z] [ALERT] SIGNUP REGRESSION — 4 consecutive cycles failed. Check production immediately.
+[2026-05-07T17:48:52.286Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":668}
+[2026-05-07T17:48:52.286Z] [ALERT] SIGNUP REGRESSION — 5 consecutive cycles failed. Check production immediately.
+[2026-05-07T17:53:52.490Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":368}
+[2026-05-07T17:53:52.490Z] [ALERT] SIGNUP REGRESSION — 6 consecutive cycles failed. Check production immediately.
+[2026-05-07T17:58:52.688Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":68}
+[2026-05-07T17:58:52.689Z] [ALERT] SIGNUP REGRESSION — 7 consecutive cycles failed. Check production immediately.
+[2026-05-07T18:03:53.740Z] OK register=200 login=200 me=200 uid=508e90b0 email=hc_1778177032724@example.com
+[2026-05-07T18:08:54.459Z] OK register=200 login=200 me=200 uid=cdba0fcf email=hc_1778177333775@example.com
+[2026-05-07T18:13:55.162Z] OK register=200 login=200 me=200 uid=d3843c07 email=hc_1778177634475@example.com
+[2026-05-07T18:18:56.027Z] OK register=200 login=200 me=200 uid=739b1190 email=hc_1778177935227@example.com
+[2026-05-07T18:23:56.809Z] OK register=200 login=200 me=200 uid=1b66e2c2 email=hc_1778178236067@example.com
+[2026-05-07T18:28:57.129Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1863}
+[2026-05-07T18:33:57.355Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1563}
+[2026-05-07T18:33:57.355Z] [ALERT] SIGNUP REGRESSION — 2 consecutive cycles failed. Check production immediately.
+[2026-05-07T18:38:57.534Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1263}
+[2026-05-07T18:38:57.534Z] [ALERT] SIGNUP REGRESSION — 3 consecutive cycles failed. Check production immediately.
+[2026-05-07T18:43:57.800Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":963}
+[2026-05-07T18:43:57.800Z] [ALERT] SIGNUP REGRESSION — 4 consecutive cycles failed. Check production immediately.
+[2026-05-07T18:48:58.011Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":663}
+[2026-05-07T18:48:58.012Z] [ALERT] SIGNUP REGRESSION — 5 consecutive cycles failed. Check production immediately.
+[2026-05-07T18:53:58.228Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":362}
+[2026-05-07T18:53:58.228Z] [ALERT] SIGNUP REGRESSION — 6 consecutive cycles failed. Check production immediately.
+[2026-05-07T18:58:58.463Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":62}
+[2026-05-07T18:58:58.464Z] [ALERT] SIGNUP REGRESSION — 7 consecutive cycles failed. Check production immediately.
+[2026-05-07T19:03:59.553Z] OK register=200 login=200 me=200 uid=13c5748b email=hc_1778180638471@example.com
+[2026-05-07T19:09:00.303Z] OK register=200 login=200 me=200 uid=60c0a385 email=hc_1778180939575@example.com
+[2026-05-07T19:14:01.258Z] OK register=200 login=200 me=200 uid=e01c4097 email=hc_1778181240357@example.com
+[2026-05-07T19:19:02.164Z] OK register=200 login=200 me=200 uid=b2418300 email=hc_1778181541271@example.com
+[2026-05-07T19:24:03.074Z] OK register=200 login=200 me=200 uid=e99bb149 email=hc_1778181842225@example.com
+[2026-05-07T19:29:03.238Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1857}
+[2026-05-07T19:34:03.462Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1557}
+[2026-05-07T19:34:03.463Z] [ALERT] SIGNUP REGRESSION — 2 consecutive cycles failed. Check production immediately.
+[2026-05-07T19:39:03.730Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1257}
+[2026-05-07T19:39:03.731Z] [ALERT] SIGNUP REGRESSION — 3 consecutive cycles failed. Check production immediately.
+[2026-05-07T19:44:03.979Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":957}
+[2026-05-07T19:44:03.979Z] [ALERT] SIGNUP REGRESSION — 4 consecutive cycles failed. Check production immediately.
+[2026-05-07T19:49:04.209Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":656}
+[2026-05-07T19:49:04.210Z] [ALERT] SIGNUP REGRESSION — 5 consecutive cycles failed. Check production immediately.
+[2026-05-07T19:54:04.403Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":356}
+[2026-05-07T19:54:04.403Z] [ALERT] SIGNUP REGRESSION — 6 consecutive cycles failed. Check production immediately.
+[2026-05-07T19:59:04.748Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":56}
+[2026-05-07T19:59:04.748Z] [ALERT] SIGNUP REGRESSION — 7 consecutive cycles failed. Check production immediately.
+[2026-05-07T20:04:05.911Z] OK register=200 login=200 me=200 uid=070e278d email=hc_1778184244849@example.com
+[2026-05-07T20:09:07.070Z] OK register=200 login=200 me=200 uid=1c8415d8 email=hc_1778184545982@example.com
+[2026-05-07T20:14:08.201Z] OK register=200 login=200 me=200 uid=ecbee1b6 email=hc_1778184847171@example.com
+[2026-05-07T20:19:09.117Z] OK register=200 login=200 me=200 uid=bc9d045a email=hc_1778185148219@example.com
+[2026-05-07T20:24:09.913Z] OK register=200 login=200 me=200 uid=c7c093aa email=hc_1778185449125@example.com
+[2026-05-07T20:29:10.118Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1850}
+[2026-05-07T20:34:10.404Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1550}
+[2026-05-07T20:34:10.405Z] [ALERT] SIGNUP REGRESSION — 2 consecutive cycles failed. Check production immediately.
+[2026-05-07T20:39:10.817Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1250}
+[2026-05-07T20:39:10.818Z] [ALERT] SIGNUP REGRESSION — 3 consecutive cycles failed. Check production immediately.
+[2026-05-07T20:44:11.231Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":949}
+[2026-05-07T20:44:11.232Z] [ALERT] SIGNUP REGRESSION — 4 consecutive cycles failed. Check production immediately.
+[2026-05-07T20:49:11.463Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":649}
+[2026-05-07T20:49:11.464Z] [ALERT] SIGNUP REGRESSION — 5 consecutive cycles failed. Check production immediately.
+[2026-05-07T20:54:11.718Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":349}
+[2026-05-07T20:54:11.718Z] [ALERT] SIGNUP REGRESSION — 6 consecutive cycles failed. Check production immediately.
+[2026-05-07T20:59:11.932Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":49}
+[2026-05-07T20:59:11.932Z] [ALERT] SIGNUP REGRESSION — 7 consecutive cycles failed. Check production immediately.
+[2026-05-07T21:04:12.963Z] OK register=200 login=200 me=200 uid=af8ac124 email=hc_1778187852033@example.com
+[2026-05-07T21:09:13.790Z] OK register=200 login=200 me=200 uid=8cf47c3e email=hc_1778188153036@example.com
+[2026-05-07T21:23:59.536Z] OK register=200 login=200 me=200 uid=180c21b7 email=hc_1778189038811@example.com
+[2026-05-07T21:29:00.384Z] OK register=200 login=200 me=200 uid=9c889355 email=hc_1778189339608@example.com
+[2026-05-07T21:34:01.398Z] OK register=200 login=200 me=200 uid=f3a41e48 email=hc_1778189640458@example.com
+[2026-05-07T21:39:01.683Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1259}
+[2026-05-07T21:44:01.864Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":959}
+[2026-05-07T21:44:01.864Z] [ALERT] SIGNUP REGRESSION — 2 consecutive cycles failed. Check production immediately.
+[2026-05-07T21:49:02.479Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":658}
+[2026-05-07T21:49:02.480Z] [ALERT] SIGNUP REGRESSION — 3 consecutive cycles failed. Check production immediately.
+[2026-05-07T21:54:02.695Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":358}
+[2026-05-07T21:54:02.696Z] [ALERT] SIGNUP REGRESSION — 4 consecutive cycles failed. Check production immediately.
+[2026-05-07T21:59:02.896Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":58}
+[2026-05-07T21:59:02.896Z] [ALERT] SIGNUP REGRESSION — 5 consecutive cycles failed. Check production immediately.
+[2026-05-07T22:04:03.716Z] OK register=200 login=200 me=200 uid=86519fd8 email=hc_1778191442984@example.com
+[2026-05-07T22:09:04.603Z] OK register=200 login=200 me=200 uid=e915cf07 email=hc_1778191743807@example.com
+[2026-05-07T22:14:05.513Z] OK register=200 login=200 me=200 uid=922e5029 email=hc_1778192044608@example.com
+[2026-05-07T22:19:06.422Z] OK register=200 login=200 me=200 uid=2ead23e2 email=hc_1778192345558@example.com
+[2026-05-07T22:24:07.201Z] OK register=200 login=200 me=200 uid=21876124 email=hc_1778192646510@example.com
+[2026-05-07T22:29:07.430Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1853}
+[2026-05-07T22:34:07.677Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1553}
+[2026-05-07T22:34:07.677Z] [ALERT] SIGNUP REGRESSION — 2 consecutive cycles failed. Check production immediately.
+[2026-05-07T22:39:08.019Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1253}
+[2026-05-07T22:39:08.020Z] [ALERT] SIGNUP REGRESSION — 3 consecutive cycles failed. Check production immediately.
+[2026-05-07T22:44:08.261Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":952}
+[2026-05-07T22:44:08.261Z] [ALERT] SIGNUP REGRESSION — 4 consecutive cycles failed. Check production immediately.
+[2026-05-07T22:49:08.513Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":652}
+[2026-05-07T22:49:08.513Z] [ALERT] SIGNUP REGRESSION — 5 consecutive cycles failed. Check production immediately.
+[2026-05-07T22:54:08.701Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":352}
+[2026-05-07T22:54:08.702Z] [ALERT] SIGNUP REGRESSION — 6 consecutive cycles failed. Check production immediately.
+[2026-05-07T22:59:08.921Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":52}
+[2026-05-07T22:59:08.921Z] [ALERT] SIGNUP REGRESSION — 7 consecutive cycles failed. Check production immediately.
+[2026-05-07T23:04:09.912Z] OK register=200 login=200 me=200 uid=743d8f32 email=hc_1778195048958@example.com
+[2026-05-07T23:09:10.829Z] OK register=200 login=200 me=200 uid=46842e93 email=hc_1778195349958@example.com
+[2026-05-07T23:14:11.647Z] OK register=200 login=200 me=200 uid=a4852f08 email=hc_1778195650908@example.com
+[2026-05-07T23:19:12.453Z] OK register=200 login=200 me=200 uid=9478fd95 email=hc_1778195951649@example.com
+[2026-05-07T23:24:13.444Z] OK register=200 login=200 me=200 uid=894d2548 email=hc_1778196252458@example.com
+[2026-05-07T23:29:13.721Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1847}
+[2026-05-07T23:34:13.896Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1547}
+[2026-05-07T23:34:13.896Z] [ALERT] SIGNUP REGRESSION — 2 consecutive cycles failed. Check production immediately.
+[2026-05-07T23:39:14.148Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1246}
+[2026-05-07T23:39:14.148Z] [ALERT] SIGNUP REGRESSION — 3 consecutive cycles failed. Check production immediately.
+[2026-05-07T23:44:14.367Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":946}
+[2026-05-07T23:44:14.367Z] [ALERT] SIGNUP REGRESSION — 4 consecutive cycles failed. Check production immediately.
+[2026-05-07T23:49:14.707Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":646}
+[2026-05-07T23:49:14.707Z] [ALERT] SIGNUP REGRESSION — 5 consecutive cycles failed. Check production immediately.
+[2026-05-07T23:54:14.940Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":346}
+[2026-05-07T23:54:14.940Z] [ALERT] SIGNUP REGRESSION — 6 consecutive cycles failed. Check production immediately.
+[2026-05-07T23:59:18.698Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":42}
+[2026-05-07T23:59:18.698Z] [ALERT] SIGNUP REGRESSION — 7 consecutive cycles failed. Check production immediately.
+[2026-05-08T00:04:19.700Z] OK register=200 login=200 me=200 uid=e86c4982 email=hc_1778198658709@example.com
+[2026-05-08T00:09:20.576Z] OK register=200 login=200 me=200 uid=a4787ca3 email=hc_1778198959759@example.com
+[2026-05-08T00:14:21.430Z] OK register=200 login=200 me=200 uid=f0f07f8c email=hc_1778199260608@example.com
+[2026-05-08T00:19:22.202Z] OK register=200 login=200 me=200 uid=8357dac3 email=hc_1778199561459@example.com
+[2026-05-08T00:24:23.013Z] OK register=200 login=200 me=200 uid=d05aeaed email=hc_1778199862208@example.com
+[2026-05-08T00:29:23.495Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1837}
+[2026-05-08T00:34:23.727Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1537}
+[2026-05-08T00:34:23.727Z] [ALERT] SIGNUP REGRESSION — 2 consecutive cycles failed. Check production immediately.
+[2026-05-08T00:39:23.890Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1237}
+[2026-05-08T00:39:23.890Z] [ALERT] SIGNUP REGRESSION — 3 consecutive cycles failed. Check production immediately.
+[2026-05-08T00:44:24.112Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":936}
+[2026-05-08T00:44:24.112Z] [ALERT] SIGNUP REGRESSION — 4 consecutive cycles failed. Check production immediately.
+[2026-05-08T00:49:24.296Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":636}
+[2026-05-08T00:49:24.297Z] [ALERT] SIGNUP REGRESSION — 5 consecutive cycles failed. Check production immediately.
+[2026-05-08T00:54:24.579Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":336}
+[2026-05-08T00:54:24.579Z] [ALERT] SIGNUP REGRESSION — 6 consecutive cycles failed. Check production immediately.
+[2026-05-08T00:59:24.841Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":36}
+[2026-05-08T00:59:24.842Z] [ALERT] SIGNUP REGRESSION — 7 consecutive cycles failed. Check production immediately.
+[2026-05-08T01:04:25.735Z] OK register=200 login=200 me=200 uid=8c4cae3e email=hc_1778202264859@example.com
+[2026-05-08T01:09:26.560Z] OK register=200 login=200 me=200 uid=e94f3763 email=hc_1778202565757@example.com
+[2026-05-08T01:14:27.538Z] OK register=200 login=200 me=200 uid=87229780 email=hc_1778202866658@example.com
+[2026-05-08T01:19:28.469Z] OK register=200 login=200 me=200 uid=198af44c email=hc_1778203167558@example.com
+[2026-05-08T01:34:22.636Z] OK register=200 login=200 me=200 uid=a6e60c52 email=hc_1778204061803@example.com
+[2026-05-08T01:39:22.945Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1238}
+[2026-05-08T01:44:23.173Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":937}
+[2026-05-08T01:44:23.173Z] [ALERT] SIGNUP REGRESSION — 2 consecutive cycles failed. Check production immediately.
+[2026-05-08T01:49:23.356Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":637}
+[2026-05-08T01:49:23.356Z] [ALERT] SIGNUP REGRESSION — 3 consecutive cycles failed. Check production immediately.
+[2026-05-08T01:54:23.583Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":337}
+[2026-05-08T01:54:23.584Z] [ALERT] SIGNUP REGRESSION — 4 consecutive cycles failed. Check production immediately.
+[2026-05-08T01:59:23.792Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":37}
+[2026-05-08T01:59:23.792Z] [ALERT] SIGNUP REGRESSION — 5 consecutive cycles failed. Check production immediately.
+[2026-05-08T02:04:24.841Z] OK register=200 login=200 me=200 uid=c4911c2d email=hc_1778205863891@example.com
+[2026-05-08T02:09:25.693Z] OK register=200 login=200 me=200 uid=90d488fb email=hc_1778206164848@example.com
+[2026-05-08T02:14:26.486Z] OK register=200 login=200 me=200 uid=87f63fe6 email=hc_1778206465698@example.com
+[2026-05-08T02:19:27.392Z] OK register=200 login=200 me=200 uid=4202ad3b email=hc_1778206766586@example.com
+[2026-05-08T02:24:28.109Z] OK register=200 login=200 me=200 uid=8c2538f4 email=hc_1778207067451@example.com
+[2026-05-08T02:29:28.287Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1832}
+[2026-05-08T02:34:28.540Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1532}
+[2026-05-08T02:34:28.541Z] [ALERT] SIGNUP REGRESSION — 2 consecutive cycles failed. Check production immediately.
+[2026-05-08T02:39:28.827Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1232}
+[2026-05-08T02:39:28.827Z] [ALERT] SIGNUP REGRESSION — 3 consecutive cycles failed. Check production immediately.
+[2026-05-08T02:44:29.078Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":931}
+[2026-05-08T02:44:29.079Z] [ALERT] SIGNUP REGRESSION — 4 consecutive cycles failed. Check production immediately.
+[2026-05-08T02:49:29.361Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":631}
+[2026-05-08T02:49:29.361Z] [ALERT] SIGNUP REGRESSION — 5 consecutive cycles failed. Check production immediately.
+[2026-05-08T02:54:29.587Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":331}
+[2026-05-08T02:54:29.587Z] [ALERT] SIGNUP REGRESSION — 6 consecutive cycles failed. Check production immediately.
+[2026-05-08T02:59:29.737Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":31}
+[2026-05-08T02:59:29.738Z] [ALERT] SIGNUP REGRESSION — 7 consecutive cycles failed. Check production immediately.
+[2026-05-08T03:04:30.766Z] OK register=200 login=200 me=200 uid=956a4418 email=hc_1778209469748@example.com
+[2026-05-08T03:09:31.932Z] OK register=200 login=200 me=200 uid=471fc78e email=hc_1778209770862@example.com
+[2026-05-08T03:14:32.781Z] OK register=200 login=200 me=200 uid=5a4b1a12 email=hc_1778210071948@example.com
+[2026-05-08T03:19:33.802Z] OK register=200 login=200 me=200 uid=e7a1382d email=hc_1778210372847@example.com
+[2026-05-08T03:24:34.613Z] OK register=200 login=200 me=200 uid=fa173ce8 email=hc_1778210673902@example.com
+[2026-05-08T03:29:34.941Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1826}
+[2026-05-08T03:34:35.184Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1525}
+[2026-05-08T03:34:35.185Z] [ALERT] SIGNUP REGRESSION — 2 consecutive cycles failed. Check production immediately.
+[2026-05-08T03:39:35.458Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1225}
+[2026-05-08T03:39:35.459Z] [ALERT] SIGNUP REGRESSION — 3 consecutive cycles failed. Check production immediately.
+[2026-05-08T03:44:35.679Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":925}
+[2026-05-08T03:44:35.679Z] [ALERT] SIGNUP REGRESSION — 4 consecutive cycles failed. Check production immediately.
+[2026-05-08T03:49:35.904Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":625}
+[2026-05-08T03:49:35.905Z] [ALERT] SIGNUP REGRESSION — 5 consecutive cycles failed. Check production immediately.
+[2026-05-08T03:54:36.100Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":324}
+[2026-05-08T03:54:36.101Z] [ALERT] SIGNUP REGRESSION — 6 consecutive cycles failed. Check production immediately.
+[2026-05-08T03:59:36.463Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":24}
+[2026-05-08T03:59:36.464Z] [ALERT] SIGNUP REGRESSION — 7 consecutive cycles failed. Check production immediately.
+[2026-05-08T04:04:37.244Z] OK register=200 login=200 me=200 uid=a6a2f30b email=hc_1778213076548@example.com
+[2026-05-08T04:09:38.233Z] OK register=200 login=200 me=200 uid=69913c6c email=hc_1778213377339@example.com
+[2026-05-08T04:14:39.119Z] OK register=200 login=200 me=200 uid=defee9f4 email=hc_1778213678298@example.com
+[2026-05-08T04:19:39.845Z] OK register=200 login=200 me=200 uid=59a32d61 email=hc_1778213979220@example.com
+[2026-05-08T04:24:40.619Z] OK register=200 login=200 me=200 uid=e0570d6a email=hc_1778214279848@example.com
+[2026-05-08T04:29:40.848Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1820}
+[2026-05-08T04:34:40.979Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1520}
+[2026-05-08T04:34:40.979Z] [ALERT] SIGNUP REGRESSION — 2 consecutive cycles failed. Check production immediately.
+[2026-05-08T04:39:41.251Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1219}
+[2026-05-08T04:39:41.251Z] [ALERT] SIGNUP REGRESSION — 3 consecutive cycles failed. Check production immediately.
+[2026-05-08T04:44:41.444Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":919}
+[2026-05-08T04:44:41.444Z] [ALERT] SIGNUP REGRESSION — 4 consecutive cycles failed. Check production immediately.
+[2026-05-08T04:49:41.633Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":619}
+[2026-05-08T04:49:41.634Z] [ALERT] SIGNUP REGRESSION — 5 consecutive cycles failed. Check production immediately.
+[2026-05-08T04:54:41.886Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":319}
+[2026-05-08T04:54:41.887Z] [ALERT] SIGNUP REGRESSION — 6 consecutive cycles failed. Check production immediately.
+[2026-05-08T04:59:42.171Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":18}
+[2026-05-08T04:59:42.172Z] [ALERT] SIGNUP REGRESSION — 7 consecutive cycles failed. Check production immediately.
+[2026-05-08T05:04:43.045Z] OK register=200 login=200 me=200 uid=8e578f5f email=hc_1778216682248@example.com
+[2026-05-08T05:09:43.664Z] OK register=200 login=200 me=200 uid=fef07f3d email=hc_1778216983047@example.com
+[2026-05-08T05:14:44.285Z] OK register=200 login=200 me=200 uid=e1b78c9c email=hc_1778217283709@example.com
+[2026-05-08T05:19:45.234Z] OK register=200 login=200 me=200 uid=6ee9cb87 email=hc_1778217584347@example.com
+[2026-05-08T05:24:46.185Z] OK register=200 login=200 me=200 uid=54006288 email=hc_1778217885247@example.com
+[2026-05-08T05:29:46.387Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1814}
+[2026-05-08T05:42:40.866Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1040}
+[2026-05-08T05:42:40.867Z] [ALERT] SIGNUP REGRESSION — 2 consecutive cycles failed. Check production immediately.
+[2026-05-08T05:47:41.034Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":739}
+[2026-05-08T05:47:41.035Z] [ALERT] SIGNUP REGRESSION — 3 consecutive cycles failed. Check production immediately.
+[2026-05-08T05:52:41.190Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":439}
+[2026-05-08T05:52:41.190Z] [ALERT] SIGNUP REGRESSION — 4 consecutive cycles failed. Check production immediately.
+[2026-05-08T05:57:41.342Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":139}
+[2026-05-08T05:57:41.342Z] [ALERT] SIGNUP REGRESSION — 5 consecutive cycles failed. Check production immediately.
+[2026-05-08T06:02:41.969Z] OK register=200 login=200 me=200 uid=a4c7374e email=hc_1778220161357@example.com
+[2026-05-08T06:07:42.654Z] OK register=200 login=200 me=200 uid=c98d8c44 email=hc_1778220462008@example.com
+[2026-05-08T06:12:43.350Z] OK register=200 login=200 me=200 uid=993f4d69 email=hc_1778220762725@example.com
+[2026-05-08T06:17:44.167Z] OK register=200 login=200 me=200 uid=9397d621 email=hc_1778221063407@example.com
+[2026-05-08T06:22:44.935Z] OK register=200 login=200 me=200 uid=2bbe42d0 email=hc_1778221364264@example.com
+[2026-05-08T06:27:45.119Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1935}
+[2026-05-08T06:32:45.326Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1635}
+[2026-05-08T06:32:45.327Z] [ALERT] SIGNUP REGRESSION — 2 consecutive cycles failed. Check production immediately.
+[2026-05-08T06:37:45.545Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1335}
+[2026-05-08T06:37:45.545Z] [ALERT] SIGNUP REGRESSION — 3 consecutive cycles failed. Check production immediately.
+[2026-05-08T06:42:45.699Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1035}
+[2026-05-08T06:42:45.699Z] [ALERT] SIGNUP REGRESSION — 4 consecutive cycles failed. Check production immediately.
+[2026-05-08T06:47:46.041Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":734}
+[2026-05-08T06:47:46.041Z] [ALERT] SIGNUP REGRESSION — 5 consecutive cycles failed. Check production immediately.
+[2026-05-08T06:52:46.190Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":434}
+[2026-05-08T06:52:46.190Z] [ALERT] SIGNUP REGRESSION — 6 consecutive cycles failed. Check production immediately.
+[2026-05-08T06:57:46.406Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":134}
+[2026-05-08T06:57:46.407Z] [ALERT] SIGNUP REGRESSION — 7 consecutive cycles failed. Check production immediately.
+[2026-05-08T07:02:47.226Z] OK register=200 login=200 me=200 uid=d6a64335 email=hc_1778223766487@example.com
+[2026-05-08T07:07:47.872Z] OK register=200 login=200 me=200 uid=24edc903 email=hc_1778224067258@example.com
+[2026-05-08T07:12:48.797Z] OK register=200 login=200 me=200 uid=db5a8c68 email=hc_1778224367972@example.com
+[2026-05-08T07:17:49.579Z] OK register=200 login=200 me=200 uid=49d5834c email=hc_1778224668859@example.com
+[2026-05-08T07:22:50.551Z] OK register=200 login=200 me=200 uid=e305598b email=hc_1778224969644@example.com
+[2026-05-08T07:27:51.511Z] OK register=200 login=200 me=200 uid=1e175bde email=hc_1778225270652@example.com
+[2026-05-08T07:32:52.571Z] OK register=200 login=200 me=200 uid=ac059a93 email=hc_1778225571559@example.com
+[2026-05-08T07:37:53.351Z] OK register=200 login=200 me=200 uid=8c74e627 email=hc_1778225872671@example.com
+[2026-05-08T07:42:54.131Z] OK register=200 login=200 me=200 uid=eae98080 email=hc_1778226173379@example.com
+[2026-05-08T07:47:54.463Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":726}
+[2026-05-08T07:52:55.423Z] OK register=200 login=200 me=200 uid=c8e691f8 email=hc_1778226774508@example.com
+[2026-05-08T07:57:56.079Z] OK register=200 login=200 me=200 uid=75b066de email=hc_1778227075458@example.com
+[2026-05-08T08:02:56.849Z] OK register=200 login=200 me=200 uid=abb20a4c email=hc_1778227376158@example.com
+[2026-05-08T08:07:57.523Z] OK register=200 login=200 me=200 uid=25d97aa2 email=hc_1778227676941@example.com
+[2026-05-08T08:12:58.608Z] OK register=200 login=200 me=200 uid=b6d4438b email=hc_1778227977608@example.com
+[2026-05-08T08:17:59.375Z] OK register=200 login=200 me=200 uid=c72ff692 email=hc_1778228278651@example.com
+[2026-05-08T08:23:00.098Z] OK register=200 login=200 me=200 uid=011994e7 email=hc_1778228579408@example.com
+[2026-05-08T08:28:00.271Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1920}
+[2026-05-08T08:33:00.438Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1620}
+[2026-05-08T08:33:00.439Z] [ALERT] SIGNUP REGRESSION — 2 consecutive cycles failed. Check production immediately.
+[2026-05-08T08:38:00.583Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1320}
+[2026-05-08T08:38:00.583Z] [ALERT] SIGNUP REGRESSION — 3 consecutive cycles failed. Check production immediately.
+[2026-05-08T08:43:00.821Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1020}
+[2026-05-08T08:43:00.821Z] [ALERT] SIGNUP REGRESSION — 4 consecutive cycles failed. Check production immediately.
+[2026-05-08T08:48:01.106Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":719}
+[2026-05-08T08:48:01.106Z] [ALERT] SIGNUP REGRESSION — 5 consecutive cycles failed. Check production immediately.
+[2026-05-08T08:53:01.377Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":419}
+[2026-05-08T08:53:01.378Z] [ALERT] SIGNUP REGRESSION — 6 consecutive cycles failed. Check production immediately.
+[2026-05-08T08:58:01.602Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":119}
+[2026-05-08T08:58:01.602Z] [ALERT] SIGNUP REGRESSION — 7 consecutive cycles failed. Check production immediately.
+[2026-05-08T09:03:02.274Z] OK register=200 login=200 me=200 uid=d802189f email=hc_1778230981608@example.com
+[2026-05-08T09:08:03.231Z] OK register=200 login=200 me=200 uid=393caf2a email=hc_1778231282364@example.com
+[2026-05-08T09:13:04.083Z] OK register=200 login=200 me=200 uid=250967b5 email=hc_1778231583259@example.com
+[2026-05-08T09:18:05.170Z] OK register=200 login=200 me=200 uid=92c19a78 email=hc_1778231884107@example.com
+[2026-05-08T09:23:05.879Z] OK register=200 login=200 me=200 uid=b360f80b email=hc_1778232185208@example.com
+[2026-05-08T09:28:06.173Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1914}
+[2026-05-08T09:33:06.452Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1614}
+[2026-05-08T09:33:06.452Z] [ALERT] SIGNUP REGRESSION — 2 consecutive cycles failed. Check production immediately.
+[2026-05-08T09:38:06.819Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1314}
+[2026-05-08T09:38:06.820Z] [ALERT] SIGNUP REGRESSION — 3 consecutive cycles failed. Check production immediately.
+[2026-05-08T09:44:16.141Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":944}
+[2026-05-08T09:44:16.143Z] [ALERT] SIGNUP REGRESSION — 4 consecutive cycles failed. Check production immediately.
+[2026-05-08T09:49:16.351Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":644}
+[2026-05-08T09:49:16.351Z] [ALERT] SIGNUP REGRESSION — 5 consecutive cycles failed. Check production immediately.
+[2026-05-08T09:54:16.698Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":344}
+[2026-05-08T09:54:16.698Z] [ALERT] SIGNUP REGRESSION — 6 consecutive cycles failed. Check production immediately.
+[2026-05-08T09:59:17.310Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":43}
+[2026-05-08T09:59:17.310Z] [ALERT] SIGNUP REGRESSION — 7 consecutive cycles failed. Check production immediately.
+[2026-05-08T10:04:18.107Z] OK register=200 login=200 me=200 uid=d8eb9fa8 email=hc_1778234657346@example.com
+[2026-05-08T10:09:18.844Z] OK register=200 login=200 me=200 uid=a206441c email=hc_1778234958208@example.com
+[2026-05-08T10:14:19.864Z] OK register=200 login=200 me=200 uid=b315ae48 email=hc_1778235258920@example.com
+[2026-05-08T10:19:20.726Z] OK register=200 login=200 me=200 uid=b6e90683 email=hc_1778235559897@example.com
+[2026-05-08T10:24:21.553Z] OK register=200 login=200 me=200 uid=aad45ebe email=hc_1778235860810@example.com
+[2026-05-08T10:29:21.747Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1839}
+[2026-05-08T10:34:22.055Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1538}
+[2026-05-08T10:34:22.055Z] [ALERT] SIGNUP REGRESSION — 2 consecutive cycles failed. Check production immediately.
+[2026-05-08T10:39:22.298Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1238}
+[2026-05-08T10:39:22.298Z] [ALERT] SIGNUP REGRESSION — 3 consecutive cycles failed. Check production immediately.
+[2026-05-08T10:44:22.537Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":938}
+[2026-05-08T10:44:22.537Z] [ALERT] SIGNUP REGRESSION — 4 consecutive cycles failed. Check production immediately.
+[2026-05-08T10:49:22.934Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":638}
+[2026-05-08T10:49:22.934Z] [ALERT] SIGNUP REGRESSION — 5 consecutive cycles failed. Check production immediately.
+[2026-05-08T10:54:23.195Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":337}
+[2026-05-08T10:54:23.196Z] [ALERT] SIGNUP REGRESSION — 6 consecutive cycles failed. Check production immediately.
+[2026-05-08T10:59:23.514Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":37}
+[2026-05-08T10:59:23.515Z] [ALERT] SIGNUP REGRESSION — 7 consecutive cycles failed. Check production immediately.
+[2026-05-08T11:04:24.633Z] OK register=200 login=200 me=200 uid=b0e1ebb1 email=hc_1778238263597@example.com
+[2026-05-08T11:09:25.419Z] OK register=200 login=200 me=200 uid=00e56d40 email=hc_1778238564647@example.com
+[2026-05-08T11:14:26.221Z] OK register=200 login=200 me=200 uid=17d5f87f email=hc_1778238865438@example.com
+[2026-05-08T11:19:27.310Z] OK register=200 login=200 me=200 uid=9b7913bb email=hc_1778239166303@example.com
+[2026-05-08T11:24:28.186Z] OK register=200 login=200 me=200 uid=e83bc813 email=hc_1778239467397@example.com
+[2026-05-08T11:29:28.465Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1832}
+[2026-05-08T11:34:29.000Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1532}
+[2026-05-08T11:34:29.000Z] [ALERT] SIGNUP REGRESSION — 2 consecutive cycles failed. Check production immediately.
+[2026-05-08T11:39:29.194Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1231}
+[2026-05-08T11:39:29.195Z] [ALERT] SIGNUP REGRESSION — 3 consecutive cycles failed. Check production immediately.
+[2026-05-08T11:44:29.361Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":931}
+[2026-05-08T11:44:29.361Z] [ALERT] SIGNUP REGRESSION — 4 consecutive cycles failed. Check production immediately.
+[2026-05-08T11:49:29.528Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":631}
+[2026-05-08T11:49:29.528Z] [ALERT] SIGNUP REGRESSION — 5 consecutive cycles failed. Check production immediately.
+[2026-05-08T11:54:29.726Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":331}
+[2026-05-08T11:54:29.727Z] [ALERT] SIGNUP REGRESSION — 6 consecutive cycles failed. Check production immediately.
+[2026-05-08T11:59:29.912Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":31}
+[2026-05-08T11:59:29.913Z] [ALERT] SIGNUP REGRESSION — 7 consecutive cycles failed. Check production immediately.

@@ -214,16 +214,16 @@ export const NETWORKS: Record<string, NetworkInfo[]> = {
   ],
   QTA: [
     {
-      id: 'ERC20',
-      name: 'QuantaEX Chain (ERC20)',
-      shortName: 'ERC20',
-      addressRegex: /^0x[a-fA-F0-9]{40}$/,
-      addressExample: '0x...',
-      withdrawFee: 1,
-      minWithdraw: 10,
-      minDeposit: 1,
-      confirmations: 12,
-      estimateMin: 3,
+      id: 'QTA',
+      name: 'Quantarium Mainnet',
+      shortName: 'QTA',
+      addressRegex: /^qta1[a-z0-9]{38,58}$/,
+      addressExample: 'qta1...',
+      withdrawFee: 0.1,
+      minWithdraw: 1,
+      minDeposit: 0.1,
+      confirmations: 6,
+      estimateMin: 1,
     },
   ],
   USDC: [
@@ -320,6 +320,8 @@ export function generateDepositAddress(userId: string, coin: string, network: st
       return '1' + long.slice(0, 47);
     case 'BANK':
       return '3333-01-' + hex.slice(0, 7);
+    case 'QTA':
+      return 'qta1' + long.slice(0, 58);
     default:
       return '0x' + long;
   }

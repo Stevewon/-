@@ -1,0 +1,24 @@
+[2026-05-05T11:12:56.859Z] hourly-00h (initial) HTTP 200 704ms {"ok":true,"server_time":1777979576760}
+[2026-05-05T12:22:49.462Z] hourly-01h HTTP 451 238ms {"error":"Service is not available in your region.","code":"GEO_BLOCKED","country":"US","policy_url":"https://quantaex.io/legal/restricted-j
+[2026-05-05T13:22:49.653Z] hourly-02h HTTP 451 172ms {"error":"Service is not available in your region.","code":"GEO_BLOCKED","country":"US","policy_url":"https://quantaex.io/legal/restricted-j
+[2026-05-05T14:22:49.896Z] hourly-03h HTTP 451 216ms {"error":"Service is not available in your region.","code":"GEO_BLOCKED","country":"US","policy_url":"https://quantaex.io/legal/restricted-j
+[2026-05-05T15:22:50.099Z] hourly-04h HTTP 451 168ms {"error":"Service is not available in your region.","code":"GEO_BLOCKED","country":"US","policy_url":"https://quantaex.io/legal/restricted-j
+[2026-05-05T16:23:27.245Z] hourly-05h HTTP 451 237ms {"error":"Service is not available in your region.","code":"GEO_BLOCKED","country":"US","policy_url":"https://quantaex.io/legal/restricted-j
+[2026-05-05T17:23:27.501Z] hourly-06h HTTP 451 227ms {"error":"Service is not available in your region.","code":"GEO_BLOCKED","country":"US","policy_url":"https://quantaex.io/legal/restricted-j
+[2026-05-05T18:23:28.719Z] hourly-07h HTTP 200 1145ms {"ok":true,"server_time":1778005408609}
+[2026-05-05T19:23:29.708Z] hourly-08h HTTP 200 935ms {"ok":true,"server_time":1778009009628}
+[2026-05-05T20:33:24.469Z] hourly-09h HTTP 200 1156ms {"ok":true,"server_time":1778013204331}
+[2026-05-05T21:33:25.548Z] hourly-10h HTTP 200 1043ms {"ok":true,"server_time":1778016805497}
+[2026-05-05T22:33:26.758Z] hourly-11h HTTP 200 1113ms {"ok":true,"server_time":1778020406664}
+[2026-05-05T23:33:27.972Z] hourly-12h HTTP 200 1167ms {"ok":true,"server_time":1778024007831}
+[2026-05-06T00:43:22.376Z] hourly-13h HTTP 200 1085ms {"ok":true,"server_time":1778028202299}
+[2026-05-06T01:43:23.304Z] hourly-14h HTTP 200 882ms {"ok":true,"server_time":1778031803220}
+[2026-05-06T02:43:24.568Z] hourly-15h HTTP 200 1169ms {"ok":true,"server_time":1778035404459}
+[2026-05-06T03:43:25.482Z] hourly-16h HTTP 200 900ms {"ok":true,"server_time":1778039005356}
+[2026-05-06T04:53:19.489Z] hourly-17h HTTP 200 927ms {"ok":true,"server_time":1778043199379}
+[2026-05-06T05:53:20.376Z] hourly-18h HTTP 200 871ms {"ok":true,"server_time":1778046800291}
+[2026-05-06T06:53:21.219Z] hourly-19h HTTP 200 814ms {"ok":true,"server_time":1778050401149}
+[2026-05-06T07:53:22.218Z] hourly-20h HTTP 200 956ms {"ok":true,"server_time":1778054002118}
+[2026-05-06T08:59:58.364Z] hourly-21h HTTP 200 977ms {"ok":true,"server_time":1778057998292}
+[2026-05-06T09:59:59.285Z] hourly-22h HTTP 200 903ms {"ok":true,"server_time":1778061599202}
+[2026-05-06T11:00:00.293Z] hourly-23h HTTP 200 960ms {"ok":true,"server_time":1778065200179}
