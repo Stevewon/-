@@ -5,6 +5,7 @@ import { useI18n } from '../i18n';
 import { formatPrice, formatPercent, formatVolume } from '../utils/format';
 import CoinIcon from '../components/common/CoinIcon';
 import SkeletonLoader from '../components/common/SkeletonLoader';
+import DesktopPageLayout from '../components/common/DesktopPageLayout';
 import {
   Search, Star, TrendingUp, TrendingDown, ArrowUpDown,
   ChevronDown, ChevronUp, BarChart3, Flame, Clock, Filter,
@@ -132,9 +133,9 @@ export default function MarketsPage() {
   };
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-6">
+    <DesktopPageLayout>
       {/* Header */}
-      <div className="mb-6">
+      <div className="qx-page-title">
         <h1 className="text-2xl font-bold text-exchange-text mb-1">{t('market.allMarkets')}</h1>
         <p className="text-sm text-exchange-text-secondary">
           {t('market.marketCount', { count: String(listed.length) })}
@@ -142,7 +143,7 @@ export default function MarketsPage() {
       </div>
 
       {/* Filters Bar */}
-      <div className="flex flex-wrap items-center gap-3 mb-4">
+      <div className="qx-page-toolbar flex flex-wrap items-center gap-3">
         {/* Quote Tabs */}
         <div className="flex items-center gap-0.5 bg-exchange-card rounded-lg border border-exchange-border p-0.5">
           {quotes.map(q => (
@@ -356,6 +357,6 @@ export default function MarketsPage() {
           </div>
         </>
       )}
-    </div>
+    </DesktopPageLayout>
   );
 }

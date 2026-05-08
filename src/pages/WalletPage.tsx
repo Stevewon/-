@@ -5,6 +5,7 @@ import { useI18n } from '../i18n';
 import { formatPrice, formatAmount, timeAgo } from '../utils/format';
 import CoinIcon from '../components/common/CoinIcon';
 import SkeletonLoader from '../components/common/SkeletonLoader';
+import DesktopPageLayout from '../components/common/DesktopPageLayout';
 import DepositModal from '../components/wallet/DepositModal';
 import WithdrawModal from '../components/wallet/WithdrawModal';
 import TransactionDetailModal from '../components/wallet/TransactionDetailModal';
@@ -167,17 +168,7 @@ export default function WalletPage() {
    */
 
   return (
-    <div
-      className="w-full mx-auto"
-      style={{
-        maxWidth: '1600px',
-        paddingLeft: '24px',
-        paddingRight: '24px',
-        paddingTop: '16px',
-        paddingBottom: '16px',
-        boxSizing: 'border-box',
-      }}
-    >
+    <DesktopPageLayout>
       {/* ========== SUMMARY GRID (Desktop 2-col, Mobile 1-col) ========== */}
       <div
         className="grid"
@@ -738,6 +729,6 @@ export default function WalletPage() {
         transaction={txModal.tx}
         type={txModal.type}
       />
-    </div>
+    </DesktopPageLayout>
   );
 }

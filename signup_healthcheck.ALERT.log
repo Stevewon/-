@@ -379,3 +379,7 @@
 [2026-05-08T12:54:36.165Z] [ALERT] SIGNUP REGRESSION — 6 consecutive cycles failed. Check production immediately.
 [2026-05-08T12:59:36.353Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":24}
 [2026-05-08T12:59:36.354Z] [ALERT] SIGNUP REGRESSION — 7 consecutive cycles failed. Check production immediately.
+[2026-05-08T21:59:42.693Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":18}
+[2026-05-08T22:29:47.334Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1813}
+[2026-05-08T22:34:47.508Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1513}
+[2026-05-08T22:34:47.508Z] [ALERT] SIGNUP REGRESSION — 2 consecutive cycles failed. Check production immediately.

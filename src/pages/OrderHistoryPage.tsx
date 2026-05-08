@@ -5,6 +5,7 @@ import { useI18n } from '../i18n';
 import { formatPrice, formatAmount, timeAgo } from '../utils/format';
 import CoinIcon from '../components/common/CoinIcon';
 import SkeletonLoader from '../components/common/SkeletonLoader';
+import DesktopPageLayout from '../components/common/DesktopPageLayout';
 import {
   ClipboardList, ArrowLeftRight, ChevronDown, ChevronUp,
   Clock, CheckCircle2, XCircle, AlertCircle, ArrowUpDown, Search,
@@ -192,9 +193,9 @@ export default function OrderHistoryPage() {
   };
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-6">
+    <DesktopPageLayout>
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="qx-page-title flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 bg-exchange-yellow/10 rounded-xl flex items-center justify-center">
             <ClipboardList size={22} className="text-exchange-yellow" />
@@ -245,7 +246,7 @@ export default function OrderHistoryPage() {
       </div>
 
       {/* Filters Row 1 */}
-      <div className="flex flex-wrap items-center gap-3 mb-3">
+      <div className="qx-page-toolbar flex flex-wrap items-center gap-3">
         {tab === 'orders' && (
           <div className="flex items-center gap-1 bg-exchange-card rounded-lg border border-exchange-border p-1">
             {(['all', 'open', 'filled', 'cancelled', 'partial'] as StatusFilter[]).map(s => (
@@ -498,6 +499,6 @@ export default function OrderHistoryPage() {
           )}
         </div>
       )}
-    </div>
+    </DesktopPageLayout>
   );
 }
