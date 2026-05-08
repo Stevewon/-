@@ -383,3 +383,11 @@
 [2026-05-08T22:29:47.334Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1813}
 [2026-05-08T22:34:47.508Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1513}
 [2026-05-08T22:34:47.508Z] [ALERT] SIGNUP REGRESSION — 2 consecutive cycles failed. Check production immediately.
+[2026-05-08T22:39:47.829Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":1213}
+[2026-05-08T22:39:47.830Z] [ALERT] SIGNUP REGRESSION — 3 consecutive cycles failed. Check production immediately.
+[2026-05-08T22:44:48.183Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":912}
+[2026-05-08T22:44:48.183Z] [ALERT] SIGNUP REGRESSION — 4 consecutive cycles failed. Check production immediately.
+[2026-05-08T22:49:48.426Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":612}
+[2026-05-08T22:49:48.426Z] [ALERT] SIGNUP REGRESSION — 5 consecutive cycles failed. Check production immediately.
+[2026-05-08T22:54:48.705Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":312}
+[2026-05-08T22:54:48.706Z] [ALERT] SIGNUP REGRESSION — 6 consecutive cycles failed. Check production immediately.

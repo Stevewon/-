@@ -18,6 +18,7 @@ import { useEffect, useMemo, useState } from 'react';
 import useStore from '../store/useStore';
 import { useI18n } from '../i18n';
 import api from '../utils/api';
+import DesktopPageLayout from '../components/common/DesktopPageLayout';
 import { showToast } from '../components/common/Toast';
 import {
   Wallet, ShieldAlert, AlertTriangle, RefreshCw, Plus, Minus,
@@ -160,8 +161,9 @@ export default function MarginPage() {
   }, [accounts]);
 
   return (
-    <div className="container mx-auto px-4 py-6 max-w-7xl space-y-6">
-      <div className="flex items-center justify-between">
+    <DesktopPageLayout>
+      <div className="space-y-6">
+      <div className="qx-page-title flex items-center justify-between">
         <div className="flex items-center gap-3">
           <Wallet className="w-6 h-6 text-exchange-yellow" />
           <h1 className="text-xl font-bold">{t('margin.title') || 'Margin'}</h1>
@@ -390,7 +392,8 @@ export default function MarginPage() {
           </tbody>
         </table>
       </div>
-    </div>
+      </div>
+    </DesktopPageLayout>
   );
 }
 

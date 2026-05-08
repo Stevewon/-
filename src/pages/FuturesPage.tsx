@@ -19,6 +19,7 @@ import useStore from '../store/useStore';
 import { useI18n } from '../i18n';
 import api from '../utils/api';
 import { showToast } from '../components/common/Toast';
+import DesktopPageLayout from '../components/common/DesktopPageLayout';
 import {
   TrendingUp, TrendingDown, Layers, Activity, AlertTriangle, RefreshCw,
 } from 'lucide-react';
@@ -225,8 +226,9 @@ export default function FuturesPage() {
   }
 
   return (
-    <div className="container mx-auto px-4 py-6 max-w-7xl space-y-6">
-      <div className="flex items-center justify-between">
+    <DesktopPageLayout>
+      <div className="space-y-6">
+      <div className="qx-page-title flex items-center justify-between">
         <div className="flex items-center gap-3">
           <TrendingUp className="w-6 h-6 text-exchange-yellow" />
           <h1 className="text-xl font-bold">{t('futures.title') || 'Futures'}</h1>
@@ -495,7 +497,8 @@ export default function FuturesPage() {
           </div>
         </div>
       </div>
-    </div>
+      </div>
+    </DesktopPageLayout>
   );
 }
 
