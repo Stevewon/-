@@ -103,14 +103,14 @@ export default function DepositModal({ open, onClose, initialCoin = 'USDT' }: Pr
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-exchange-border sticky top-0 bg-exchange-card z-10 backdrop-blur">
+        <div className="flex items-center justify-between px-6 py-6 border-b border-exchange-border sticky top-0 bg-exchange-card z-10 backdrop-blur">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-exchange-buy/15 flex items-center justify-center">
               <ArrowDownLeft size={20} className="text-exchange-buy" />
             </div>
             <div>
               <h2 className="text-xl font-bold text-exchange-text leading-tight">{t('wallet.deposit')}</h2>
-              <p className="text-xs text-exchange-text-third mt-0.5">
+              <p className="text-xs text-exchange-text-third mt-1.5">
                 {t('wallet.depositSubtitle') || 'Send crypto to your wallet address'}
               </p>
             </div>
@@ -124,19 +124,19 @@ export default function DepositModal({ open, onClose, initialCoin = 'USDT' }: Pr
         </div>
 
         {/* Body — 2 columns on md+ */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 p-8">
           {/* LEFT — Selectors */}
-          <div className="space-y-5">
+          <div className="space-y-8">
             {/* Coin Select */}
             <div>
-              <label className="text-xs text-exchange-text-third mb-2 block font-semibold uppercase tracking-wider">
+              <label className="text-xs text-exchange-text-third mb-3 block font-semibold uppercase tracking-wider">
                 {t('wallet.coinSelect')}
               </label>
               <div className="relative">
                 <select
                   value={coin}
                   onChange={e => setCoin(e.target.value)}
-                  className="input-field w-full text-base pl-12 py-3.5 font-medium"
+                  className="input-field w-full text-base pl-12 py-4 font-medium"
                 >
                   {wallets.map(w => (
                     <option key={w.coin_symbol} value={w.coin_symbol}>
@@ -149,7 +149,7 @@ export default function DepositModal({ open, onClose, initialCoin = 'USDT' }: Pr
                 </div>
               </div>
               {selectedWallet && (
-                <div className="mt-2 text-[11px] text-exchange-text-third flex items-center justify-between">
+                <div className="mt-3 text-[11px] text-exchange-text-third flex items-center justify-between">
                   <span>{t('wallet.currentBalance') || 'Balance'}</span>
                   <span className="text-exchange-text font-medium tabular-nums">
                     {selectedWallet.available} {coin}
@@ -160,54 +160,54 @@ export default function DepositModal({ open, onClose, initialCoin = 'USDT' }: Pr
 
             {/* Network Select */}
             <div>
-              <label className="text-xs text-exchange-text-third mb-2 block font-semibold uppercase tracking-wider">
+              <label className="text-xs text-exchange-text-third mb-3 block font-semibold uppercase tracking-wider">
                 {t('wallet.network')}
               </label>
-              <div className="grid grid-cols-2 gap-2.5">
+              <div className="grid grid-cols-2 gap-3">
                 {networks.map(n => (
                   <button
                     key={n.id}
                     onClick={() => setNetworkId(n.id)}
-                    className={`text-left px-3.5 py-3 rounded-xl border-2 text-xs transition-all ${
+                    className={`text-left px-4 py-4 rounded-xl border-2 text-xs transition-all ${
                       network.id === n.id
                         ? 'border-exchange-yellow bg-exchange-yellow/10 text-exchange-text shadow-sm'
                         : 'border-exchange-border bg-exchange-bg/40 text-exchange-text-secondary hover:border-exchange-yellow/40 hover:bg-exchange-bg/70'
                     }`}
                   >
                     <div className="font-bold text-sm">{n.shortName}</div>
-                    <div className="text-[10px] text-exchange-text-third mt-1 truncate">{n.name}</div>
+                    <div className="text-[10px] text-exchange-text-third mt-1.5 truncate">{n.name}</div>
                   </button>
                 ))}
               </div>
             </div>
 
             {/* Quick Info */}
-            <div className="grid grid-cols-2 gap-2.5">
-              <div className="bg-exchange-bg/40 rounded-xl p-3.5 border border-exchange-border/60">
-                <div className="text-[10px] text-exchange-text-third uppercase tracking-wider font-semibold flex items-center gap-1">
-                  <Shield size={10} /> {t('wallet.minDeposit')}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-exchange-bg/40 rounded-xl p-4 border border-exchange-border/60">
+                <div className="text-[10px] text-exchange-text-third uppercase tracking-wider font-semibold flex items-center gap-1.5">
+                  <Shield size={11} /> {t('wallet.minDeposit')}
                 </div>
-                <div className="text-exchange-text font-bold text-sm tabular-nums mt-1.5">
+                <div className="text-exchange-text font-bold text-sm tabular-nums mt-2.5">
                   {network?.minDeposit} <span className="text-exchange-text-third font-normal">{coin}</span>
                 </div>
               </div>
-              <div className="bg-exchange-bg/40 rounded-xl p-3.5 border border-exchange-border/60">
-                <div className="text-[10px] text-exchange-text-third uppercase tracking-wider font-semibold flex items-center gap-1">
-                  <Clock size={10} /> {t('wallet.confirmations')}
+              <div className="bg-exchange-bg/40 rounded-xl p-4 border border-exchange-border/60">
+                <div className="text-[10px] text-exchange-text-third uppercase tracking-wider font-semibold flex items-center gap-1.5">
+                  <Clock size={11} /> {t('wallet.confirmations')}
                 </div>
-                <div className="text-exchange-text font-bold text-sm tabular-nums mt-1.5">
+                <div className="text-exchange-text font-bold text-sm tabular-nums mt-2.5">
                   {network?.confirmations} <span className="text-exchange-text-third font-normal">· ~{network?.estimateMin}m</span>
                 </div>
               </div>
             </div>
 
             {/* Warnings */}
-            <div className="bg-gradient-to-br from-exchange-yellow/10 to-exchange-yellow/5 border border-exchange-yellow/30 rounded-xl p-3.5 space-y-2">
-              <div className="flex items-start gap-2 text-[11px] text-exchange-text-secondary leading-relaxed">
+            <div className="bg-gradient-to-br from-exchange-yellow/10 to-exchange-yellow/5 border border-exchange-yellow/30 rounded-xl p-4 space-y-3">
+              <div className="flex items-start gap-2.5 text-[11px] text-exchange-text-secondary leading-relaxed">
                 <AlertTriangle size={13} className="text-exchange-yellow shrink-0 mt-0.5" />
                 <span>{t('wallet.warnSendOnlyCoin', { coin, network: network?.shortName })}</span>
               </div>
-              <div className="flex items-start gap-2 text-[11px] text-exchange-text-secondary leading-relaxed">
+              <div className="flex items-start gap-2.5 text-[11px] text-exchange-text-secondary leading-relaxed">
                 <Info size={13} className="text-exchange-yellow shrink-0 mt-0.5" />
                 <span>{t('wallet.warnBelowMin', { min: network?.minDeposit, coin })}</span>
               </div>
@@ -215,13 +215,13 @@ export default function DepositModal({ open, onClose, initialCoin = 'USDT' }: Pr
           </div>
 
           {/* RIGHT — QR + Address */}
-          <div className="space-y-4">
+          <div className="space-y-7">
             {/* QR Card */}
-            <div className="bg-gradient-to-br from-exchange-bg to-exchange-bg/60 rounded-2xl border border-exchange-border p-6 flex flex-col items-center">
+            <div className="bg-gradient-to-br from-exchange-bg to-exchange-bg/60 rounded-2xl border border-exchange-border p-8 flex flex-col items-center">
               <div className="bg-white p-4 rounded-2xl shadow-lg">
                 <QRCode value={memo ? `${address}?memo=${memo}` : address} size={200} />
               </div>
-              <div className="mt-4 flex items-center gap-2 text-[11px] text-exchange-text-third">
+              <div className="mt-5 flex items-center gap-2 text-[11px] text-exchange-text-third">
                 <CoinIcon symbol={coin} size={14} />
                 <span className="font-medium">{coin}</span>
                 <span>·</span>
@@ -231,10 +231,10 @@ export default function DepositModal({ open, onClose, initialCoin = 'USDT' }: Pr
 
             {/* Address */}
             <div>
-              <div className="text-[11px] text-exchange-text-third mb-1.5 uppercase tracking-wider font-semibold">
+              <div className="text-[11px] text-exchange-text-third mb-3 uppercase tracking-wider font-semibold">
                 {t('wallet.depositAddress')}
               </div>
-              <div className="flex items-center gap-2 bg-exchange-bg rounded-xl px-4 py-3 border border-exchange-border hover:border-exchange-yellow/40 transition-colors group">
+              <div className="flex items-center gap-2 bg-exchange-bg rounded-xl px-4 py-4 border border-exchange-border hover:border-exchange-yellow/40 transition-colors group">
                 <code className="flex-1 text-xs font-mono text-exchange-text break-all leading-relaxed">
                   {address}
                 </code>
@@ -255,11 +255,11 @@ export default function DepositModal({ open, onClose, initialCoin = 'USDT' }: Pr
             {/* Memo (conditional) */}
             {network?.memoRequired && (
               <div>
-                <div className="text-[11px] text-exchange-yellow mb-1.5 uppercase tracking-wider font-semibold flex items-center gap-1.5">
+                <div className="text-[11px] text-exchange-yellow mb-3 uppercase tracking-wider font-semibold flex items-center gap-1.5">
                   <AlertTriangle size={12} />
                   {network.memoLabel || t('wallet.memo')} ({t('wallet.required')})
                 </div>
-                <div className="flex items-center gap-2 bg-exchange-bg rounded-xl px-4 py-3 border-2 border-exchange-yellow/40">
+                <div className="flex items-center gap-2 bg-exchange-bg rounded-xl px-4 py-4 border-2 border-exchange-yellow/40">
                   <code className="flex-1 text-xs font-mono text-exchange-text">{memo}</code>
                   <button
                     onClick={() => copy(memo, 'memo')}
@@ -268,7 +268,7 @@ export default function DepositModal({ open, onClose, initialCoin = 'USDT' }: Pr
                     {copied === 'memo' ? <Check size={16} className="text-exchange-buy" /> : <Copy size={16} />}
                   </button>
                 </div>
-                <p className="text-[10px] text-exchange-yellow mt-2 flex items-start gap-1.5 leading-relaxed">
+                <p className="text-[10px] text-exchange-yellow mt-3 flex items-start gap-1.5 leading-relaxed">
                   <AlertTriangle size={11} className="mt-0.5 shrink-0" />
                   {t('wallet.memoWarning')}
                 </p>
@@ -278,7 +278,7 @@ export default function DepositModal({ open, onClose, initialCoin = 'USDT' }: Pr
         </div>
 
         {/* Footer — Demo Test */}
-        <div className="border-t border-exchange-border px-6 py-4 bg-exchange-bg/30">
+        <div className="border-t border-exchange-border px-8 py-5 bg-exchange-bg/30">
           <button
             onClick={() => setShowTest(!showTest)}
             className="flex items-center justify-between w-full text-xs text-exchange-text-third hover:text-exchange-text transition-colors"
@@ -293,8 +293,8 @@ export default function DepositModal({ open, onClose, initialCoin = 'USDT' }: Pr
             {showTest ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
           </button>
           {showTest && (
-            <div className="mt-3 p-4 bg-exchange-card rounded-xl border border-exchange-border">
-              <p className="text-[11px] text-exchange-text-third mb-3 leading-relaxed">{t('wallet.testDepositDesc')}</p>
+            <div className="mt-4 p-5 bg-exchange-card rounded-xl border border-exchange-border">
+              <p className="text-[11px] text-exchange-text-third mb-4 leading-relaxed">{t('wallet.testDepositDesc')}</p>
               <div className="flex gap-2">
                 <input
                   type="number"
@@ -302,12 +302,12 @@ export default function DepositModal({ open, onClose, initialCoin = 'USDT' }: Pr
                   onChange={e => setTestAmount(e.target.value)}
                   placeholder="0.00"
                   step="any"
-                  className="input-field flex-1 text-sm tabular-nums py-2.5"
+                  className="input-field flex-1 text-sm tabular-nums py-3"
                 />
                 <button
                   onClick={handleTestDeposit}
                   disabled={loading}
-                  className="btn-buy px-5 py-2.5 rounded-lg text-sm font-semibold disabled:opacity-50 whitespace-nowrap"
+                  className="btn-buy px-5 py-3 rounded-lg text-sm font-semibold disabled:opacity-50 whitespace-nowrap"
                 >
                   {loading ? t('wallet.processing') : t('wallet.credit')}
                 </button>
