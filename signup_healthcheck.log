@@ -527,3 +527,7 @@
 [2026-05-08T11:54:29.727Z] [ALERT] SIGNUP REGRESSION — 6 consecutive cycles failed. Check production immediately.
 [2026-05-08T11:59:29.912Z] [ALERT] register status=429 body={"error":"Too many requests. Please try again later.","retry_after_sec":31}
 [2026-05-08T11:59:29.913Z] [ALERT] SIGNUP REGRESSION — 7 consecutive cycles failed. Check production immediately.
+[2026-05-08T12:04:30.826Z] OK register=200 login=200 me=200 uid=e42bccd3 email=hc_1778241869947@example.com
+[2026-05-08T12:09:31.565Z] OK register=200 login=200 me=200 uid=1e8b174d email=hc_1778242170860@example.com
+[2026-05-08T12:14:32.376Z] OK register=200 login=200 me=200 uid=a614304b email=hc_1778242471596@example.com
+[2026-05-08T12:19:33.405Z] OK register=200 login=200 me=200 uid=3ed16abd email=hc_1778242772397@example.com
