@@ -15,6 +15,16 @@ export default defineConfig(({ mode }) => {
         minify: 'esbuild',
         rollupOptions: {
           output: {
+            // Explicit filename patterns. Forcing the timestamp into the
+            // entry filename guarantees that every deploy ships a brand new
+            // index-*.js name, so any stale HTML still pointing at an
+            // older index hash will simply 404 (instead of importing a
+            // ghost chunk that no longer exists). The `b` letter prefix on
+            // chunks/assets keeps Rollup's hash alphabet but disambiguates
+            // entries from chunks at a glance during incident triage.
+            entryFileNames: `assets/index-[hash]-${Date.now()}.js`,
+            chunkFileNames: 'assets/[name]-[hash].js',
+            assetFileNames: 'assets/[name]-[hash][extname]',
             manualChunks: {
               vendor: ['react', 'react-dom', 'react-router-dom'],
               charts: ['lightweight-charts'],

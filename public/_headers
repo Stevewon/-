@@ -4,5 +4,16 @@
   Referrer-Policy: strict-origin-when-cross-origin
   Permissions-Policy: camera=(), microphone=(), geolocation=()
 
+# HTML / SPA shell — never cache so a new build's chunk-map is always fresh.
+# Without this, Cloudflare edge can hold a stale index.html that imports
+# chunk filenames the new build no longer ships, producing
+# "Failed to load module script: ... MIME type 'text/html'" errors.
+/
+  Cache-Control: no-store, must-revalidate
+
+/index.html
+  Cache-Control: no-store, must-revalidate
+
+# Hashed bundle assets — safe to cache forever (filename changes on each build).
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
