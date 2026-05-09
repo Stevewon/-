@@ -28,22 +28,6 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: d1 execute quantaex-production --remote --file=./migrations/0008_sprint2_hardening.sql
 
-      - name: Apply D1 migration 0027 (QX exchange token)
-        continue-on-error: true
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: d1 execute quantaex-production --remote --file=./migrations/0027_qx_exchange_token.sql
-
-      - name: Apply D1 migration 0028 (QKEY listing)
-        continue-on-error: true
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: d1 execute quantaex-production --remote --file=./migrations/0028_qkey_listing.sql
-
       - run: npx vite build --mode client
       - run: npx vite build
 
