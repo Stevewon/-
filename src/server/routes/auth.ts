@@ -64,8 +64,12 @@ const rlReqVerify = rateLimit({ key: 'auth:req-verif', max: 5,  windowSec: 3600 
 // signup bonus 1000; declared here to keep all referral knobs in one place).
 // ============================================================================
 const REFERRAL_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
-const REFERRER_REWARD_QTA   = 500;
-const REFERRED_WELCOME_QTA  = 1000;
+// Rewards are now paid out in QX (the QuantaEX exchange token), not QTA.
+// Names retained for backward compat in API field keys, but the underlying
+// coin_symbol used in wallets / referrals.reward_coin is 'QX'.
+const REFERRER_REWARD_QX    = 50;
+const REFERRED_WELCOME_QX   = 100;
+const REWARD_COIN           = 'QX';
 
 function genReferralCode(): string {
   const buf = new Uint8Array(8);
@@ -170,7 +174,7 @@ app.post('/register', rlRegister, async (c) => {
     } catch { /* table may not exist yet; ignore */ }
   }
 
-  // Default wallets. QTA sign-up bonus (1,000) is credited to `locked`
+  // Default wallets. QX sign-up bonus (100 QX) is credited to `locked`
   // so it cannot be traded or withdrawn until the user verifies their
   // email. This prevents multi-account abuse where throwaway addresses
   // farm the bonus. Unlock happens in POST /verify-email below.
@@ -179,7 +183,9 @@ app.post('/register', rlRegister, async (c) => {
     { symbol: 'USDC', available: 0, locked: 0 },
     { symbol: 'BTC',  available: 0, locked: 0 },
     { symbol: 'ETH',  available: 0, locked: 0 },
-    { symbol: 'QTA',  available: 0, locked: 1000 },
+    { symbol: 'QTA',  available: 0, locked: 0 },
+    { symbol: 'QX',   available: 0, locked: REFERRED_WELCOME_QX },
+    { symbol: 'QKEY', available: 0, locked: 0 },
   ];
 
   const batch = defaults.map(d =>
@@ -190,44 +196,44 @@ app.post('/register', rlRegister, async (c) => {
   await c.env.DB.batch(batch);
 
   // ──────────────────────────────────────────────────────────────────────────
-  // Referrer reward: 500 QTA credited DIRECTLY to `available`.
+  // Referrer reward: 50 QX credited DIRECTLY to `available`.
   // ──────────────────────────────────────────────────────────────────────────
   // The referrer is presumed to be already verified (they have a code and
-  // shared it). We credit 500 QTA available immediately, log the
+  // shared it). We credit 50 QX available immediately, log the
   // relationship in `referrals` (UNIQUE referred_id prevents double-credit),
   // and best-effort notify them by email.
-  let referrerCreditedQta = 0;
+  let referrerCreditedQx = 0;
   if (referrer) {
     try {
-      // Ensure referrer has a QTA wallet row (older accounts might not).
+      // Ensure referrer has a QX wallet row (older accounts might not).
       const refWallet = await c.env.DB.prepare(
-        `SELECT id, available FROM wallets WHERE user_id = ? AND coin_symbol = 'QTA'`
-      ).bind(referrer.id).first<any>();
+        `SELECT id, available FROM wallets WHERE user_id = ? AND coin_symbol = ?`
+      ).bind(referrer.id, REWARD_COIN).first<any>();
 
       if (refWallet) {
         await c.env.DB.batch([
           c.env.DB.prepare(
             `UPDATE wallets SET available = available + ? WHERE id = ?`
-          ).bind(REFERRER_REWARD_QTA, refWallet.id),
+          ).bind(REFERRER_REWARD_QX, refWallet.id),
           c.env.DB.prepare(
             `INSERT INTO referrals (id, referrer_id, referred_id, referral_code, reward_qta)
              VALUES (?, ?, ?, ?, ?)`
-          ).bind(uuid(), referrer.id, id, refCode, REFERRER_REWARD_QTA),
+          ).bind(uuid(), referrer.id, id, refCode, REFERRER_REWARD_QX),
         ]);
       } else {
-        // Create QTA wallet for legacy referrer with the bonus directly.
+        // Create QX wallet for legacy referrer with the bonus directly.
         await c.env.DB.batch([
           c.env.DB.prepare(
             `INSERT INTO wallets (id, user_id, coin_symbol, available, locked)
-             VALUES (?, ?, 'QTA', ?, 0)`
-          ).bind(uuid(), referrer.id, REFERRER_REWARD_QTA),
+             VALUES (?, ?, ?, ?, 0)`
+          ).bind(uuid(), referrer.id, REWARD_COIN, REFERRER_REWARD_QX),
           c.env.DB.prepare(
             `INSERT INTO referrals (id, referrer_id, referred_id, referral_code, reward_qta)
              VALUES (?, ?, ?, ?, ?)`
-          ).bind(uuid(), referrer.id, id, refCode, REFERRER_REWARD_QTA),
+          ).bind(uuid(), referrer.id, id, refCode, REFERRER_REWARD_QX),
         ]);
       }
-      referrerCreditedQta = REFERRER_REWARD_QTA;
+      referrerCreditedQx = REFERRER_REWARD_QX;
 
       // Best-effort notification (does not block signup).
       try {
@@ -235,14 +241,14 @@ app.post('/register', rlRegister, async (c) => {
         const appUrl = (c.env as any).APP_URL || 'https://quantaex.io';
         const send = sendMail(c.env as any, {
           to: referrer.email,
-          subject: `+${REFERRER_REWARD_QTA} QTA — your referral just signed up!`,
+          subject: `+${REFERRER_REWARD_QX} QX — your referral just signed up!`,
           html: templateBasic(
             'Referral reward',
             `Great news! ${nickname} just signed up using your referral code <b>${refCode}</b>. ` +
-            `<b>${REFERRER_REWARD_QTA} QTA</b> has been credited to your wallet's available balance.`,
+            `<b>${REFERRER_REWARD_QX} QX</b> has been credited to your wallet's available balance.`,
             { label: 'Open wallet', url: `${appUrl}/wallet` },
           ),
-          text: `+${REFERRER_REWARD_QTA} QTA credited for referring ${nickname}. ${appUrl}/wallet`,
+          text: `+${REFERRER_REWARD_QX} QX credited for referring ${nickname}. ${appUrl}/wallet`,
         });
         if (ctx?.waitUntil) ctx.waitUntil(send); else await send;
       } catch (e) {
@@ -296,8 +302,12 @@ app.post('/register', rlRegister, async (c) => {
     user,
     referral: {
       code: myReferralCode,
-      referrer_credited_qta: referrerCreditedQta,
-      welcome_qta_locked: REFERRED_WELCOME_QTA, // unlocks on email verify
+      // Field names kept QTA-suffixed for legacy clients; values are QX amounts.
+      referrer_credited_qta: referrerCreditedQx,
+      welcome_qta_locked:    REFERRED_WELCOME_QX, // unlocks on email verify
+      reward_coin:           REWARD_COIN,
+      referrer_credited_qx:  referrerCreditedQx,
+      welcome_qx_locked:     REFERRED_WELCOME_QX,
     },
   });
 });
@@ -435,10 +445,16 @@ app.get('/referrals', authMiddleware, async (c) => {
 
   return c.json({
     code: me?.referral_code || null,
-    reward_per_referral_qta: REFERRER_REWARD_QTA,
-    welcome_bonus_qta: REFERRED_WELCOME_QTA,
+    // Legacy QTA-suffixed keys retained but values are QX amounts; new
+    // QX-suffixed keys are the source of truth going forward.
+    reward_per_referral_qta: REFERRER_REWARD_QX,
+    welcome_bonus_qta: REFERRED_WELCOME_QX,
+    reward_per_referral_qx: REFERRER_REWARD_QX,
+    welcome_bonus_qx: REFERRED_WELCOME_QX,
+    reward_coin: REWARD_COIN,
     invited_count: invited.length,
     total_reward_qta: totalReward,
+    total_reward_qx: totalReward,
     invited,
     referred_by: referredBy,
   });
@@ -570,22 +586,38 @@ app.post('/verify-email', async (c) => {
     ).bind(row.id),
   ]);
 
-  // Unlock the QTA sign-up bonus: move any `locked` QTA (up to 1000)
+  // Unlock the QX sign-up bonus: move any `locked` QX (up to 100)
   // into `available`. Idempotent because we run it only on first verify.
+  // Also unlock any legacy QTA bonus still sitting in `locked` from before
+  // the QX migration so existing accounts don't lose access to old credits.
   let bonusUnlocked = 0;
   if (firstVerification) {
     try {
+      const qx = await c.env.DB.prepare(
+        `SELECT id, available, locked FROM wallets
+         WHERE user_id = ? AND coin_symbol = 'QX'`
+      ).bind(row.user_id).first<any>();
+      if (qx && qx.locked > 0) {
+        const unlock = Math.min(qx.locked, REFERRED_WELCOME_QX);
+        bonusUnlocked = unlock;
+        await c.env.DB.prepare(
+          `UPDATE wallets
+           SET available = available + ?, locked = locked - ?
+           WHERE id = ?`
+        ).bind(unlock, unlock, qx.id).run();
+      }
+      // Legacy QTA locked bonus (pre-QX migration) — also unlock so users
+      // who registered under the old rule still get their credit.
       const qta = await c.env.DB.prepare(
         `SELECT id, available, locked FROM wallets
          WHERE user_id = ? AND coin_symbol = 'QTA'`
       ).bind(row.user_id).first<any>();
       if (qta && qta.locked > 0) {
-        bonusUnlocked = Math.min(qta.locked, 1000);
         await c.env.DB.prepare(
           `UPDATE wallets
-           SET available = available + ?, locked = locked - ?
+           SET available = available + locked, locked = 0
            WHERE id = ?`
-        ).bind(bonusUnlocked, bonusUnlocked, qta.id).run();
+        ).bind(qta.id).run();
       }
     } catch (e) {
       console.warn('[verify-email] bonus unlock failed:', e);
