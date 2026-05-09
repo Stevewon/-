@@ -591,6 +591,3 @@
 [2026-05-08T23:54:55.034Z] [ALERT] SIGNUP REGRESSION — 6 consecutive cycles failed. Check production immediately.
 [2026-05-09T03:07:25.350Z] OK register=200 login=200 me=200 uid=b4aefcd5 email=hc_1778296044543@example.com
 [2026-05-09T03:12:26.147Z] OK register=200 login=200 me=200 uid=a4f051c2 email=hc_1778296345364@example.com
-[2026-05-09T08:09:08.028Z] OK register=200 login=200 me=200 uid=af0eaf9b email=hc_1778314147238@example.com
-[2026-05-09T08:14:09.318Z] OK register=200 login=200 me=200 uid=1ba88fe5 email=hc_1778314448037@example.com
-[2026-05-09T08:19:10.263Z] OK register=200 login=200 me=200 uid=ee9f90f4 email=hc_1778314749393@example.com
