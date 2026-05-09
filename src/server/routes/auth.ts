@@ -53,6 +53,59 @@ const rlLogin     = rateLimit({ key: 'auth:login',     max: 10, windowSec: 300 }
 const rlForgotPw  = rateLimit({ key: 'auth:forgot-pw', max: 5,  windowSec: 3600 });   // 5/h per IP
 const rlReqVerify = rateLimit({ key: 'auth:req-verif', max: 5,  windowSec: 3600 });   // 5/h per IP
 
+// ============================================================================
+// Referral helpers
+// ----------------------------------------------------------------------------
+// REFERRAL_CODE_ALPHABET excludes ambiguous chars (0/O, 1/I/L) so the code
+// is easy to share verbally. Codes are 8 chars long → ~26^8 = ~2*10^11
+// keyspace; collisions are extremely unlikely but we still retry on conflict.
+// REFERRER_REWARD_QTA: amount given to the existing user whose code is used.
+// REFERRED_WELCOME_QTA: amount given to the NEW user (same as the regular
+// signup bonus 1000; declared here to keep all referral knobs in one place).
+// ============================================================================
+const REFERRAL_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+const REFERRER_REWARD_QTA   = 500;
+const REFERRED_WELCOME_QTA  = 1000;
+
+function genReferralCode(): string {
+  const buf = new Uint8Array(8);
+  crypto.getRandomValues(buf);
+  let out = '';
+  for (let i = 0; i < buf.length; i++) {
+    out += REFERRAL_CODE_ALPHABET[buf[i] % REFERRAL_CODE_ALPHABET.length];
+  }
+  return out;
+}
+
+/**
+ * Allocate a fresh referral_code for a user. Retries up to 5 times if the
+ * randomly chosen code happens to collide with an existing one. The DB has
+ * a UNIQUE index on users.referral_code so we rely on the constraint to
+ * keep us safe even under concurrency.
+ */
+async function allocateReferralCode(db: D1Database, userId: string): Promise<string> {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const code = genReferralCode();
+    try {
+      const r = await db.prepare(
+        `UPDATE users SET referral_code = ?
+         WHERE id = ? AND (referral_code IS NULL OR referral_code = '')`
+      ).bind(code, userId).run();
+      // SQLite/D1 sets meta.changes>0 if the row was actually written.
+      if ((r as any).meta?.changes && (r as any).meta.changes > 0) return code;
+      // Already had one — fetch it.
+      const existing = await db.prepare(
+        `SELECT referral_code FROM users WHERE id = ?`
+      ).bind(userId).first<{ referral_code: string | null }>();
+      if (existing?.referral_code) return existing.referral_code;
+    } catch (e) {
+      // UNIQUE collision — try again with a new random code.
+      console.warn('[allocateReferralCode] collision, retrying:', e);
+    }
+  }
+  throw new Error('Failed to allocate referral code after 5 attempts');
+}
+
 // Register
 app.post('/register', rlRegister, async (c) => {
   const body = await c.req.json();
@@ -78,13 +131,37 @@ app.post('/register', rlRegister, async (c) => {
   const existingNick = await c.env.DB.prepare('SELECT id FROM users WHERE nickname = ?').bind(nickname).first();
   if (existingNick) return c.json({ error: 'Nickname already taken' }, 400);
 
+  // Validate referral code (if supplied) BEFORE creating the user so we can
+  // return a clean 400 if the code is invalid. Self-referral is impossible
+  // here because the user does not exist yet.
+  let referrer: { id: string; email: string; nickname: string } | null = null;
+  if (refCode) {
+    referrer = await c.env.DB.prepare(
+      `SELECT id, email, nickname FROM users WHERE referral_code = ?`
+    ).bind(refCode).first<any>();
+    if (!referrer) {
+      return c.json({ error: 'Invalid referral code' }, 400);
+    }
+  }
+
   const id = uuid();
   const hashedPw = bcrypt.hashSync(password, 10);
 
   await c.env.DB.prepare('INSERT INTO users (id, email, password, nickname) VALUES (?,?,?,?)')
     .bind(id, email, hashedPw, nickname).run();
 
-  // Referral code: record for future reward system (silent if column not present)
+  // Allocate a unique referral code for the new user (so they can refer
+  // others immediately).
+  let myReferralCode = '';
+  try {
+    myReferralCode = await allocateReferralCode(c.env.DB, id);
+  } catch (e) {
+    console.warn('[register] referral code allocation failed:', e);
+  }
+
+  // Legacy: also keep the raw entered code in user_meta for analytics
+  // (silent if table missing). The authoritative relationship is in
+  // the `referrals` table below.
   if (refCode) {
     try {
       await c.env.DB.prepare(
@@ -111,6 +188,72 @@ app.post('/register', rlRegister, async (c) => {
     ).bind(uuid(), id, d.symbol, d.available, d.locked),
   );
   await c.env.DB.batch(batch);
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Referrer reward: 500 QTA credited DIRECTLY to `available`.
+  // ──────────────────────────────────────────────────────────────────────────
+  // The referrer is presumed to be already verified (they have a code and
+  // shared it). We credit 500 QTA available immediately, log the
+  // relationship in `referrals` (UNIQUE referred_id prevents double-credit),
+  // and best-effort notify them by email.
+  let referrerCreditedQta = 0;
+  if (referrer) {
+    try {
+      // Ensure referrer has a QTA wallet row (older accounts might not).
+      const refWallet = await c.env.DB.prepare(
+        `SELECT id, available FROM wallets WHERE user_id = ? AND coin_symbol = 'QTA'`
+      ).bind(referrer.id).first<any>();
+
+      if (refWallet) {
+        await c.env.DB.batch([
+          c.env.DB.prepare(
+            `UPDATE wallets SET available = available + ? WHERE id = ?`
+          ).bind(REFERRER_REWARD_QTA, refWallet.id),
+          c.env.DB.prepare(
+            `INSERT INTO referrals (id, referrer_id, referred_id, referral_code, reward_qta)
+             VALUES (?, ?, ?, ?, ?)`
+          ).bind(uuid(), referrer.id, id, refCode, REFERRER_REWARD_QTA),
+        ]);
+      } else {
+        // Create QTA wallet for legacy referrer with the bonus directly.
+        await c.env.DB.batch([
+          c.env.DB.prepare(
+            `INSERT INTO wallets (id, user_id, coin_symbol, available, locked)
+             VALUES (?, ?, 'QTA', ?, 0)`
+          ).bind(uuid(), referrer.id, REFERRER_REWARD_QTA),
+          c.env.DB.prepare(
+            `INSERT INTO referrals (id, referrer_id, referred_id, referral_code, reward_qta)
+             VALUES (?, ?, ?, ?, ?)`
+          ).bind(uuid(), referrer.id, id, refCode, REFERRER_REWARD_QTA),
+        ]);
+      }
+      referrerCreditedQta = REFERRER_REWARD_QTA;
+
+      // Best-effort notification (does not block signup).
+      try {
+        const ctx = c.executionCtx as any;
+        const appUrl = (c.env as any).APP_URL || 'https://quantaex.io';
+        const send = sendMail(c.env as any, {
+          to: referrer.email,
+          subject: `+${REFERRER_REWARD_QTA} QTA — your referral just signed up!`,
+          html: templateBasic(
+            'Referral reward',
+            `Great news! ${nickname} just signed up using your referral code <b>${refCode}</b>. ` +
+            `<b>${REFERRER_REWARD_QTA} QTA</b> has been credited to your wallet's available balance.`,
+            { label: 'Open wallet', url: `${appUrl}/wallet` },
+          ),
+          text: `+${REFERRER_REWARD_QTA} QTA credited for referring ${nickname}. ${appUrl}/wallet`,
+        });
+        if (ctx?.waitUntil) ctx.waitUntil(send); else await send;
+      } catch (e) {
+        console.warn('[register] referrer alert mail failed:', e);
+      }
+    } catch (e) {
+      // Never block signup if the bonus credit fails — the new user must
+      // still be able to register. Log and continue.
+      console.error('[register] referrer reward failed:', e);
+    }
+  }
 
   // Fire off a verification email in the background (non-blocking)
   try {
@@ -140,9 +283,23 @@ app.post('/register', rlRegister, async (c) => {
     console.warn('[register] sending verification email failed:', e);
   }
 
-  const user = { id, email, nickname, role: 'user', kyc_status: 'none', token_version: 0 };
+  const user = {
+    id, email, nickname,
+    role: 'user',
+    kyc_status: 'none',
+    token_version: 0,
+    referral_code: myReferralCode,
+  };
   const token = await generateToken(user, c.env.JWT_SECRET);
-  return c.json({ token, user });
+  return c.json({
+    token,
+    user,
+    referral: {
+      code: myReferralCode,
+      referrer_credited_qta: referrerCreditedQta,
+      welcome_qta_locked: REFERRED_WELCOME_QTA, // unlocks on email verify
+    },
+  });
 });
 
 // Login
@@ -201,10 +358,108 @@ app.get('/me', authMiddleware, async (c) => {
   const u = c.get('user');
   const user = await c.env.DB.prepare(
     `SELECT id, email, nickname, role, kyc_status, kyc_name, kyc_phone,
-            two_factor_enabled, email_verified_at, avatar_url, created_at
+            two_factor_enabled, email_verified_at, avatar_url, created_at,
+            referral_code
      FROM users WHERE id = ?`
-  ).bind(u.id).first();
+  ).bind(u.id).first<any>();
+
+  // Legacy users created before the referral migration won't have a code yet.
+  // Allocate one lazily on first /me hit so every account has one.
+  if (user && !user.referral_code) {
+    try {
+      user.referral_code = await allocateReferralCode(c.env.DB, user.id);
+    } catch (e) {
+      console.warn('[me] lazy referral_code allocation failed:', e);
+    }
+  }
+
   return c.json(user);
+});
+
+// ============================================================================
+// Referral endpoints
+// ----------------------------------------------------------------------------
+// GET  /api/auth/referrals          — my code + list of users I referred
+// GET  /api/auth/referrals/check/:code — public lookup (used by RegisterPage
+//                                         to live-validate a code without
+//                                         leaking who owns it)
+// ============================================================================
+app.get('/referrals', authMiddleware, async (c) => {
+  const u = c.get('user');
+
+  // Make sure the caller has a code (lazy-allocate for legacy accounts).
+  let me = await c.env.DB.prepare(
+    `SELECT id, referral_code FROM users WHERE id = ?`
+  ).bind(u.id).first<{ id: string; referral_code: string | null }>();
+
+  if (me && !me.referral_code) {
+    try {
+      const code = await allocateReferralCode(c.env.DB, me.id);
+      me = { ...me, referral_code: code };
+    } catch (e) {
+      console.warn('[referrals] lazy code alloc failed:', e);
+    }
+  }
+
+  // List users this person has referred so far + total QTA earned.
+  let invited: any[] = [];
+  let totalReward = 0;
+  try {
+    const r = await c.env.DB.prepare(
+      `SELECT r.referred_id, r.reward_qta, r.created_at,
+              u.nickname AS referred_nickname,
+              u.email_verified_at
+       FROM referrals r
+       JOIN users u ON u.id = r.referred_id
+       WHERE r.referrer_id = ?
+       ORDER BY r.created_at DESC
+       LIMIT 200`
+    ).bind(u.id).all<any>();
+    invited = r.results || [];
+    totalReward = invited.reduce((sum: number, row: any) => sum + Number(row.reward_qta || 0), 0);
+  } catch (e) {
+    console.warn('[referrals] list query failed:', e);
+  }
+
+  // Was this user themselves referred by someone?
+  let referredBy: { nickname: string; code: string } | null = null;
+  try {
+    const row = await c.env.DB.prepare(
+      `SELECT r.referral_code, ru.nickname
+       FROM referrals r
+       JOIN users ru ON ru.id = r.referrer_id
+       WHERE r.referred_id = ?`
+    ).bind(u.id).first<any>();
+    if (row) referredBy = { nickname: row.nickname, code: row.referral_code };
+  } catch { /* ignore */ }
+
+  return c.json({
+    code: me?.referral_code || null,
+    reward_per_referral_qta: REFERRER_REWARD_QTA,
+    welcome_bonus_qta: REFERRED_WELCOME_QTA,
+    invited_count: invited.length,
+    total_reward_qta: totalReward,
+    invited,
+    referred_by: referredBy,
+  });
+});
+
+// Public live-check used during signup. Returns just whether the code is
+// valid (and the masked nickname of the owner, for friendly feedback).
+// We do NOT leak the email.
+app.get('/referrals/check/:code', async (c) => {
+  const code = (c.req.param('code') || '').toUpperCase().trim();
+  if (!code || code.length < 4 || code.length > 16) {
+    return c.json({ valid: false }, 200);
+  }
+  const owner = await c.env.DB.prepare(
+    `SELECT nickname FROM users WHERE referral_code = ?`
+  ).bind(code).first<{ nickname: string } | null>();
+  if (!owner) return c.json({ valid: false });
+  // Mask: show first 2 chars + "*"
+  const nick = owner.nickname || '';
+  const masked = nick.length <= 2 ? nick : nick.slice(0, 2) + '*'.repeat(Math.max(1, nick.length - 2));
+  return c.json({ valid: true, masked_nickname: masked });
 });
 
 // ============================================================================

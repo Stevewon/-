@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useState, useMemo, useEffect } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Eye, EyeOff, Check, X, Mail, User as UserIcon, Gift } from 'lucide-react';
 import useStore from '../store/useStore';
 import { useI18n } from '../i18n';
@@ -25,6 +25,11 @@ export default function RegisterPage() {
   const [confirmPw, setConfirmPw] = useState('');
   const [refCode, setRefCode] = useState('');
   const [showRef, setShowRef] = useState(false);
+  const [refCheck, setRefCheck] = useState<{
+    state: 'idle' | 'checking' | 'valid' | 'invalid';
+    masked?: string;
+  }>({ state: 'idle' });
+  const [searchParams] = useSearchParams();
   const [showPw, setShowPw] = useState(false);
   const [showPw2, setShowPw2] = useState(false);
   const [error, setError] = useState('');
@@ -52,6 +57,36 @@ export default function RegisterPage() {
     return s;
   }, [password]);
 
+  // Auto-fill refCode from ?ref=CODE query param (referral link sharing)
+  useEffect(() => {
+    const fromUrl = searchParams.get('ref');
+    if (fromUrl) {
+      setRefCode(fromUrl.toUpperCase().trim());
+      setShowRef(true);
+    }
+  }, [searchParams]);
+
+  // Live referral-code validation (debounced 400ms)
+  useEffect(() => {
+    const code = refCode.trim().toUpperCase();
+    if (!code) { setRefCheck({ state: 'idle' }); return; }
+    if (code.length < 4) { setRefCheck({ state: 'idle' }); return; }
+    setRefCheck({ state: 'checking' });
+    const t = setTimeout(async () => {
+      try {
+        const r = await api.get(`/auth/referrals/check/${encodeURIComponent(code)}`);
+        if (r.data?.valid) {
+          setRefCheck({ state: 'valid', masked: r.data.masked_nickname });
+        } else {
+          setRefCheck({ state: 'invalid' });
+        }
+      } catch {
+        setRefCheck({ state: 'invalid' });
+      }
+    }, 400);
+    return () => clearTimeout(t);
+  }, [refCode]);
+
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
   const nickValid = nickname.length >= 2 && nickname.length <= 20;
   const allValid =
@@ -73,6 +108,10 @@ export default function RegisterPage() {
       return setError(t('auth.passwordRulesFail'));
     if (!rules.match) return setError(t('auth.passwordMismatch'));
     if (!agreeTerms) return setError(t('auth.mustAgreeTerms'));
+    // Block submit if a referral code is entered but is invalid.
+    if (refCode && refCheck.state === 'invalid') {
+      return setError('Invalid referral code');
+    }
 
     setLoading(true);
     try {
@@ -84,7 +123,7 @@ export default function RegisterPage() {
         agree_marketing: agreeMarketing,
       });
       setAuth(res.data.user, res.data.token);
-      navigate('/trade/BTC-USDT');
+      navigate('/wallet');
     } catch (err: any) {
       setError(err.response?.data?.error || t('auth.registerFailed'));
     } finally {
@@ -335,14 +374,40 @@ export default function RegisterPage() {
             </svg>
           </button>
           {showRef && (
-            <input
-              type="text"
-              value={refCode}
-              onChange={(e) => setRefCode(e.target.value.toUpperCase())}
-              className="auth-input-plain mt-2"
-              placeholder={t('auth.referralPlaceholder')}
-              maxLength={12}
-            />
+            <div className="mt-2">
+              <div className="relative">
+                <input
+                  type="text"
+                  value={refCode}
+                  onChange={(e) => setRefCode(e.target.value.toUpperCase())}
+                  className="auth-input-plain pr-10"
+                  placeholder={t('auth.referralPlaceholder')}
+                  maxLength={12}
+                />
+                {refCheck.state === 'checking' && (
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-exchange-text-third text-xs">
+                    …
+                  </span>
+                )}
+                {refCheck.state === 'valid' && (
+                  <Check size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-exchange-buy" />
+                )}
+                {refCheck.state === 'invalid' && (
+                  <X size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-exchange-sell" />
+                )}
+              </div>
+              {refCheck.state === 'valid' && (
+                <p className="mt-1.5 text-[11px] text-exchange-buy flex items-center gap-1">
+                  <Gift size={11} />
+                  Referred by <b>{refCheck.masked}</b> — you'll both get a QTA bonus!
+                </p>
+              )}
+              {refCheck.state === 'invalid' && refCode.length >= 4 && (
+                <p className="mt-1.5 text-[11px] text-exchange-sell">
+                  Invalid referral code
+                </p>
+              )}
+            </div>
           )}
         </div>
 

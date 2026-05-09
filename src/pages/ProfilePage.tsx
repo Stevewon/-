@@ -7,7 +7,7 @@ import { showToast } from '../components/common/Toast';
 import {
   User, Shield, Mail, Clock, CheckCircle2, AlertCircle, XCircle,
   ChevronRight, LogOut, Lock, Smartphone, FileText, Key, Edit2,
-  CheckCircle, Eye, EyeOff, Bell, DollarSign,
+  CheckCircle, Eye, EyeOff, Bell, DollarSign, Gift,
 } from 'lucide-react';
 
 export default function ProfilePage() {
@@ -104,6 +104,7 @@ export default function ProfilePage() {
 
   const menuItems = [
     { icon: Shield, label: t('profile.kyc'), desc: t('profile.kycDesc'), path: '/profile/kyc', badge: kyc.label, badgeColor: kyc.color },
+    { icon: Gift, label: t('referral.menuLabel'), desc: t('referral.menuDesc'), path: '/profile/referral', badge: '+500 QTA', badgeColor: 'text-exchange-yellow' },
     { icon: Lock, label: t('profile.security'), desc: t('profile.securityDesc'), path: '/profile/security' },
     { icon: Smartphone, label: t('profile.twoFactor'), desc: t('profile.twoFactorDesc'), path: '/profile/security', badge: user.two_factor_enabled ? t('profile.enabled') : t('profile.disabled'), badgeColor: user.two_factor_enabled ? 'text-exchange-buy' : 'text-exchange-text-third' },
     { icon: Key, label: t('profile.apiManage'), desc: t('profile.apiManageDesc'), path: '/profile/api-keys' },

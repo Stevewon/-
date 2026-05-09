@@ -25,6 +25,7 @@ const ProfilePage = lazy(() => import('./pages/ProfilePage'));
 const KycPage = lazy(() => import('./pages/KycPage'));
 const SecurityPage = lazy(() => import('./pages/SecurityPage'));
 const ApiKeysPage = lazy(() => import('./pages/ApiKeysPage'));
+const ReferralPage = lazy(() => import('./pages/ReferralPage'));
 const NotificationsPage = lazy(() => import('./pages/NotificationsPage'));
 const NotificationSettingsPage = lazy(() => import('./pages/NotificationSettingsPage'));
 const PriceAlertsPage = lazy(() => import('./pages/PriceAlertsPage'));
@@ -107,6 +108,7 @@ export default function App() {
           <Route path="profile/kyc" element={<ProtectedRoute><KycPage /></ProtectedRoute>} />
           <Route path="profile/security" element={<ProtectedRoute><SecurityPage /></ProtectedRoute>} />
           <Route path="profile/api-keys" element={<ProtectedRoute><ApiKeysPage /></ProtectedRoute>} />
+          <Route path="profile/referral" element={<ProtectedRoute><ReferralPage /></ProtectedRoute>} />
           <Route path="notifications" element={<ProtectedRoute><NotificationsPage /></ProtectedRoute>} />
           <Route path="profile/notifications" element={<ProtectedRoute><NotificationSettingsPage /></ProtectedRoute>} />
           <Route path="profile/price-alerts" element={<ProtectedRoute><PriceAlertsPage /></ProtectedRoute>} />
