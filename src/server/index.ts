@@ -90,6 +90,9 @@ const SELF_SCHEDULE_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const NONCE_SWEEP_INTERVAL_MS = 60 * 60 * 1000; // 60 minutes
 let lastSelfScheduleAttempt = 0;
 let lastNonceSweepAttempt = 0;
+// One-shot guard for QKEY listing self-apply (migration 0028).
+// Set true after first successful run so warm isolates skip the marker query.
+let qkeyBootstrapDone = false;
 
 app.use('/api/*', async (c, next) => {
   // Fast path: skip the DB lookup on every request by using an in-memory
@@ -182,6 +185,93 @@ app.use('/api/*', async (c, next) => {
             lastNonceSweepAttempt = 0;
           }
         })(),
+      );
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // One-shot QKEY listing bootstrap (migration 0028 self-apply).
+  // Pages workers cannot run `wrangler d1 migrations apply` themselves,
+  // and the deploy workflow could not be patched in this rollout due to
+  // GitHub App token lacking `workflows` permission. We piggy-back on
+  // the existing self-scheduler pattern: the very first request after a
+  // cold start checks system_markers for `qkey_listing = live` and, if
+  // missing, idempotently inserts the QKEY coin row, the QKEY/USDT and
+  // QKEY/USDC market rows, and backfills 0/0 wallets for every user.
+  // Uses INSERT OR IGNORE so re-running is safe; the marker prevents
+  // even the cheap idempotent statements from being re-run on warm
+  // isolates.
+  // ------------------------------------------------------------------
+  if (!qkeyBootstrapDone) {
+    const ctx = c.executionCtx as any;
+    if (ctx && typeof ctx.waitUntil === 'function') {
+      ctx.waitUntil(
+        (async () => {
+          try {
+            const marker = await c.env.DB.prepare(
+              "SELECT value FROM system_markers WHERE key = 'qkey_listing'"
+            ).first<{ value: string }>();
+            if (marker && marker.value === 'live') {
+              qkeyBootstrapDone = true;
+              return;
+            }
+            // Coin row
+            await c.env.DB.prepare(
+              `INSERT OR IGNORE INTO coins (
+                 id, symbol, name, icon, decimals, price_usd, change_24h,
+                 volume_24h, high_24h, low_24h, market_cap, is_active, sort_order
+               ) VALUES (
+                 'c-qkey','QKEY','Cookie',NULL,8,0.01,0,0,0.01,0.01,0,1,12
+               )`
+            ).run();
+            // Market pairs
+            await c.env.DB.batch([
+              c.env.DB.prepare(
+                `INSERT OR IGNORE INTO markets (
+                   id, base_coin, quote_coin,
+                   min_order_amount, min_order_total,
+                   price_decimals, amount_decimals,
+                   maker_fee, taker_fee, is_active
+                 ) VALUES ('m-qkey-usdt','QKEY','USDT',0.0001,1,6,6,0.001,0.001,1)`
+              ),
+              c.env.DB.prepare(
+                `INSERT OR IGNORE INTO markets (
+                   id, base_coin, quote_coin,
+                   min_order_amount, min_order_total,
+                   price_decimals, amount_decimals,
+                   maker_fee, taker_fee, is_active
+                 ) VALUES ('m-qkey-usdc','QKEY','USDC',0.0001,1,6,6,0.001,0.001,1)`
+              ),
+            ]);
+            // Backfill 0/0 QKEY wallet for every user that doesn't have one yet
+            await c.env.DB.prepare(
+              `INSERT OR IGNORE INTO wallets (id, user_id, coin_symbol, available, locked)
+               SELECT lower(hex(randomblob(16))), u.id, 'QKEY', 0, 0
+               FROM users u
+               WHERE NOT EXISTS (
+                 SELECT 1 FROM wallets w
+                 WHERE w.user_id = u.id AND w.coin_symbol = 'QKEY'
+               )`
+            ).run();
+            // Mark complete (and record that QKEY shares the QTA mainnet)
+            await c.env.DB.batch([
+              c.env.DB.prepare(
+                `INSERT INTO system_markers (key, value, updated_at)
+                 VALUES ('qkey_listing','live',CURRENT_TIMESTAMP)
+                 ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP`
+              ),
+              c.env.DB.prepare(
+                `INSERT INTO system_markers (key, value, updated_at)
+                 VALUES ('qkey_chain','qta-mainnet',CURRENT_TIMESTAMP)
+                 ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP`
+              ),
+            ]);
+            qkeyBootstrapDone = true;
+            console.log('[bootstrap] QKEY listing applied to production D1');
+          } catch (e) {
+            captureError(c as any, e, { where: 'qkey-bootstrap' });
+          }
+        })()
       );
     }
   }
