@@ -227,8 +227,8 @@ export default function FuturesPage() {
 
   return (
     <DesktopPageLayout>
-      <div className="space-y-6">
-      <div className="qx-page-title flex items-center justify-between">
+      <div className="w-full min-w-0 space-y-4 mb-4">
+      <div className="qx-page-title flex items-center justify-between" style={{ marginBottom: '16px' }}>
         <div className="flex items-center gap-3">
           <TrendingUp className="w-6 h-6 text-exchange-yellow" />
           <h1 className="text-xl font-bold">{t('futures.title') || 'Futures'}</h1>
@@ -242,15 +242,16 @@ export default function FuturesPage() {
       </div>
 
       {paused && (
-        <div className="rounded-xl border border-exchange-sell/40 bg-exchange-sell/10 p-3 flex items-center gap-2">
+        <div className="rounded-xl border border-exchange-sell/40 bg-exchange-sell/10 p-3 flex items-center gap-2 mb-4">
           <AlertTriangle className="w-4 h-4 text-exchange-sell" />
           <span className="text-sm text-exchange-sell">{t('admin.futuresPaused') || 'Futures trading is paused'}</span>
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Order panel */}
-        <div className="lg:col-span-1 rounded-xl border border-exchange-border bg-exchange-card p-5 space-y-4">
+      {/* Main 2-column grid: 380px LEFT + minmax(0,1fr) RIGHT */}
+      <div className="grid xl:grid-cols-[380px_minmax(0,1fr)] gap-6 items-start">
+        {/* LEFT — Order panel (380px fixed on xl+) */}
+        <aside className="w-full xl:max-w-[380px] rounded-xl border border-exchange-border bg-exchange-card p-5 space-y-4">
           <div>
             <label className="text-[10px] uppercase tracking-wider text-exchange-text-third">
               {t('admin.contractSymbol') || 'Symbol'}
@@ -395,17 +396,18 @@ export default function FuturesPage() {
           >
             {submitting ? '…' : t('futures.openPosition') || 'Open position'}
           </button>
-        </div>
+        </aside>
 
-        {/* Contract info + positions */}
-        <div className="lg:col-span-2 space-y-6">
+        {/* RIGHT — Contract info + positions (full remaining width) */}
+        <section className="min-w-0 w-full space-y-4">
           {contract && (
-            <div className="rounded-xl border border-exchange-border bg-exchange-card p-5">
+            <div className="rounded-xl border border-exchange-border bg-exchange-card p-5 w-full min-w-0">
               <div className="flex items-center gap-2 mb-3">
                 <Activity className="w-4 h-4 text-exchange-yellow" />
                 <h2 className="text-sm font-bold">{t('futures.contractInfo') || 'Contract info'}</h2>
               </div>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+              {/* Contract info 4-card grid */}
+              <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 text-xs">
                 <Stat label={t('admin.maxLeverage') || 'Max leverage'} value={`${contract.max_leverage}x`} />
                 <Stat
                   label={t('admin.maintenanceMargin') || 'Maint. margin'}
@@ -423,7 +425,7 @@ export default function FuturesPage() {
             </div>
           )}
 
-          <div className="rounded-xl border border-exchange-border bg-exchange-card overflow-x-auto">
+          <div className="rounded-xl border border-exchange-border bg-exchange-card w-full min-w-0 overflow-x-auto" style={{ marginTop: '16px' }}>
             <div className="flex items-center justify-between px-5 pt-4">
               <div className="flex items-center gap-2">
                 <Layers className="w-4 h-4 text-exchange-yellow" />
@@ -495,7 +497,7 @@ export default function FuturesPage() {
               </tbody>
             </table>
           </div>
-        </div>
+        </section>
       </div>
       </div>
     </DesktopPageLayout>

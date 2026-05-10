@@ -162,8 +162,8 @@ export default function MarginPage() {
 
   return (
     <DesktopPageLayout>
-      <div className="space-y-6">
-      <div className="qx-page-title flex items-center justify-between">
+      <div className="w-full min-w-0">
+      <div className="qx-page-title flex items-center justify-between" style={{ marginBottom: '16px' }}>
         <div className="flex items-center gap-3">
           <Wallet className="w-6 h-6 text-exchange-yellow" />
           <h1 className="text-xl font-bold">{t('margin.title') || 'Margin'}</h1>
@@ -177,7 +177,7 @@ export default function MarginPage() {
       </div>
 
       {paused && (
-        <div className="rounded-xl border border-exchange-sell/40 bg-exchange-sell/10 p-3 flex items-center gap-2">
+        <div className="rounded-xl border border-exchange-sell/40 bg-exchange-sell/10 p-3 flex items-center gap-2 mb-4">
           <AlertTriangle className="w-4 h-4 text-exchange-sell" />
           <span className="text-sm text-exchange-sell">
             {t('admin.marginPaused') || 'Margin trading is paused'}
@@ -186,7 +186,7 @@ export default function MarginPage() {
       )}
 
       {force2fa && (
-        <div className="rounded-xl border border-exchange-yellow/40 bg-exchange-yellow/10 p-3 flex items-center gap-2">
+        <div className="rounded-xl border border-exchange-yellow/40 bg-exchange-yellow/10 p-3 flex items-center gap-2 mb-4">
           <ShieldAlert className="w-4 h-4 text-exchange-yellow" />
           <span className="text-sm text-exchange-yellow">
             {t('margin.totpRequired') || 'Admin policy requires 2FA on margin borrow.'}
@@ -194,8 +194,8 @@ export default function MarginPage() {
         </div>
       )}
 
-      {/* Summary KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      {/* TOP — Summary 4 KPI cards (full width row) */}
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-4">
         <KPI label={t('margin.myAccounts') || 'Accounts'} value={String(accounts.length)} />
         <KPI label={t('admin.borrowed') || 'Borrowed'} value={totalBorrowed.toFixed(4)} />
         <KPI label={t('margin.myLoans') || 'Active loans'} value={String(loans.length)} />
@@ -214,9 +214,10 @@ export default function MarginPage() {
         />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Borrow form */}
-        <div className="lg:col-span-1 rounded-xl border border-exchange-border bg-exchange-card p-5 space-y-3">
+      {/* MIDDLE — 2 columns: 380px Borrow + minmax(0,1fr) Accounts */}
+      <div className="grid xl:grid-cols-[380px_minmax(0,1fr)] gap-6 items-start mb-4">
+        {/* LEFT — Borrow form */}
+        <aside className="w-full xl:max-w-[380px] rounded-xl border border-exchange-border bg-exchange-card p-5 space-y-3">
           <div className="flex items-center gap-2">
             <Plus className="w-4 h-4 text-exchange-buy" />
             <h2 className="text-sm font-bold">{t('margin.borrow') || 'Borrow'}</h2>
@@ -270,10 +271,10 @@ export default function MarginPage() {
           >
             {submitting ? '…' : t('margin.borrow') || 'Borrow'}
           </button>
-        </div>
+        </aside>
 
-        {/* Accounts table */}
-        <div className="lg:col-span-2 rounded-xl border border-exchange-border bg-exchange-card overflow-x-auto">
+        {/* RIGHT — Accounts table (fills remaining width) */}
+        <section className="min-w-0 w-full rounded-xl border border-exchange-border bg-exchange-card overflow-x-auto">
           <div className="px-5 pt-4 flex items-center justify-between">
             <h2 className="text-sm font-bold">{t('margin.myAccounts') || 'My margin accounts'}</h2>
             <span className="text-[11px] text-exchange-text-third">{accounts.length}</span>
@@ -339,11 +340,11 @@ export default function MarginPage() {
               })}
             </tbody>
           </table>
-        </div>
+        </section>
       </div>
 
-      {/* Active loans */}
-      <div className="rounded-xl border border-exchange-border bg-exchange-card overflow-x-auto">
+      {/* BOTTOM — Active loans (full width, single row) */}
+      <div className="rounded-xl border border-exchange-border bg-exchange-card w-full min-w-0 overflow-x-auto" style={{ marginTop: '16px' }}>
         <div className="px-5 pt-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Minus className="w-4 h-4 text-exchange-sell" />
