@@ -97,6 +97,7 @@ let qkeyBootstrapDone = false;
 let referralQxBootstrapDone = false;
 // One-shot guard for Google OAuth schema self-apply (migration 0030).
 let googleOauthBootstrapDone = false;
+let referralMultilevelBootstrapDone = false;
 
 app.use('/api/*', async (c, next) => {
   // Fast path: skip the DB lookup on every request by using an in-memory
@@ -507,6 +508,154 @@ app.use('/api/*', async (c, next) => {
             console.log('[bootstrap] Google OAuth schema (0030) applied to production D1');
           } catch (e) {
             captureError(c as any, e, { where: 'google-oauth-bootstrap' });
+          }
+        })()
+      );
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // One-shot Referral multi-level schema bootstrap (migration 0031).
+  // Adds `level` column (default 1) to referrals, replaces the old
+  // `referred_id UNIQUE` column constraint with `UNIQUE(referred_id,
+  // level)` so a single new signup can record up to 3 upline rows
+  // (L1/L2/L3) without colliding.
+  //
+  // SQLite cannot drop a column-level UNIQUE via ALTER, so we rebuild
+  // the table:
+  //   1) PRAGMA table_info — only proceed if `level` is missing.
+  //   2) ALTER TABLE referrals RENAME TO referrals_old
+  //   3) CREATE TABLE referrals (new shape with composite UNIQUE)
+  //   4) INSERT SELECT ..., 1 AS level FROM referrals_old
+  //   5) DROP TABLE referrals_old, recreate indexes
+  //   6) Stamp markers: l1=50, l2=30, l3=20, levels=3, migration done
+  //
+  // Each step is wrapped in try/catch so partial prior runs heal
+  // forward. The whole block is gated by the `migration_0031_*` marker
+  // so steady-state cost is one SELECT.
+  // ------------------------------------------------------------------
+  if (!referralMultilevelBootstrapDone) {
+    const ctx = c.executionCtx as any;
+    if (ctx && typeof ctx.waitUntil === 'function') {
+      ctx.waitUntil(
+        (async () => {
+          try {
+            const marker = await c.env.DB.prepare(
+              "SELECT value FROM system_markers WHERE key = 'migration_0031_referral_multilevel'"
+            ).first<{ value: string }>();
+            if (marker && marker.value === 'live') {
+              referralMultilevelBootstrapDone = true;
+              return;
+            }
+
+            // Detect whether the level column already exists. If yes, we
+            // skip the rebuild and just stamp markers — keeps re-runs safe.
+            let hasLevelColumn = false;
+            try {
+              const cols = await c.env.DB.prepare(
+                "PRAGMA table_info('referrals')"
+              ).all<{ name: string }>();
+              hasLevelColumn = !!cols.results?.some(r => r.name === 'level');
+            } catch (_e) { /* table may not exist on a fresh DB */ }
+
+            if (!hasLevelColumn) {
+              // Table rebuild. Each statement is its own prepare.run so we
+              // can heal partial prior runs (e.g. a deploy that died after
+              // RENAME but before CREATE — in which case referrals would be
+              // missing and referrals_old would still be there).
+
+              // 1) Move the old table out of the way (skip if we already
+              //    renamed in a partial prior run).
+              try {
+                await c.env.DB.prepare(
+                  `ALTER TABLE referrals RENAME TO referrals_old`
+                ).run();
+              } catch (_e) {
+                // referrals may already be renamed, or the original table
+                // may not exist on a fresh DB — both are fine.
+              }
+
+              // 2) Create the new shape.
+              try {
+                await c.env.DB.prepare(
+                  `CREATE TABLE IF NOT EXISTS referrals (
+                     id              TEXT PRIMARY KEY,
+                     referrer_id     TEXT NOT NULL,
+                     referred_id     TEXT NOT NULL,
+                     referral_code   TEXT NOT NULL,
+                     reward_qta      REAL NOT NULL DEFAULT 50,
+                     reward_paid_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+                     created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                     rewarded_in_qx  INTEGER NOT NULL DEFAULT 1,
+                     level           INTEGER NOT NULL DEFAULT 1,
+                     UNIQUE(referred_id, level),
+                     FOREIGN KEY (referrer_id) REFERENCES users(id),
+                     FOREIGN KEY (referred_id) REFERENCES users(id)
+                   )`
+                ).run();
+              } catch (e) {
+                console.warn('[bootstrap-0031] CREATE TABLE failed:', e);
+              }
+
+              // 3) Copy data from the renamed old table (if it exists),
+              //    stamping every legacy row as L1.
+              try {
+                await c.env.DB.prepare(
+                  `INSERT OR IGNORE INTO referrals
+                     (id, referrer_id, referred_id, referral_code, reward_qta,
+                      reward_paid_at, created_at, rewarded_in_qx, level)
+                   SELECT id, referrer_id, referred_id, referral_code, reward_qta,
+                          reward_paid_at, created_at, COALESCE(rewarded_in_qx, 1), 1
+                   FROM referrals_old`
+                ).run();
+              } catch (_e) {
+                // referrals_old may not exist on a fresh DB — fine.
+              }
+
+              // 4) Drop the old table.
+              try {
+                await c.env.DB.prepare(`DROP TABLE IF EXISTS referrals_old`).run();
+              } catch (_e) { /* fine */ }
+
+              // 5) Recreate indexes (the old ones disappeared with the rename).
+              for (const sql of [
+                `CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_id, created_at DESC)`,
+                `CREATE INDEX IF NOT EXISTS idx_referrals_referred ON referrals(referred_id)`,
+                `CREATE INDEX IF NOT EXISTS idx_referrals_level    ON referrals(referrer_id, level, created_at DESC)`,
+              ]) {
+                try { await c.env.DB.prepare(sql).run(); } catch (_e) { /* fine */ }
+              }
+            }
+
+            // 6) Stamp policy markers (idempotent).
+            for (const [k, v] of [
+              ['referral_reward_l1', '50'],
+              ['referral_reward_l2', '30'],
+              ['referral_reward_l3', '20'],
+              ['referral_levels',    '3'],
+            ] as const) {
+              try {
+                await c.env.DB.prepare(
+                  `INSERT INTO system_markers (key, value, updated_at)
+                   VALUES (?, ?, CURRENT_TIMESTAMP)
+                   ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP`
+                ).bind(k, v).run();
+              } catch (e) {
+                console.warn('[bootstrap-0031] marker', k, 'failed:', e);
+              }
+            }
+
+            // Mark migration done
+            await c.env.DB.prepare(
+              `INSERT INTO system_markers (key, value, updated_at)
+               VALUES ('migration_0031_referral_multilevel','live',CURRENT_TIMESTAMP)
+               ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP`
+            ).run();
+
+            referralMultilevelBootstrapDone = true;
+            console.log('[bootstrap] Referral multilevel schema (0031) applied to production D1');
+          } catch (e) {
+            captureError(c as any, e, { where: 'referral-multilevel-bootstrap' });
           }
         })()
       );

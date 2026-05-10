@@ -18,7 +18,10 @@ interface InvitedRow {
   reward_qta: number;
   created_at: string;
   email_verified_at: string | null;
+  level?: number; // 1=direct, 2/3=indirect uplines (post 0031 migration)
 }
+
+interface LevelStat { count: number; reward_qx: number; }
 
 interface ReferralData {
   code: string | null;
@@ -34,6 +37,10 @@ interface ReferralData {
   total_reward_qx?: number;
   invited: InvitedRow[];
   referred_by: { nickname: string; code: string } | null;
+  // 0031: 3-level breakdown
+  levels?: number;
+  level_rewards?: { l1: number; l2: number; l3: number };
+  by_level?: { l1: LevelStat; l2: LevelStat; l3: LevelStat };
 }
 
 export default function ReferralPage() {
@@ -245,12 +252,41 @@ export default function ReferralPage() {
                     <span className="w-5 h-5 rounded-full bg-exchange-yellow/20 text-exchange-yellow text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">3</span>
                     <span>
                       <b className="text-exchange-text">
-                        {t('referral.howStep3Title', { amount: String(data?.reward_per_referral_qx ?? data?.reward_per_referral_qta ?? 50) })}
+                        {t('referral.howStep3MultiTitle', {
+                          l1: String(data?.level_rewards?.l1 ?? 50),
+                          l2: String(data?.level_rewards?.l2 ?? 30),
+                          l3: String(data?.level_rewards?.l3 ?? 20),
+                        })}
                       </b><br />
-                      {t('referral.howStep3Desc')}
+                      {t('referral.howStep3MultiDesc')}
                     </span>
                   </li>
                 </ol>
+
+                {/* Level reward chips */}
+                <div className="grid grid-cols-3 gap-2 mt-4">
+                  {([
+                    { lvl: 'L1', amount: data?.level_rewards?.l1 ?? 50, hint: t('referral.l1Hint') },
+                    { lvl: 'L2', amount: data?.level_rewards?.l2 ?? 30, hint: t('referral.l2Hint') },
+                    { lvl: 'L3', amount: data?.level_rewards?.l3 ?? 20, hint: t('referral.l3Hint') },
+                  ] as const).map((row) => (
+                    <div
+                      key={row.lvl}
+                      className="bg-exchange-bg/40 border border-exchange-border/60 rounded-lg text-center"
+                      style={{ padding: '10px 8px' }}
+                    >
+                      <div className="text-[10px] uppercase tracking-wider text-exchange-text-third mb-0.5">
+                        {row.lvl}
+                      </div>
+                      <div className="text-base font-bold text-exchange-yellow tabular-nums">
+                        +{row.amount} <span className="text-[11px] text-exchange-text-secondary font-medium">QX</span>
+                      </div>
+                      <div className="text-[10px] text-exchange-text-third mt-0.5 leading-tight">
+                        {row.hint}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
 
               {data?.referred_by && (
@@ -307,6 +343,50 @@ export default function ReferralPage() {
                   })}
                 </p>
               </div>
+
+              {/* Per-level breakdown */}
+              {data?.by_level && (
+                <div
+                  className="bg-exchange-card border border-exchange-border rounded-xl"
+                  style={{ padding: '20px' }}
+                >
+                  <div className="flex items-center gap-2 text-exchange-text-secondary mb-3">
+                    <TrendingUp size={14} className="text-exchange-yellow" />
+                    <span className="text-xs uppercase tracking-wider">{t('referral.byLevelTitle')}</span>
+                  </div>
+                  <div className="space-y-2">
+                    {(['l1', 'l2', 'l3'] as const).map((k) => {
+                      const stat = data.by_level![k];
+                      const reward = data.level_rewards?.[k] ?? 0;
+                      const lvlNum = k === 'l1' ? 1 : k === 'l2' ? 2 : 3;
+                      return (
+                        <div
+                          key={k}
+                          className="flex items-center justify-between bg-exchange-bg/40 border border-exchange-border/40 rounded-lg"
+                          style={{ padding: '10px 12px' }}
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-bold text-exchange-yellow bg-exchange-yellow/15 rounded-md px-1.5 py-0.5">
+                              L{lvlNum}
+                            </span>
+                            <span className="text-xs text-exchange-text-secondary">
+                              {stat.count} {t('referral.peopleUnit')}
+                            </span>
+                          </div>
+                          <div className="text-right">
+                            <span className="text-sm font-semibold text-exchange-yellow tabular-nums">
+                              +{stat.reward_qx.toLocaleString()} QX
+                            </span>
+                            <span className="text-[10px] text-exchange-text-third ml-1.5">
+                              ({reward}/{t('referral.perPerson')})
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </aside>
           </div>
 
@@ -345,36 +425,42 @@ export default function ReferralPage() {
                   <span style={{ width: '20%' }} className="text-right">{t('referral.colReward')}</span>
                   <span style={{ width: '15%' }} className="text-right">{t('referral.colDate')}</span>
                 </div>
-                {data.invited.map((row) => (
-                  <div
-                    key={row.referred_id}
-                    className="flex items-center border-b border-exchange-border/30 last:border-0 hover:bg-exchange-hover/20 transition-colors text-sm"
-                    style={{ padding: '14px 20px' }}
-                  >
-                    <span style={{ width: '40%' }} className="font-medium text-exchange-text truncate">
-                      {row.referred_nickname}
-                    </span>
-                    <span style={{ width: '25%' }} className="flex justify-center">
-                      {row.email_verified_at ? (
-                        <span className="inline-flex items-center gap-1 text-[11px] bg-exchange-buy/10 text-exchange-buy rounded-md px-2 py-0.5">
-                          <CheckCircle2 size={11} />
-                          {t('referral.verified')}
+                {data.invited.map((row, idx) => {
+                  const lvl = Number(row.level || 1);
+                  return (
+                    <div
+                      key={`${row.referred_id}-${lvl}-${idx}`}
+                      className="flex items-center border-b border-exchange-border/30 last:border-0 hover:bg-exchange-hover/20 transition-colors text-sm"
+                      style={{ padding: '14px 20px' }}
+                    >
+                      <span style={{ width: '40%' }} className="font-medium text-exchange-text truncate flex items-center gap-2">
+                        <span className="text-[10px] font-bold text-exchange-yellow bg-exchange-yellow/15 rounded-md px-1.5 py-0.5 shrink-0">
+                          L{lvl}
                         </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 text-[11px] bg-exchange-yellow/10 text-exchange-yellow rounded-md px-2 py-0.5">
-                          <Clock size={11} />
-                          {t('referral.pending')}
-                        </span>
-                      )}
-                    </span>
-                    <span style={{ width: '20%' }} className="text-right font-semibold text-exchange-yellow tabular-nums">
-                      +{Number(row.reward_qta).toLocaleString()} QX
-                    </span>
-                    <span style={{ width: '15%' }} className="text-right text-xs text-exchange-text-third tabular-nums">
-                      {new Date(row.created_at).toLocaleDateString()}
-                    </span>
-                  </div>
-                ))}
+                        <span className="truncate">{row.referred_nickname}</span>
+                      </span>
+                      <span style={{ width: '25%' }} className="flex justify-center">
+                        {row.email_verified_at ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] bg-exchange-buy/10 text-exchange-buy rounded-md px-2 py-0.5">
+                            <CheckCircle2 size={11} />
+                            {t('referral.verified')}
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[11px] bg-exchange-yellow/10 text-exchange-yellow rounded-md px-2 py-0.5">
+                            <Clock size={11} />
+                            {t('referral.pending')}
+                          </span>
+                        )}
+                      </span>
+                      <span style={{ width: '20%' }} className="text-right font-semibold text-exchange-yellow tabular-nums">
+                        +{Number(row.reward_qta).toLocaleString()} QX
+                      </span>
+                      <span style={{ width: '15%' }} className="text-right text-xs text-exchange-text-third tabular-nums">
+                        {new Date(row.created_at).toLocaleDateString()}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>

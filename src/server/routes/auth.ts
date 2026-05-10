@@ -67,9 +67,118 @@ const REFERRAL_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 // Rewards are now paid out in QX (the QuantaEX exchange token), not QTA.
 // Names retained for backward compat in API field keys, but the underlying
 // coin_symbol used in wallets / referrals.reward_coin is 'QX'.
-const REFERRER_REWARD_QX    = 50;
+const REFERRER_REWARD_QX    = 50;   // L1 — kept for backward compat in messages
+const REFERRER_REWARD_L1_QX = 50;   // direct referrer (whose code was used)
+const REFERRER_REWARD_L2_QX = 30;   // referrer's referrer (upline 2)
+const REFERRER_REWARD_L3_QX = 20;   // upline 3
 const REFERRED_WELCOME_QX   = 100;
 const REWARD_COIN           = 'QX';
+
+const REFERRAL_LEVEL_REWARDS: Array<{ level: number; reward: number }> = [
+  { level: 1, reward: REFERRER_REWARD_L1_QX },
+  { level: 2, reward: REFERRER_REWARD_L2_QX },
+  { level: 3, reward: REFERRER_REWARD_L3_QX },
+];
+
+/**
+ * Walk up the referral chain starting from a direct referrer (L1) and credit
+ * each upline level the configured QX amount. Self-referral, chain cycles
+ * (A -> B -> A), and missing uplines all short-circuit silently — they must
+ * never block signup.
+ *
+ * @param db          D1 binding
+ * @param l1Referrer  the direct referrer (matched by referral_code at signup)
+ * @param newUserId   the brand-new account that just signed up (referred_id)
+ * @param refCode     the original referral_code typed by the new user
+ *                    (recorded on every level so analytics can group by code)
+ * @returns           per-level credited amounts (0 means "skipped" — no
+ *                    upline at that level, cycle detected, or wallet write
+ *                    failed). Used to compose the post-signup response.
+ */
+async function creditUplineRewards(
+  db: D1Database,
+  l1Referrer: { id: string; email?: string | null; nickname?: string | null },
+  newUserId: string,
+  refCode: string,
+): Promise<{ l1: number; l2: number; l3: number }> {
+  const credited = { l1: 0, l2: 0, l3: 0 };
+  // Track who we've already credited so a cycle (legacy bad data) cannot
+  // double-pay the same wallet on a single signup.
+  const seen = new Set<string>([newUserId]);
+
+  let current: { id: string } | null = { id: l1Referrer.id };
+
+  for (const { level, reward } of REFERRAL_LEVEL_REWARDS) {
+    if (!current) break;
+    if (seen.has(current.id)) {
+      // Cycle (or self-referral fed in via bad data) — stop walking up.
+      break;
+    }
+    seen.add(current.id);
+
+    const upline = current; // narrow for this iteration
+
+    try {
+      // Ensure this upline has a QX wallet row.
+      const wallet = await db.prepare(
+        `SELECT id, available FROM wallets WHERE user_id = ? AND coin_symbol = ?`
+      ).bind(upline.id, REWARD_COIN).first<any>();
+
+      if (wallet) {
+        await db.batch([
+          db.prepare(
+            `UPDATE wallets SET available = available + ? WHERE id = ?`
+          ).bind(reward, wallet.id),
+          db.prepare(
+            `INSERT OR IGNORE INTO referrals
+               (id, referrer_id, referred_id, referral_code, reward_qta,
+                rewarded_in_qx, level)
+             VALUES (?, ?, ?, ?, ?, 1, ?)`
+          ).bind(uuid(), upline.id, newUserId, refCode, reward, level),
+        ]);
+      } else {
+        await db.batch([
+          db.prepare(
+            `INSERT INTO wallets (id, user_id, coin_symbol, available, locked)
+             VALUES (?, ?, ?, ?, 0)`
+          ).bind(uuid(), upline.id, REWARD_COIN, reward),
+          db.prepare(
+            `INSERT OR IGNORE INTO referrals
+               (id, referrer_id, referred_id, referral_code, reward_qta,
+                rewarded_in_qx, level)
+             VALUES (?, ?, ?, ?, ?, 1, ?)`
+          ).bind(uuid(), upline.id, newUserId, refCode, reward, level),
+        ]);
+      }
+
+      if (level === 1) credited.l1 = reward;
+      else if (level === 2) credited.l2 = reward;
+      else if (level === 3) credited.l3 = reward;
+    } catch (e) {
+      console.error(`[upline-reward] L${level} credit failed for upline=${upline.id}:`, e);
+      // Don't propagate — keep walking up so an L1 wallet write hiccup
+      // doesn't also nuke L2/L3.
+    }
+
+    // Walk one more step up the chain. The next upline is whoever
+    // referred the current upline. We look at users.referral_code that
+    // the current upline used at THEIR signup time, which is recorded
+    // in their L1 row of `referrals` (referred_id = upline.id, level = 1).
+    try {
+      const nextRow = await db.prepare(
+        `SELECT referrer_id FROM referrals
+          WHERE referred_id = ? AND level = 1
+          LIMIT 1`
+      ).bind(upline.id).first<{ referrer_id: string }>();
+      current = nextRow?.referrer_id ? { id: nextRow.referrer_id } : null;
+    } catch (e) {
+      console.warn('[upline-reward] chain walk failed:', e);
+      current = null;
+    }
+  }
+
+  return credited;
+}
 
 function genReferralCode(): string {
   const buf = new Uint8Array(8);
@@ -196,59 +305,36 @@ app.post('/register', rlRegister, async (c) => {
   await c.env.DB.batch(batch);
 
   // ──────────────────────────────────────────────────────────────────────────
-  // Referrer reward: 50 QX credited DIRECTLY to `available`.
+  // Multi-level referral rewards (L1=50, L2=30, L3=20 QX).
   // ──────────────────────────────────────────────────────────────────────────
-  // The referrer is presumed to be already verified (they have a code and
-  // shared it). We credit 50 QX available immediately, log the
-  // relationship in `referrals` (UNIQUE referred_id prevents double-credit),
-  // and best-effort notify them by email.
+  // L1 = direct referrer (whose code was used). L2 = that person's own
+  // referrer. L3 = L2's own referrer. Each upline is credited DIRECTLY
+  // to `available` (uplines are presumed already verified). Failures
+  // never block signup.
   let referrerCreditedQx = 0;
+  let l1Credited = 0, l2Credited = 0, l3Credited = 0;
   if (referrer) {
     try {
-      // Ensure referrer has a QX wallet row (older accounts might not).
-      const refWallet = await c.env.DB.prepare(
-        `SELECT id, available FROM wallets WHERE user_id = ? AND coin_symbol = ?`
-      ).bind(referrer.id, REWARD_COIN).first<any>();
+      const credited = await creditUplineRewards(c.env.DB, referrer, id, refCode);
+      l1Credited = credited.l1;
+      l2Credited = credited.l2;
+      l3Credited = credited.l3;
+      referrerCreditedQx = credited.l1; // legacy field — direct referrer only
 
-      if (refWallet) {
-        await c.env.DB.batch([
-          c.env.DB.prepare(
-            `UPDATE wallets SET available = available + ? WHERE id = ?`
-          ).bind(REFERRER_REWARD_QX, refWallet.id),
-          c.env.DB.prepare(
-            `INSERT INTO referrals (id, referrer_id, referred_id, referral_code, reward_qta)
-             VALUES (?, ?, ?, ?, ?)`
-          ).bind(uuid(), referrer.id, id, refCode, REFERRER_REWARD_QX),
-        ]);
-      } else {
-        // Create QX wallet for legacy referrer with the bonus directly.
-        await c.env.DB.batch([
-          c.env.DB.prepare(
-            `INSERT INTO wallets (id, user_id, coin_symbol, available, locked)
-             VALUES (?, ?, ?, ?, 0)`
-          ).bind(uuid(), referrer.id, REWARD_COIN, REFERRER_REWARD_QX),
-          c.env.DB.prepare(
-            `INSERT INTO referrals (id, referrer_id, referred_id, referral_code, reward_qta)
-             VALUES (?, ?, ?, ?, ?)`
-          ).bind(uuid(), referrer.id, id, refCode, REFERRER_REWARD_QX),
-        ]);
-      }
-      referrerCreditedQx = REFERRER_REWARD_QX;
-
-      // Best-effort notification (does not block signup).
+      // Best-effort notification to the direct (L1) referrer (does not block signup).
       try {
         const ctx = c.executionCtx as any;
         const appUrl = (c.env as any).APP_URL || 'https://quantaex.io';
         const send = sendMail(c.env as any, {
           to: referrer.email,
-          subject: `+${REFERRER_REWARD_QX} QX — your referral just signed up!`,
+          subject: `+${l1Credited} QX — your referral just signed up!`,
           html: templateBasic(
             'Referral reward',
             `Great news! ${nickname} just signed up using your referral code <b>${refCode}</b>. ` +
-            `<b>${REFERRER_REWARD_QX} QX</b> has been credited to your wallet's available balance.`,
+            `<b>${l1Credited} QX</b> has been credited to your wallet's available balance.`,
             { label: 'Open wallet', url: `${appUrl}/wallet` },
           ),
-          text: `+${REFERRER_REWARD_QX} QX credited for referring ${nickname}. ${appUrl}/wallet`,
+          text: `+${l1Credited} QX credited for referring ${nickname}. ${appUrl}/wallet`,
         });
         if (ctx?.waitUntil) ctx.waitUntil(send); else await send;
       } catch (e) {
@@ -308,6 +394,17 @@ app.post('/register', rlRegister, async (c) => {
       reward_coin:           REWARD_COIN,
       referrer_credited_qx:  referrerCreditedQx,
       welcome_qx_locked:     REFERRED_WELCOME_QX,
+      // Multi-level breakdown (L1=50, L2=30, L3=20 by policy).
+      levels: {
+        l1_credited_qx: l1Credited,
+        l2_credited_qx: l2Credited,
+        l3_credited_qx: l3Credited,
+      },
+      level_rewards: {
+        l1: REFERRER_REWARD_L1_QX,
+        l2: REFERRER_REWARD_L2_QX,
+        l3: REFERRER_REWARD_L3_QX,
+      },
     },
   });
 });
@@ -408,6 +505,11 @@ app.post('/google', rlLogin, async (c) => {
   try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON' }, 400); }
 
   const idToken = (body?.idToken || body?.id_token || '').toString().trim();
+  // Optional referral code for brand-new Google signups. Ignored on
+  // existing-user (login or link) flows.
+  const refCode = body?.refCode || body?.ref_code
+    ? String(body.refCode || body.ref_code).trim().toUpperCase()
+    : null;
   if (!idToken) return c.json({ error: 'idToken required' }, 400);
 
   const expectedAud = (c.env as any).GOOGLE_OAUTH_CLIENT_ID;
@@ -591,6 +693,44 @@ app.post('/google', rlLogin, async (c) => {
       console.warn('[google] wallet defaults init failed:', e);
     }
 
+    // ----------------------------------------------------------------------
+    // Multi-level referral rewards (only on brand-new Google signup).
+    // Same L1=50 / L2=30 / L3=20 QX policy as /register. The refCode is
+    // optional in the request body — if absent we skip silently.
+    // ----------------------------------------------------------------------
+    if (refCode) {
+      try {
+        const refRow = await c.env.DB.prepare(
+          `SELECT id, email, nickname FROM users WHERE referral_code = ?`
+        ).bind(refCode).first<{ id: string; email: string; nickname: string }>();
+        // Self-referral guard — refCode owner cannot equal new user.
+        if (refRow && refRow.id !== id) {
+          await creditUplineRewards(c.env.DB, refRow, id, refCode);
+          // Best-effort notify direct (L1) referrer.
+          try {
+            const ctx = c.executionCtx as any;
+            const appUrl = (c.env as any).APP_URL || 'https://quantaex.io';
+            const send = sendMail(c.env as any, {
+              to: refRow.email,
+              subject: `+${REFERRER_REWARD_L1_QX} QX — your referral just signed up!`,
+              html: templateBasic(
+                'Referral reward',
+                `Great news! ${chosenNick} just signed up with Google using your referral code <b>${refCode}</b>. ` +
+                `<b>${REFERRER_REWARD_L1_QX} QX</b> has been credited to your wallet's available balance.`,
+                { label: 'Open wallet', url: `${appUrl}/wallet` },
+              ),
+              text: `+${REFERRER_REWARD_L1_QX} QX credited for referring ${chosenNick}. ${appUrl}/wallet`,
+            });
+            if (ctx?.waitUntil) ctx.waitUntil(send); else await send;
+          } catch (e) {
+            console.warn('[google] referrer alert mail failed:', e);
+          }
+        }
+      } catch (e) {
+        console.error('[google] multi-level referral credit failed:', e);
+      }
+    }
+
     user = await c.env.DB.prepare(`SELECT * FROM users WHERE id = ?`).bind(id).first();
     if (user) (user as any).referral_code = myReferralCode || (user as any).referral_code;
   }
@@ -686,45 +826,95 @@ app.get('/referrals', authMiddleware, async (c) => {
     }
   }
 
-  // List users this person has referred so far + total QTA earned.
+  // List users this person has referred so far + total QX earned.
+  // Now includes L2/L3 rows; the per-row `level` field lets the UI group
+  // them. We also fetch a bare-bones per-level breakdown for the badge.
   let invited: any[] = [];
   let totalReward = 0;
+  const byLevel = {
+    l1: { count: 0, reward_qx: 0 },
+    l2: { count: 0, reward_qx: 0 },
+    l3: { count: 0, reward_qx: 0 },
+  };
   try {
     const r = await c.env.DB.prepare(
-      `SELECT r.referred_id, r.reward_qta, r.created_at,
+      `SELECT r.referred_id, r.reward_qta, r.created_at, r.level,
               u.nickname AS referred_nickname,
               u.email_verified_at
        FROM referrals r
        JOIN users u ON u.id = r.referred_id
        WHERE r.referrer_id = ?
        ORDER BY r.created_at DESC
-       LIMIT 200`
+       LIMIT 500`
     ).bind(u.id).all<any>();
     invited = r.results || [];
-    totalReward = invited.reduce((sum: number, row: any) => sum + Number(row.reward_qta || 0), 0);
+    for (const row of invited) {
+      const reward = Number(row.reward_qta || 0);
+      totalReward += reward;
+      const lvl = Number(row.level || 1);
+      if (lvl === 1) { byLevel.l1.count++; byLevel.l1.reward_qx += reward; }
+      else if (lvl === 2) { byLevel.l2.count++; byLevel.l2.reward_qx += reward; }
+      else if (lvl === 3) { byLevel.l3.count++; byLevel.l3.reward_qx += reward; }
+    }
   } catch (e) {
-    console.warn('[referrals] list query failed:', e);
+    // Fallback for the brief window after deploy where the `level` column
+    // may not yet be live (self-bootstrap is queued via waitUntil and runs
+    // out-of-band). Re-issue the query without `level` so the page still
+    // renders with a sane L1-only view.
+    console.warn('[referrals] level-aware list failed, falling back:', e);
+    try {
+      const r = await c.env.DB.prepare(
+        `SELECT r.referred_id, r.reward_qta, r.created_at,
+                u.nickname AS referred_nickname,
+                u.email_verified_at
+         FROM referrals r
+         JOIN users u ON u.id = r.referred_id
+         WHERE r.referrer_id = ?
+         ORDER BY r.created_at DESC
+         LIMIT 200`
+      ).bind(u.id).all<any>();
+      invited = (r.results || []).map((row: any) => ({ ...row, level: 1 }));
+      totalReward = invited.reduce(
+        (sum: number, row: any) => sum + Number(row.reward_qta || 0), 0
+      );
+      byLevel.l1.count = invited.length;
+      byLevel.l1.reward_qx = totalReward;
+    } catch (e2) {
+      console.warn('[referrals] fallback list query failed:', e2);
+    }
   }
 
-  // Was this user themselves referred by someone?
+  // Was this user themselves referred by someone? (L1 only — direct.)
   let referredBy: { nickname: string; code: string } | null = null;
   try {
     const row = await c.env.DB.prepare(
       `SELECT r.referral_code, ru.nickname
        FROM referrals r
        JOIN users ru ON ru.id = r.referrer_id
-       WHERE r.referred_id = ?`
+       WHERE r.referred_id = ? AND r.level = 1
+       LIMIT 1`
     ).bind(u.id).first<any>();
     if (row) referredBy = { nickname: row.nickname, code: row.referral_code };
-  } catch { /* ignore */ }
+  } catch {
+    // Pre-0031 fallback (no level column).
+    try {
+      const row = await c.env.DB.prepare(
+        `SELECT r.referral_code, ru.nickname
+         FROM referrals r
+         JOIN users ru ON ru.id = r.referrer_id
+         WHERE r.referred_id = ?`
+      ).bind(u.id).first<any>();
+      if (row) referredBy = { nickname: row.nickname, code: row.referral_code };
+    } catch { /* ignore */ }
+  }
 
   return c.json({
     code: me?.referral_code || null,
     // Legacy QTA-suffixed keys retained but values are QX amounts; new
     // QX-suffixed keys are the source of truth going forward.
-    reward_per_referral_qta: REFERRER_REWARD_QX,
+    reward_per_referral_qta: REFERRER_REWARD_L1_QX,
     welcome_bonus_qta: REFERRED_WELCOME_QX,
-    reward_per_referral_qx: REFERRER_REWARD_QX,
+    reward_per_referral_qx: REFERRER_REWARD_L1_QX,
     welcome_bonus_qx: REFERRED_WELCOME_QX,
     reward_coin: REWARD_COIN,
     invited_count: invited.length,
@@ -732,6 +922,14 @@ app.get('/referrals', authMiddleware, async (c) => {
     total_reward_qx: totalReward,
     invited,
     referred_by: referredBy,
+    // Multi-level breakdown — UI uses these to render the L1/L2/L3 stats.
+    levels: 3,
+    level_rewards: {
+      l1: REFERRER_REWARD_L1_QX,
+      l2: REFERRER_REWARD_L2_QX,
+      l3: REFERRER_REWARD_L3_QX,
+    },
+    by_level: byLevel,
   });
 });
 
