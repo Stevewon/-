@@ -119,9 +119,28 @@ export default function Layout() {
       {/* Footer */}
       <Footer />
 
-      {/* Mobile Bottom Nav */}
+      {/*
+        Mobile Bottom Nav
+        -----------------
+        Mobile gets its OWN curated tab order so Wallet stays visible.
+        Logged-in:  Trade / Markets / Wallet / Futures / Profile
+        Logged-out: Trade / Markets / Login
+      */}
       <nav className="sm:hidden fixed bottom-0 left-0 right-0 bg-exchange-card border-t border-exchange-border flex z-50 safe-area-bottom">
-        {navItems.slice(0, 4).map(({ path, label, icon: Icon }) => (
+        {(user
+          ? [
+              { path: '/trade/BTC-USDT', label: t('nav.trade'),   icon: BarChart3 },
+              { path: '/markets',        label: t('nav.markets'), icon: LayoutGrid },
+              { path: '/wallet',         label: t('nav.wallet'),  icon: Wallet },
+              { path: '/futures',        label: t('futures.title') || 'Futures', icon: TrendingUp },
+              { path: '/profile',        label: t('nav.profile')  || 'Profile',  icon: User },
+            ]
+          : [
+              { path: '/trade/BTC-USDT', label: t('nav.trade'),   icon: BarChart3 },
+              { path: '/markets',        label: t('nav.markets'), icon: LayoutGrid },
+              { path: '/login',          label: t('nav.login'),   icon: LogIn },
+            ]
+        ).map(({ path, label, icon: Icon }) => (
           <Link
             key={path}
             to={path}
@@ -133,27 +152,6 @@ export default function Layout() {
             <span className="mt-0.5">{label}</span>
           </Link>
         ))}
-        {user ? (
-          <Link
-            to="/profile"
-            className={`flex-1 flex flex-col items-center py-2 text-[10px] transition-colors ${
-              location.pathname.startsWith('/profile')
-                ? 'text-exchange-yellow'
-                : 'text-exchange-text-third'
-            }`}
-          >
-            <User size={20} />
-            <span className="mt-0.5">{t('nav.profile') || 'Profile'}</span>
-          </Link>
-        ) : (
-          <Link
-            to="/login"
-            className="flex-1 flex flex-col items-center py-2 text-[10px] text-exchange-text-third"
-          >
-            <LogIn size={20} />
-            <span className="mt-0.5">{t('nav.login')}</span>
-          </Link>
-        )}
       </nav>
     </div>
   );
