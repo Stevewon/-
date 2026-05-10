@@ -14,6 +14,7 @@ const en = {
   'nav.logout': 'Logout',
   'nav.mypage': 'My Page',
   'nav.orders': 'Orders',
+  'nav.profile': 'Profile',
 
   // Auth
   'auth.welcome': 'Welcome Back',

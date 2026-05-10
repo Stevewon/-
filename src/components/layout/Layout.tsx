@@ -133,7 +133,19 @@ export default function Layout() {
             <span className="mt-0.5">{label}</span>
           </Link>
         ))}
-        {!user && (
+        {user ? (
+          <Link
+            to="/profile"
+            className={`flex-1 flex flex-col items-center py-2 text-[10px] transition-colors ${
+              location.pathname.startsWith('/profile')
+                ? 'text-exchange-yellow'
+                : 'text-exchange-text-third'
+            }`}
+          >
+            <User size={20} />
+            <span className="mt-0.5">{t('nav.profile') || 'Profile'}</span>
+          </Link>
+        ) : (
           <Link
             to="/login"
             className="flex-1 flex flex-col items-center py-2 text-[10px] text-exchange-text-third"

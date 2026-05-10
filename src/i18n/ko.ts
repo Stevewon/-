@@ -13,6 +13,7 @@ const ko = {
   'nav.register': '\ud68c\uc6d0\uac00\uc785',
   'nav.logout': '\ub85c\uadf8\uc544\uc6c3',
   'nav.mypage': '\ub9c8\uc774\ud398\uc774\uc9c0',
+  'nav.profile': '\ub0b4\uc815\ubcf4',
   'nav.orders': '\uc8fc\ubb38\ub0b4\uc5ed',
 
   // Auth
