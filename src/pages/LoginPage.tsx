@@ -8,12 +8,13 @@ import AuthLayout from '../components/common/AuthLayout';
 
 // ----------------------------------------------------------------------------
 // Google Identity Services (GIS) SDK loader.
-// We lazy-load the script the first time the user lands on /login or /register.
-// The Client ID is exposed at build time via Vite env: VITE_GOOGLE_OAUTH_CLIENT_ID.
-// At runtime we also fall back to a window global so the same bundle works
-// across deploys without a rebuild.
+// We lazy-load the script the first time the user lands on /login.
+// The Client ID is fetched at runtime from GET /api/auth/google/config so we
+// don't need to bake it into the bundle. (Client ID is public per Google's
+// docs; only the Client Secret stays server-side.)
+// Build-time and window globals are kept as fallbacks for resilience.
 // ----------------------------------------------------------------------------
-const GOOGLE_CLIENT_ID =
+const GOOGLE_CLIENT_ID_BUILD =
   (import.meta as any).env?.VITE_GOOGLE_OAUTH_CLIENT_ID ||
   (typeof window !== 'undefined' && (window as any).__GOOGLE_OAUTH_CLIENT_ID__) ||
   '';
@@ -77,13 +78,26 @@ export default function LoginPage() {
 
   // ---- Google OAuth state ----
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [googleClientId, setGoogleClientId] = useState<string>(GOOGLE_CLIENT_ID_BUILD);
   const googleInitialisedRef = useRef(false);
 
-  // Pre-load GIS so the first click is fast.
+  // Fetch the Google Client ID from the server (runtime config) and pre-load
+  // GIS in the background so the first click is fast.
   useEffect(() => {
-    if (!GOOGLE_CLIENT_ID) return;
-    loadGoogleIdentityServices().catch(() => {/* will retry on click */});
-  }, []);
+    let cancelled = false;
+    (async () => {
+      try {
+        if (!googleClientId) {
+          const res = await api.get('/auth/google/config');
+          if (!cancelled && res.data?.enabled && res.data?.clientId) {
+            setGoogleClientId(res.data.clientId);
+          }
+        }
+      } catch {/* config endpoint may not be deployed yet */}
+      try { await loadGoogleIdentityServices(); } catch {/* retry on click */}
+    })();
+    return () => { cancelled = true; };
+  }, [googleClientId]);
 
   // Server-side login with the Google idToken.
   const onGoogleCredential = async (idToken: string) => {
@@ -108,7 +122,19 @@ export default function LoginPage() {
 
   const handleGoogleClick = async () => {
     setError('');
-    if (!GOOGLE_CLIENT_ID) {
+    // Resolve client id at click time — try state first, then fetch fresh
+    // from /auth/google/config as a last-chance fallback.
+    let clientId = googleClientId;
+    if (!clientId) {
+      try {
+        const res = await api.get('/auth/google/config');
+        if (res.data?.enabled && res.data?.clientId) {
+          clientId = res.data.clientId;
+          setGoogleClientId(clientId);
+        }
+      } catch {/* fall through */}
+    }
+    if (!clientId) {
       setError(t('auth.googleNotConfigured') || 'Google login is not configured');
       return;
     }
@@ -120,7 +146,7 @@ export default function LoginPage() {
 
       if (!googleInitialisedRef.current) {
         g.initialize({
-          client_id: GOOGLE_CLIENT_ID,
+          client_id: clientId,
           callback: (resp: any) => {
             if (resp?.credential) {
               onGoogleCredential(resp.credential);

@@ -391,6 +391,18 @@ app.post('/login', rlLogin, async (c) => {
 // ============================================================================
 const GOOGLE_PASSWORD_SENTINEL = '__google_oauth__';
 
+// Public config endpoint so the frontend can discover the Google Client ID
+// without baking it into the build. The Client ID is meant to be public
+// (Google's own docs put it in JS) — only the Client Secret is sensitive,
+// and that stays server-side.
+app.get('/google/config', async (c) => {
+  const clientId = (c.env as any).GOOGLE_OAUTH_CLIENT_ID || '';
+  return c.json({
+    enabled: !!clientId,
+    clientId: clientId || null,
+  });
+});
+
 app.post('/google', rlLogin, async (c) => {
   let body: any;
   try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON' }, 400); }
