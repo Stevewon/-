@@ -118,7 +118,7 @@ export default function AuthLayout({ children, variant = 'login' }: AuthLayoutPr
         {/* Form body — centered inside the right pane */}
         <main className="flex-1 flex lg:items-center justify-center">
           <div
-            className="w-full max-w-md px-5 lg:px-0 lg:max-w-[440px]
+            className="w-full max-w-md px-5 lg:px-0 lg:max-w-[480px] xl:max-w-[520px]
                        pt-6 lg:pt-12 pb-28 lg:pb-12"
           >
             {children}

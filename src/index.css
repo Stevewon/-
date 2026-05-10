@@ -173,6 +173,15 @@ select.input-field {
   width: 100%;
   transition: border-color 0.15s, box-shadow 0.15s, background-color 0.15s;
 }
+/* PC: 입력란 더 크고 풍성하게 */
+@media (min-width: 640px) {
+  .auth-field {
+    min-height: 56px;
+    padding-left: 1.125rem;
+    padding-right: 1.125rem;
+    border-radius: 0.75rem;
+  }
+}
 .auth-field:focus-within {
   border-color: var(--color-exchange-yellow);
   box-shadow: 0 0 0 3px rgba(240, 185, 11, 0.12);
@@ -188,6 +197,12 @@ select.input-field {
   font-size: 0.9375rem;
   padding: 0.875rem 0;
   width: 100%;
+}
+@media (min-width: 640px) {
+  .auth-field > input {
+    font-size: 1rem;
+    padding: 1.0625rem 0;
+  }
 }
 .auth-field > input::placeholder {
   color: var(--color-exchange-text-third);
@@ -234,6 +249,14 @@ select.input-field {
   font-size: 0.9375rem;
   outline: none;
   transition: border-color 0.15s, box-shadow 0.15s, background-color 0.15s;
+}
+@media (min-width: 640px) {
+  .auth-input-plain {
+    min-height: 56px;
+    padding: 1.0625rem 1.125rem;
+    font-size: 1rem;
+    border-radius: 0.75rem;
+  }
 }
 .auth-input-plain:focus {
   border-color: var(--color-exchange-yellow);

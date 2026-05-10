@@ -84,29 +84,29 @@ export default function LoginPage() {
   return (
     <AuthLayout variant="login">
       {/* Headline + inline register link (Binance mobile pattern) */}
-      <div className="mb-7">
+      <div className="mb-7 sm:mb-9">
         <div className="flex items-start justify-between gap-3">
-          <h1 className="text-2xl lg:text-3xl font-bold text-exchange-text leading-tight">
+          <h1 className="text-2xl sm:text-3xl lg:text-[34px] font-bold text-exchange-text leading-tight">
             {t('auth.welcome')}
           </h1>
           <Link
             to="/register"
-            className="text-[13px] text-exchange-yellow hover:underline font-semibold whitespace-nowrap mt-1"
+            className="text-[13px] sm:text-sm text-exchange-yellow hover:underline font-semibold whitespace-nowrap mt-1 sm:mt-2"
           >
             {t('nav.register')} →
           </Link>
         </div>
-        <p className="text-exchange-text-secondary mt-2 text-sm">
+        <p className="text-exchange-text-secondary mt-2 sm:mt-3 text-sm sm:text-[15px]">
           {t('auth.loginTo')}
         </p>
       </div>
 
       {/* Email / Phone tab */}
-      <div className="mb-5 flex items-center gap-0 rounded-lg bg-exchange-card p-1 border border-exchange-border/60">
+      <div className="mb-5 sm:mb-7 flex items-center gap-0 rounded-lg sm:rounded-xl bg-exchange-card p-1 sm:p-1.5 border border-exchange-border/60">
         <button
           type="button"
           onClick={() => setMode('email')}
-          className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors ${
+          className={`flex-1 py-2 sm:py-2.5 text-sm sm:text-[15px] font-medium rounded-md sm:rounded-lg transition-colors ${
             mode === 'email'
               ? 'bg-exchange-bg text-exchange-text shadow-sm'
               : 'text-exchange-text-secondary hover:text-exchange-text'
@@ -117,7 +117,7 @@ export default function LoginPage() {
         <button
           type="button"
           onClick={() => setMode('phone')}
-          className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors relative ${
+          className={`flex-1 py-2 sm:py-2.5 text-sm sm:text-[15px] font-medium rounded-md sm:rounded-lg transition-colors relative ${
             mode === 'phone'
               ? 'bg-exchange-bg text-exchange-text shadow-sm'
               : 'text-exchange-text-secondary hover:text-exchange-text'
@@ -130,7 +130,7 @@ export default function LoginPage() {
         </button>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+      <form onSubmit={handleSubmit} className="space-y-4 sm:space-y-5" noValidate>
         {error && (
           <div className="bg-exchange-sell/10 border border-exchange-sell/30 text-exchange-sell rounded-lg px-3 py-2.5 text-sm flex items-center gap-2">
             <AlertCircle size={16} className="shrink-0" />
@@ -140,12 +140,12 @@ export default function LoginPage() {
 
         {/* Email */}
         <div>
-          <label className="text-[13px] font-medium text-exchange-text-secondary mb-1.5 block">
+          <label className="text-[13px] sm:text-sm font-medium text-exchange-text-secondary mb-1.5 sm:mb-2.5 block">
             {t('auth.email')}
           </label>
           <div className="auth-field">
             <span className="auth-icon">
-              <Mail size={18} />
+              <Mail size={18} className="sm:!w-5 sm:!h-5" />
             </span>
             <input
               type="email"
@@ -163,20 +163,20 @@ export default function LoginPage() {
 
         {/* Password */}
         <div>
-          <div className="flex items-center justify-between mb-1.5">
-            <label className="text-[13px] font-medium text-exchange-text-secondary">
+          <div className="flex items-center justify-between mb-1.5 sm:mb-2.5">
+            <label className="text-[13px] sm:text-sm font-medium text-exchange-text-secondary">
               {t('auth.password')}
             </label>
             <Link
               to="/forgot-password"
-              className="text-[12px] text-exchange-yellow hover:underline"
+              className="text-[12px] sm:text-[13px] text-exchange-yellow hover:underline"
             >
               {t('auth.forgotPw')}
             </Link>
           </div>
           <div className="auth-field">
             <span className="auth-icon">
-              <Lock size={18} />
+              <Lock size={18} className="sm:!w-5 sm:!h-5" />
             </span>
             <input
               type={showPw ? 'text' : 'password'}
@@ -200,7 +200,7 @@ export default function LoginPage() {
               tabIndex={-1}
               aria-label={showPw ? 'Hide password' : 'Show password'}
             >
-              {showPw ? <EyeOff size={18} /> : <Eye size={18} />}
+              {showPw ? <EyeOff size={18} className="sm:!w-5 sm:!h-5" /> : <Eye size={18} className="sm:!w-5 sm:!h-5" />}
             </button>
           </div>
           {capsOn && (
@@ -211,14 +211,14 @@ export default function LoginPage() {
         </div>
 
         {/* Remember me */}
-        <label className="flex items-center gap-2 cursor-pointer select-none w-fit">
+        <label className="flex items-center gap-2 sm:gap-2.5 cursor-pointer select-none w-fit pt-1">
           <input
             type="checkbox"
             checked={remember}
             onChange={(e) => setRemember(e.target.checked)}
-            className="w-4 h-4 rounded border-exchange-border accent-exchange-yellow"
+            className="w-4 h-4 sm:w-[18px] sm:h-[18px] rounded border-exchange-border accent-exchange-yellow"
           />
-          <span className="text-xs text-exchange-text-secondary">
+          <span className="text-xs sm:text-[13px] text-exchange-text-secondary">
             {t('auth.rememberMe')}
           </span>
         </label>
@@ -255,7 +255,7 @@ export default function LoginPage() {
         <button
           type="submit"
           disabled={!canSubmit}
-          className="hidden sm:block w-full !py-3.5 text-sm font-semibold rounded-lg bg-exchange-yellow text-black hover:bg-[#d9a60a] disabled:bg-exchange-border disabled:text-exchange-text-third disabled:cursor-not-allowed transition-colors"
+          className="hidden sm:block w-full !py-4 sm:!py-[18px] text-[15px] sm:text-base font-semibold rounded-lg sm:rounded-xl bg-exchange-yellow text-black hover:bg-[#d9a60a] disabled:bg-exchange-border disabled:text-exchange-text-third disabled:cursor-not-allowed transition-colors shadow-sm hover:shadow-md"
         >
           {loading
             ? t('auth.loggingIn')
@@ -265,19 +265,19 @@ export default function LoginPage() {
         </button>
 
         {/* Divider */}
-        <div className="relative py-2">
+        <div className="relative py-2 sm:py-3">
           <div className="absolute inset-0 flex items-center">
             <div className="w-full border-t border-exchange-border/60" />
           </div>
           <div className="relative flex justify-center">
-            <span className="px-3 text-[11px] uppercase tracking-wider text-exchange-text-third bg-exchange-bg">
+            <span className="px-3 text-[11px] sm:text-[12px] uppercase tracking-wider text-exchange-text-third bg-exchange-bg">
               {t('auth.or')}
             </span>
           </div>
         </div>
 
         {/* Social */}
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-3 gap-2 sm:gap-3">
           <SocialBtn label="Google" icon={<GoogleIcon />} />
           <SocialBtn label="Apple" icon={<AppleIcon />} />
           <SocialBtn label="Kakao" icon={<KakaoIcon />} />
@@ -285,7 +285,7 @@ export default function LoginPage() {
       </form>
 
       {/* Trust row */}
-      <div className="mt-10 flex items-center justify-center gap-4 text-[11px] text-exchange-text-third">
+      <div className="mt-10 sm:mt-12 flex items-center justify-center gap-4 text-[11px] sm:text-[12px] text-exchange-text-third">
         <span className="flex items-center gap-1">
           <Lock size={11} /> {t('auth.secure256')}
         </span>
@@ -319,7 +319,7 @@ function SocialBtn({ label, icon }: { label: string; icon: React.ReactNode }) {
       type="button"
       disabled
       title={`${label} (coming soon)`}
-      className="flex items-center justify-center gap-2 h-12 rounded-lg border border-exchange-border bg-exchange-card hover:bg-exchange-hover disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+      className="flex items-center justify-center gap-2 h-12 sm:h-14 rounded-lg sm:rounded-xl border border-exchange-border bg-exchange-card hover:bg-exchange-hover disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
     >
       {icon}
       <span className="text-xs text-exchange-text-secondary hidden sm:inline">
