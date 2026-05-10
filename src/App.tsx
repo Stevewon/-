@@ -32,6 +32,7 @@ const PriceAlertsPage = lazy(() => import('./pages/PriceAlertsPage'));
 const ForgotPasswordPage = lazy(() => import('./pages/ForgotPasswordPage'));
 const ResetPasswordPage = lazy(() => import('./pages/ResetPasswordPage'));
 const VerifyEmailPage = lazy(() => import('./pages/VerifyEmailPage'));
+const GoogleCallbackPage = lazy(() => import('./pages/GoogleCallbackPage'));
 const NotFoundPage = lazy(() => import('./pages/NotFoundPage'));
 const FuturesPage = lazy(() => import('./pages/FuturesPage'));
 const MarginPage = lazy(() => import('./pages/MarginPage'));
@@ -92,6 +93,7 @@ export default function App() {
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/verify-email" element={<VerifyEmailPage />} />
+        <Route path="/auth/google/callback" element={<GoogleCallbackPage />} />
 
         {/* Pages with Layout (header + ticker + footer) */}
         <Route path="/" element={<Layout />}>

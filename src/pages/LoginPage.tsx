@@ -47,6 +47,81 @@ function loadGoogleIdentityServices(): Promise<void> {
   return gisLoadPromise;
 }
 
+// ----------------------------------------------------------------------------
+// OAuth 2.0 implicit-flow popup. Used on PC where the small GIS One-Tap chip
+// looks cramped — a centred 500x650 popup window is much more presentable.
+// We request response_type=id_token, so the redirect lands on our /login page
+// with the JWT in the URL fragment, which the popup then postMessages back
+// to the opener and closes itself.
+// nonce protects against replay; we also verify state matches.
+// ----------------------------------------------------------------------------
+function openGoogleOAuthPopup(clientId: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (typeof window === 'undefined') return reject(new Error('SSR'));
+
+    const nonce = (crypto.randomUUID?.() || Math.random().toString(36).slice(2)).replace(/-/g, '');
+    const state = (crypto.randomUUID?.() || Math.random().toString(36).slice(2)).replace(/-/g, '');
+    sessionStorage.setItem('quantaex_google_oauth_state', state);
+
+    // Centre the popup on the user's primary screen.
+    const w = 500;
+    const h = 650;
+    const dualLeft  = (window as any).screenLeft ?? window.screenX ?? 0;
+    const dualTop   = (window as any).screenTop  ?? window.screenY ?? 0;
+    const winW = window.innerWidth || document.documentElement.clientWidth || screen.width;
+    const winH = window.innerHeight || document.documentElement.clientHeight || screen.height;
+    const left = dualLeft + Math.max(0, (winW - w) / 2);
+    const top  = dualTop  + Math.max(0, (winH - h) / 2);
+
+    const redirectUri = `${window.location.origin}/auth/google/callback`;
+    const params = new URLSearchParams({
+      client_id:     clientId,
+      redirect_uri:  redirectUri,
+      response_type: 'id_token',
+      scope:         'openid email profile',
+      nonce,
+      state,
+      prompt:        'select_account',
+    });
+    const url = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+
+    const features =
+      `width=${w},height=${h},left=${Math.round(left)},top=${Math.round(top)},` +
+      `menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes`;
+    const popup = window.open(url, 'quantaex_google_oauth', features);
+    if (!popup) return reject(new Error('Popup blocked'));
+    try { popup.focus(); } catch {/* noop */}
+
+    let settled = false;
+    const cleanup = () => {
+      window.removeEventListener('message', onMessage);
+      clearInterval(closedTimer);
+    };
+    const onMessage = (ev: MessageEvent) => {
+      if (ev.origin !== window.location.origin) return;
+      const data: any = ev.data;
+      if (!data || data.source !== 'quantaex_google_oauth') return;
+      cleanup();
+      settled = true;
+      try { popup.close(); } catch {/* noop */}
+      if (data.error) return reject(new Error(data.error));
+      if (data.state !== state) return reject(new Error('state mismatch'));
+      if (!data.idToken) return reject(new Error('Missing idToken'));
+      resolve(data.idToken);
+    };
+    window.addEventListener('message', onMessage);
+
+    const closedTimer = setInterval(() => {
+      if (popup.closed) {
+        if (!settled) {
+          cleanup();
+          reject(new Error('Popup closed by user'));
+        }
+      }
+    }, 600);
+  });
+}
+
 // ============================================================================
 // Binance / Upbit-inspired login page
 // - PC: 2-column split (hero left, form right) via <AuthLayout>
@@ -138,7 +213,36 @@ export default function LoginPage() {
       setError(t('auth.googleNotConfigured') || 'Google login is not configured');
       return;
     }
+
+    // PC: open a centred 500x650 OAuth popup with the official Google account
+    // chooser screen — much more presentable than the tiny GIS One-Tap chip.
+    // Mobile: stick with GIS prompt() which adapts to the small viewport.
+    const isDesktop =
+      typeof window !== 'undefined' && window.matchMedia
+        ? window.matchMedia('(min-width: 768px)').matches
+        : true;
+
     setGoogleLoading(true);
+
+    if (isDesktop) {
+      try {
+        const idToken = await openGoogleOAuthPopup(clientId);
+        await onGoogleCredential(idToken);
+      } catch (e: any) {
+        setGoogleLoading(false);
+        const msg = (e?.message || '').toString();
+        if (msg.includes('Popup blocked')) {
+          setError(t('auth.googleBlocked') || 'Please allow popups and try again');
+        } else if (msg.includes('closed by user')) {
+          setError(t('auth.googleCancelled') || 'Google sign-in cancelled');
+        } else {
+          setError(t('auth.googleFailed') || 'Google login failed');
+        }
+      }
+      return;
+    }
+
+    // Mobile path — GIS prompt() (small chip is fine on phone screens).
     try {
       await loadGoogleIdentityServices();
       const g = (window as any).google?.accounts?.id;
@@ -161,17 +265,13 @@ export default function LoginPage() {
         googleInitialisedRef.current = true;
       }
 
-      // Trigger the One-Tap / popup prompt. If the user dismisses it, fall
-      // back to rendering the official Google button briefly via prompt
-      // notification feedback.
       g.prompt((notification: any) => {
         if (notification?.isNotDisplayed?.() || notification?.isSkippedMoment?.()) {
-          // User has likely blocked third-party cookies / FedCM, etc.
           setGoogleLoading(false);
           setError(t('auth.googleBlocked') || 'Please allow popups for accounts.google.com and try again');
         }
       });
-    } catch (e: any) {
+    } catch {
       setGoogleLoading(false);
       setError(t('auth.googleFailed') || 'Google login failed');
     }
