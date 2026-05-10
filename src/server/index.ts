@@ -93,6 +93,8 @@ let lastNonceSweepAttempt = 0;
 // One-shot guard for QKEY listing self-apply (migration 0028).
 // Set true after first successful run so warm isolates skip the marker query.
 let qkeyBootstrapDone = false;
+// One-shot guard for referral QTA→QX switch self-apply (migration 0029).
+let referralQxBootstrapDone = false;
 
 app.use('/api/*', async (c, next) => {
   // Fast path: skip the DB lookup on every request by using an in-memory
@@ -270,6 +272,158 @@ app.use('/api/*', async (c, next) => {
             console.log('[bootstrap] QKEY listing applied to production D1');
           } catch (e) {
             captureError(c as any, e, { where: 'qkey-bootstrap' });
+          }
+        })()
+      );
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // One-shot referral QTA→QX switch bootstrap (migration 0029 self-apply).
+  // Same pattern as the QKEY bootstrap above. The very first request
+  // after a cold start checks system_markers for
+  // `migration_0029_referral_qx_switch = live` and, if missing,
+  // idempotently:
+  //   * Reverses 500 QTA already credited per referrals row (clamped).
+  //   * Credits 50 QX per referrals row to the referrer.
+  //   * For unverified users: clears the legacy 1000 QTA locked welcome
+  //     bonus and sets a 100 QX locked welcome bonus instead.
+  //   * Sets policy markers (referral_reward_coin=QX,
+  //     referral_reward_amount=50, referral_welcome_amount=100).
+  // The ALTER TABLE that adds `rewarded_in_qx` to referrals can only run
+  // once per database, so it is wrapped in a try/catch — every other
+  // statement uses INSERT OR IGNORE / clamped UPDATE / explicit
+  // `WHERE rewarded_in_qx = 0`, so re-running is safe.
+  // ------------------------------------------------------------------
+  if (!referralQxBootstrapDone) {
+    const ctx = c.executionCtx as any;
+    if (ctx && typeof ctx.waitUntil === 'function') {
+      ctx.waitUntil(
+        (async () => {
+          try {
+            const marker = await c.env.DB.prepare(
+              "SELECT value FROM system_markers WHERE key = 'migration_0029_referral_qx_switch'"
+            ).first<{ value: string }>();
+            if (marker && marker.value === 'live') {
+              referralQxBootstrapDone = true;
+              return;
+            }
+            // Add the rewarded_in_qx idempotency column. Wrapped in
+            // try/catch because ALTER TABLE … ADD COLUMN fails if the
+            // column already exists (e.g. partial prior run).
+            try {
+              await c.env.DB.prepare(
+                'ALTER TABLE referrals ADD COLUMN rewarded_in_qx INTEGER NOT NULL DEFAULT 0'
+              ).run();
+            } catch (_e) {
+              // column already exists — fine, continue with the rest.
+            }
+
+            // 1) Policy markers
+            await c.env.DB.batch([
+              c.env.DB.prepare(
+                `INSERT INTO system_markers (key, value, updated_at)
+                 VALUES ('referral_reward_coin','QX',CURRENT_TIMESTAMP)
+                 ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP`
+              ),
+              c.env.DB.prepare(
+                `INSERT INTO system_markers (key, value, updated_at)
+                 VALUES ('referral_reward_amount','50',CURRENT_TIMESTAMP)
+                 ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP`
+              ),
+              c.env.DB.prepare(
+                `INSERT INTO system_markers (key, value, updated_at)
+                 VALUES ('referral_welcome_amount','100',CURRENT_TIMESTAMP)
+                 ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP`
+              ),
+            ]);
+
+            // 2a) Reverse 500 QTA available per referrals row (clamped).
+            await c.env.DB.prepare(
+              `UPDATE wallets
+                  SET available = MAX(0, available - 500)
+                WHERE coin_symbol = 'QTA'
+                  AND user_id IN (
+                    SELECT referrer_id FROM referrals WHERE rewarded_in_qx = 0
+                  )`
+            ).run();
+
+            // 2b) Ensure each affected referrer has a QX wallet row.
+            await c.env.DB.prepare(
+              `INSERT OR IGNORE INTO wallets (id, user_id, coin_symbol, available, locked)
+               SELECT lower(hex(randomblob(16))), r.referrer_id, 'QX', 0, 0
+               FROM (SELECT DISTINCT referrer_id FROM referrals WHERE rewarded_in_qx = 0) r
+               WHERE NOT EXISTS (
+                 SELECT 1 FROM wallets w
+                 WHERE w.user_id = r.referrer_id AND w.coin_symbol = 'QX'
+               )`
+            ).run();
+
+            // 2c) Credit 50 QX available per referral row to the referrer.
+            await c.env.DB.prepare(
+              `UPDATE wallets
+                  SET available = available + (
+                    SELECT COUNT(*) * 50 FROM referrals
+                    WHERE referrer_id = wallets.user_id AND rewarded_in_qx = 0
+                  )
+                WHERE coin_symbol = 'QX'
+                  AND user_id IN (
+                    SELECT referrer_id FROM referrals WHERE rewarded_in_qx = 0
+                  )`
+            ).run();
+
+            // 2d) Update reward_qta to 50 and mark rows paid-in-QX.
+            await c.env.DB.prepare(
+              `UPDATE referrals
+                  SET reward_qta = 50, rewarded_in_qx = 1
+                WHERE rewarded_in_qx = 0`
+            ).run();
+
+            // 3a) Move legacy 1000 QTA locked back to 0 for unverified users.
+            await c.env.DB.prepare(
+              `UPDATE wallets
+                  SET locked = 0
+                WHERE coin_symbol = 'QTA'
+                  AND locked > 0
+                  AND user_id IN (
+                    SELECT id FROM users WHERE email_verified_at IS NULL
+                  )`
+            ).run();
+
+            // 3b) Ensure each unverified user has a QX wallet row.
+            await c.env.DB.prepare(
+              `INSERT OR IGNORE INTO wallets (id, user_id, coin_symbol, available, locked)
+               SELECT lower(hex(randomblob(16))), u.id, 'QX', 0, 0
+               FROM users u
+               WHERE u.email_verified_at IS NULL
+                 AND NOT EXISTS (
+                   SELECT 1 FROM wallets w
+                   WHERE w.user_id = u.id AND w.coin_symbol = 'QX'
+                 )`
+            ).run();
+
+            // 3c) Set 100 QX locked for each unverified user (only if not yet set).
+            await c.env.DB.prepare(
+              `UPDATE wallets
+                  SET locked = 100
+                WHERE coin_symbol = 'QX'
+                  AND locked = 0
+                  AND user_id IN (
+                    SELECT id FROM users WHERE email_verified_at IS NULL
+                  )`
+            ).run();
+
+            // 4) Mark migration done.
+            await c.env.DB.prepare(
+              `INSERT INTO system_markers (key, value, updated_at)
+               VALUES ('migration_0029_referral_qx_switch','live',CURRENT_TIMESTAMP)
+               ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP`
+            ).run();
+
+            referralQxBootstrapDone = true;
+            console.log('[bootstrap] referral QTA→QX switch (0029) applied to production D1');
+          } catch (e) {
+            captureError(c as any, e, { where: 'referral-qx-bootstrap' });
           }
         })()
       );

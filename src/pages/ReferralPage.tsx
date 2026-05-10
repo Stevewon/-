@@ -13,6 +13,8 @@ import {
 interface InvitedRow {
   referred_id: string;
   referred_nickname: string;
+  // Server still returns reward_qta as the column name; the value is the
+  // QX reward amount (post QTA->QX migration).
   reward_qta: number;
   created_at: string;
   email_verified_at: string | null;
@@ -20,10 +22,16 @@ interface InvitedRow {
 
 interface ReferralData {
   code: string | null;
+  // Legacy QTA-suffixed keys retained on the wire for back-compat; values
+  // are QX amounts. New QX-suffixed keys preferred when available.
   reward_per_referral_qta: number;
   welcome_bonus_qta: number;
+  reward_per_referral_qx?: number;
+  welcome_bonus_qx?: number;
+  reward_coin?: string;
   invited_count: number;
   total_reward_qta: number;
+  total_reward_qx?: number;
   invited: InvitedRow[];
   referred_by: { nickname: string; code: string } | null;
 }
@@ -228,7 +236,7 @@ export default function ReferralPage() {
                     <span className="w-5 h-5 rounded-full bg-exchange-yellow/20 text-exchange-yellow text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">2</span>
                     <span>
                       <b className="text-exchange-text">
-                        {t('referral.howStep2Title', { amount: String(data?.welcome_bonus_qta || 1000) })}
+                        {t('referral.howStep2Title', { amount: String(data?.welcome_bonus_qx ?? data?.welcome_bonus_qta ?? 100) })}
                       </b><br />
                       {t('referral.howStep2Desc')}
                     </span>
@@ -237,7 +245,7 @@ export default function ReferralPage() {
                     <span className="w-5 h-5 rounded-full bg-exchange-yellow/20 text-exchange-yellow text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">3</span>
                     <span>
                       <b className="text-exchange-text">
-                        {t('referral.howStep3Title', { amount: String(data?.reward_per_referral_qta || 500) })}
+                        {t('referral.howStep3Title', { amount: String(data?.reward_per_referral_qx ?? data?.reward_per_referral_qta ?? 50) })}
                       </b><br />
                       {t('referral.howStep3Desc')}
                     </span>
@@ -290,12 +298,12 @@ export default function ReferralPage() {
                   className="font-bold text-exchange-yellow tabular-nums"
                   style={{ fontSize: '32px', lineHeight: 1.1 }}
                 >
-                  {(data?.total_reward_qta ?? 0).toLocaleString()}
-                  <span className="text-base text-exchange-text-secondary ml-1.5 font-medium">QTA</span>
+                  {(data?.total_reward_qx ?? data?.total_reward_qta ?? 0).toLocaleString()}
+                  <span className="text-base text-exchange-text-secondary ml-1.5 font-medium">QX</span>
                 </div>
                 <p className="text-[11px] text-exchange-text-third mt-2">
                   {t('referral.perInviteHint', {
-                    amount: String(data?.reward_per_referral_qta || 500),
+                    amount: String(data?.reward_per_referral_qx ?? data?.reward_per_referral_qta ?? 50),
                   })}
                 </p>
               </div>
@@ -360,7 +368,7 @@ export default function ReferralPage() {
                       )}
                     </span>
                     <span style={{ width: '20%' }} className="text-right font-semibold text-exchange-yellow tabular-nums">
-                      +{Number(row.reward_qta).toLocaleString()} QTA
+                      +{Number(row.reward_qta).toLocaleString()} QX
                     </span>
                     <span style={{ width: '15%' }} className="text-right text-xs text-exchange-text-third tabular-nums">
                       {new Date(row.created_at).toLocaleDateString()}
