@@ -95,6 +95,8 @@ let lastNonceSweepAttempt = 0;
 let qkeyBootstrapDone = false;
 // One-shot guard for referral QTA→QX switch self-apply (migration 0029).
 let referralQxBootstrapDone = false;
+// One-shot guard for Google OAuth schema self-apply (migration 0030).
+let googleOauthBootstrapDone = false;
 
 app.use('/api/*', async (c, next) => {
   // Fast path: skip the DB lookup on every request by using an in-memory
@@ -424,6 +426,87 @@ app.use('/api/*', async (c, next) => {
             console.log('[bootstrap] referral QTA→QX switch (0029) applied to production D1');
           } catch (e) {
             captureError(c as any, e, { where: 'referral-qx-bootstrap' });
+          }
+        })()
+      );
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // One-shot Google OAuth schema bootstrap (migration 0030 self-apply).
+  // Same pattern as 0028/0029 above. The very first request after a cold
+  // start checks system_markers for `migration_0030_google_oauth = live`
+  // and, if missing, idempotently:
+  //   * Adds 5 nullable columns to users (provider, google_id,
+  //     profile_image, auth_type, last_login_at). Each ALTER is wrapped
+  //     in its own try/catch because ADD COLUMN fails if the column
+  //     already exists (partial prior run).
+  //   * Creates the partial UNIQUE INDEX on users(google_id) so a single
+  //     Google account cannot be linked to two distinct user rows.
+  //   * Sets the policy marker `google_oauth_enabled = true`.
+  // ------------------------------------------------------------------
+  if (!googleOauthBootstrapDone) {
+    const ctx = c.executionCtx as any;
+    if (ctx && typeof ctx.waitUntil === 'function') {
+      ctx.waitUntil(
+        (async () => {
+          try {
+            const marker = await c.env.DB.prepare(
+              "SELECT value FROM system_markers WHERE key = 'migration_0030_google_oauth'"
+            ).first<{ value: string }>();
+            if (marker && marker.value === 'live') {
+              googleOauthBootstrapDone = true;
+              return;
+            }
+
+            // Add OAuth metadata columns. Each ALTER is wrapped in its
+            // own try/catch because SQLite ALTER TABLE ADD COLUMN fails
+            // if the column already exists (no IF NOT EXISTS support).
+            const addCols: Array<[string, string]> = [
+              ['provider',      "ALTER TABLE users ADD COLUMN provider TEXT DEFAULT 'email'"],
+              ['google_id',     "ALTER TABLE users ADD COLUMN google_id TEXT"],
+              ['profile_image', "ALTER TABLE users ADD COLUMN profile_image TEXT"],
+              ['auth_type',     "ALTER TABLE users ADD COLUMN auth_type TEXT DEFAULT 'password'"],
+              ['last_login_at', "ALTER TABLE users ADD COLUMN last_login_at TEXT"],
+            ];
+            for (const [_name, sql] of addCols) {
+              try {
+                await c.env.DB.prepare(sql).run();
+              } catch (_e) {
+                // column already exists — fine, continue.
+              }
+            }
+
+            // Partial unique index — NULLs (non-Google users) are
+            // unconstrained, but any non-NULL google_id must be unique.
+            try {
+              await c.env.DB.prepare(
+                `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_id
+                   ON users(google_id)
+                   WHERE google_id IS NOT NULL`
+              ).run();
+            } catch (_e) {
+              // index already exists — fine.
+            }
+
+            // Policy marker
+            await c.env.DB.prepare(
+              `INSERT INTO system_markers (key, value, updated_at)
+               VALUES ('google_oauth_enabled','true',CURRENT_TIMESTAMP)
+               ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP`
+            ).run();
+
+            // Mark migration done
+            await c.env.DB.prepare(
+              `INSERT INTO system_markers (key, value, updated_at)
+               VALUES ('migration_0030_google_oauth','live',CURRENT_TIMESTAMP)
+               ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP`
+            ).run();
+
+            googleOauthBootstrapDone = true;
+            console.log('[bootstrap] Google OAuth schema (0030) applied to production D1');
+          } catch (e) {
+            captureError(c as any, e, { where: 'google-oauth-bootstrap' });
           }
         })()
       );

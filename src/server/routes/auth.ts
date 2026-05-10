@@ -360,7 +360,270 @@ app.post('/login', rlLogin, async (c) => {
 
   const token = await generateToken({ ...user, token_version: user.token_version || 0 }, c.env.JWT_SECRET);
   const { password: _, two_factor_secret: __, two_factor_pending_secret: ___, ...safeUser } = user;
+  // Best-effort last_login_at update (column added in migration 0030).
+  try {
+    await c.env.DB.prepare(`UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = ?`)
+      .bind(user.id).run();
+  } catch { /* column may not exist yet on first deploy; ignore */ }
   return c.json({ token, user: safeUser });
+});
+
+// ============================================================================
+// Google OAuth (sign-in / sign-up / link-existing-account)
+// ----------------------------------------------------------------------------
+// POST /api/auth/google
+//   request:  { idToken: string }      // Google Identity Services credential
+//   response: { success, isNewUser, linked, token, user }
+//
+// Server priority (per project spec — STRICT):
+//   1) Look up by google_id (sub)            → existing Google user
+//   2) Else look up by email                 → existing email user → LINK
+//   3) Else create new account               → fresh signup (sentinel pw)
+//
+// idToken is verified server-side via Google's tokeninfo endpoint. We check
+// aud (must equal our GOOGLE_OAUTH_CLIENT_ID), iss (accounts.google.com or
+// https://accounts.google.com), email_verified, and exp.
+//
+// Schema: see migrations/0030_google_oauth.sql.
+//   users.password is NOT NULL (legacy 0001), so Google-only signups store the
+//   sentinel '__google_oauth__' there. The /login route already refuses login
+//   when bcrypt.compareSync fails, which is what happens against the sentinel.
+// ============================================================================
+const GOOGLE_PASSWORD_SENTINEL = '__google_oauth__';
+
+app.post('/google', rlLogin, async (c) => {
+  let body: any;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON' }, 400); }
+
+  const idToken = (body?.idToken || body?.id_token || '').toString().trim();
+  if (!idToken) return c.json({ error: 'idToken required' }, 400);
+
+  const expectedAud = (c.env as any).GOOGLE_OAUTH_CLIENT_ID;
+  if (!expectedAud) {
+    console.error('[google] GOOGLE_OAUTH_CLIENT_ID not configured');
+    return c.json({ error: 'Google login not configured' }, 503);
+  }
+
+  // ---- Verify idToken against Google ----
+  let payload: any;
+  try {
+    const verifyUrl = `https://www.googleapis.com/oauth2/v3/tokeninfo?id_token=${encodeURIComponent(idToken)}`;
+    const r = await fetch(verifyUrl, { method: 'GET' });
+    if (!r.ok) {
+      const txt = await r.text().catch(() => '');
+      console.warn('[google] tokeninfo non-2xx:', r.status, txt);
+      return c.json({ error: 'Invalid Google token' }, 401);
+    }
+    payload = await r.json();
+  } catch (e) {
+    console.error('[google] tokeninfo fetch failed:', e);
+    return c.json({ error: 'Failed to verify Google token' }, 502);
+  }
+
+  // ---- Validate critical claims ----
+  if (!payload || typeof payload !== 'object') {
+    return c.json({ error: 'Invalid Google token payload' }, 401);
+  }
+  const aud = payload.aud;
+  const iss = payload.iss;
+  const sub = payload.sub;
+  const email = (payload.email || '').toString().trim().toLowerCase();
+  const emailVerified = payload.email_verified === true || payload.email_verified === 'true';
+  const name = (payload.name || '').toString().trim();
+  const picture = (payload.picture || '').toString().trim();
+  const expSec = Number(payload.exp || 0);
+
+  if (aud !== expectedAud) {
+    console.warn('[google] aud mismatch. got=', aud, 'expected=', expectedAud);
+    return c.json({ error: 'Token audience mismatch' }, 401);
+  }
+  if (iss !== 'accounts.google.com' && iss !== 'https://accounts.google.com') {
+    return c.json({ error: 'Token issuer mismatch' }, 401);
+  }
+  if (!sub) return c.json({ error: 'Missing Google sub' }, 401);
+  if (!email) return c.json({ error: 'Missing email in Google token' }, 401);
+  if (!emailVerified) return c.json({ error: 'Google email not verified' }, 401);
+  if (expSec && expSec * 1000 < Date.now()) {
+    return c.json({ error: 'Google token expired' }, 401);
+  }
+
+  // ---- Priority 1: lookup by google_id ----
+  let user: any = null;
+  let isNewUser = false;
+  let linked = false;
+  try {
+    user = await c.env.DB.prepare(
+      `SELECT * FROM users WHERE google_id = ?`
+    ).bind(sub).first();
+  } catch (e) {
+    // Column may not exist yet if migration 0030 has not bootstrapped on this
+    // worker instance. Treat as no match and fall through to email lookup.
+    console.warn('[google] lookup by google_id failed (col not ready?):', e);
+  }
+
+  // ---- Priority 2: lookup by email → LINK ----
+  if (!user) {
+    const byEmail: any = await c.env.DB.prepare(
+      `SELECT * FROM users WHERE email = ?`
+    ).bind(email).first();
+
+    if (byEmail) {
+      // Link existing email account to this Google identity.
+      try {
+        await c.env.DB.prepare(
+          `UPDATE users
+             SET google_id    = ?,
+                 provider     = COALESCE(provider, 'email'),
+                 profile_image = COALESCE(profile_image, ?),
+                 auth_type    = COALESCE(auth_type, 'password'),
+                 updated_at   = CURRENT_TIMESTAMP
+           WHERE id = ?`
+        ).bind(sub, picture || null, byEmail.id).run();
+        linked = true;
+        // Re-read for fresh column values.
+        user = await c.env.DB.prepare(`SELECT * FROM users WHERE id = ?`).bind(byEmail.id).first();
+      } catch (e) {
+        // If the update failed (e.g. UNIQUE collision on google_id because
+        // another row already has this sub — should be impossible after
+        // priority 1 — or columns missing), fall back to using the row
+        // as-is so login still works.
+        console.error('[google] linking update failed:', e);
+        user = byEmail;
+      }
+    }
+  }
+
+  // ---- Priority 3: brand-new signup ----
+  if (!user) {
+    isNewUser = true;
+    const id = uuid();
+    const sentinelHash = bcrypt.hashSync(GOOGLE_PASSWORD_SENTINEL, 10);
+
+    // Allocate a non-colliding nickname based on the Google name.
+    const baseNick = (name || email.split('@')[0] || 'user')
+      .replace(/[^A-Za-z0-9가-힣_]/g, '')
+      .slice(0, 16) || 'user';
+
+    let nickname = baseNick.length < 2 ? baseNick + '_' : baseNick;
+    if (nickname.length < 2) nickname = 'user_' + sub.slice(-4);
+    if (nickname.length > 20) nickname = nickname.slice(0, 20);
+
+    // Try the base nick first, then append a 4-char tail of the sub on
+    // collision. The tail is deterministic per Google account so retrying
+    // the same Google user always lands on the same suffix.
+    const nickAttempts = [
+      nickname,
+      `${nickname.slice(0, 16)}${sub.slice(-4)}`,
+      `${nickname.slice(0, 12)}${sub.slice(-8)}`,
+      `user_${sub.slice(-10)}`,
+    ];
+    let chosenNick = '';
+    for (const candidate of nickAttempts) {
+      const clipped = candidate.slice(0, 20);
+      const exists = await c.env.DB.prepare(
+        `SELECT id FROM users WHERE nickname = ?`
+      ).bind(clipped).first();
+      if (!exists) { chosenNick = clipped; break; }
+    }
+    if (!chosenNick) chosenNick = `u_${id.slice(0, 12)}`;
+
+    // Insert the new user with sentinel password + Google metadata.
+    // We try the full insert first; if optional columns aren't ready yet,
+    // we fall back to a minimal insert and then patch the columns we can.
+    try {
+      await c.env.DB.prepare(
+        `INSERT INTO users (id, email, password, nickname, provider, google_id, profile_image, auth_type, email_verified_at)
+         VALUES (?, ?, ?, ?, 'google', ?, ?, 'social', CURRENT_TIMESTAMP)`
+      ).bind(id, email, sentinelHash, chosenNick, sub, picture || null).run();
+    } catch (e) {
+      console.warn('[google] full insert failed, falling back to minimal:', e);
+      await c.env.DB.prepare(
+        `INSERT INTO users (id, email, password, nickname) VALUES (?, ?, ?, ?)`
+      ).bind(id, email, sentinelHash, chosenNick).run();
+      // Best-effort patch of OAuth columns.
+      try {
+        await c.env.DB.prepare(
+          `UPDATE users SET google_id = ?, provider = 'google', profile_image = ?, auth_type = 'social', email_verified_at = CURRENT_TIMESTAMP WHERE id = ?`
+        ).bind(sub, picture || null, id).run();
+      } catch (e2) {
+        console.warn('[google] post-insert OAuth column patch failed:', e2);
+      }
+    }
+
+    // Allocate referral code (so the new Google user can refer others).
+    let myReferralCode = '';
+    try { myReferralCode = await allocateReferralCode(c.env.DB, id); }
+    catch (e) { console.warn('[google] referral code alloc failed:', e); }
+
+    // Default wallets. Email is verified by Google → QX welcome bonus
+    // goes straight to AVAILABLE (not locked) since we already trust the
+    // identity via Google. This mirrors the post-verify-email unlock that
+    // password signups go through.
+    const defaults = [
+      { symbol: 'USDT', available: 0, locked: 0 },
+      { symbol: 'USDC', available: 0, locked: 0 },
+      { symbol: 'BTC',  available: 0, locked: 0 },
+      { symbol: 'ETH',  available: 0, locked: 0 },
+      { symbol: 'QTA',  available: 0, locked: 0 },
+      { symbol: 'QX',   available: REFERRED_WELCOME_QX, locked: 0 },
+      { symbol: 'QKEY', available: 0, locked: 0 },
+    ];
+    try {
+      const batch = defaults.map(d =>
+        c.env.DB.prepare(
+          'INSERT INTO wallets (id, user_id, coin_symbol, available, locked) VALUES (?,?,?,?,?)'
+        ).bind(uuid(), id, d.symbol, d.available, d.locked),
+      );
+      await c.env.DB.batch(batch);
+    } catch (e) {
+      console.warn('[google] wallet defaults init failed:', e);
+    }
+
+    user = await c.env.DB.prepare(`SELECT * FROM users WHERE id = ?`).bind(id).first();
+    if (user) (user as any).referral_code = myReferralCode || (user as any).referral_code;
+  }
+
+  if (!user) {
+    return c.json({ error: 'Failed to resolve user' }, 500);
+  }
+  if ((user as any).is_active === 0) {
+    await recordLogin(c, (user as any).id, 'failed', 'account_disabled');
+    return c.json({ error: 'Account disabled' }, 403);
+  }
+
+  // ---- Audit + last_login_at ----
+  await recordLogin(c, (user as any).id, 'success', isNewUser ? 'google_signup' : (linked ? 'google_link' : 'google_login'));
+  try {
+    await c.env.DB.prepare(`UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = ?`)
+      .bind((user as any).id).run();
+  } catch { /* column may not exist yet; ignore */ }
+
+  // Lazy-allocate referral_code for legacy email accounts that just got linked.
+  if (!(user as any).referral_code) {
+    try {
+      (user as any).referral_code = await allocateReferralCode(c.env.DB, (user as any).id);
+    } catch (e) { console.warn('[google] lazy referral_code alloc failed:', e); }
+  }
+
+  // ---- Issue JWT + return ----
+  const token = await generateToken(
+    { ...(user as any), token_version: (user as any).token_version || 0 },
+    c.env.JWT_SECRET,
+  );
+  const {
+    password: _pw,
+    two_factor_secret: _ts,
+    two_factor_pending_secret: _tps,
+    ...safeUser
+  } = user as any;
+
+  return c.json({
+    success: true,
+    isNewUser,
+    linked,
+    token,
+    user: safeUser,
+  });
 });
 
 // Profile

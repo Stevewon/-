@@ -1,10 +1,50 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Eye, EyeOff, Mail, Lock, AlertCircle } from 'lucide-react';
 import useStore from '../store/useStore';
 import { useI18n } from '../i18n';
 import api from '../utils/api';
 import AuthLayout from '../components/common/AuthLayout';
+
+// ----------------------------------------------------------------------------
+// Google Identity Services (GIS) SDK loader.
+// We lazy-load the script the first time the user lands on /login or /register.
+// The Client ID is exposed at build time via Vite env: VITE_GOOGLE_OAUTH_CLIENT_ID.
+// At runtime we also fall back to a window global so the same bundle works
+// across deploys without a rebuild.
+// ----------------------------------------------------------------------------
+const GOOGLE_CLIENT_ID =
+  (import.meta as any).env?.VITE_GOOGLE_OAUTH_CLIENT_ID ||
+  (typeof window !== 'undefined' && (window as any).__GOOGLE_OAUTH_CLIENT_ID__) ||
+  '';
+
+let gisLoadPromise: Promise<void> | null = null;
+function loadGoogleIdentityServices(): Promise<void> {
+  if (typeof window === 'undefined') return Promise.reject(new Error('SSR'));
+  if ((window as any).google?.accounts?.id) return Promise.resolve();
+  if (gisLoadPromise) return gisLoadPromise;
+  gisLoadPromise = new Promise<void>((resolve, reject) => {
+    const existing = document.querySelector<HTMLScriptElement>(
+      'script[src="https://accounts.google.com/gsi/client"]'
+    );
+    if (existing) {
+      existing.addEventListener('load', () => resolve());
+      existing.addEventListener('error', () => reject(new Error('GIS load failed')));
+      return;
+    }
+    const s = document.createElement('script');
+    s.src = 'https://accounts.google.com/gsi/client';
+    s.async = true;
+    s.defer = true;
+    s.onload = () => resolve();
+    s.onerror = () => {
+      gisLoadPromise = null;
+      reject(new Error('GIS load failed'));
+    };
+    document.head.appendChild(s);
+  });
+  return gisLoadPromise;
+}
 
 // ============================================================================
 // Binance / Upbit-inspired login page
@@ -34,6 +74,82 @@ export default function LoginPage() {
 
   const [needs2fa, setNeeds2fa] = useState(false);
   const [totp, setTotp] = useState('');
+
+  // ---- Google OAuth state ----
+  const [googleLoading, setGoogleLoading] = useState(false);
+  const googleInitialisedRef = useRef(false);
+
+  // Pre-load GIS so the first click is fast.
+  useEffect(() => {
+    if (!GOOGLE_CLIENT_ID) return;
+    loadGoogleIdentityServices().catch(() => {/* will retry on click */});
+  }, []);
+
+  // Server-side login with the Google idToken.
+  const onGoogleCredential = async (idToken: string) => {
+    if (!idToken) return;
+    setError('');
+    setGoogleLoading(true);
+    try {
+      const res = await api.post('/auth/google', { idToken });
+      setAuth(res.data.user, res.data.token);
+      // Remember this email so the next non-Google login is also smooth.
+      if (res.data?.user?.email) {
+        localStorage.setItem('quantaex_last_email', res.data.user.email);
+      }
+      navigate(redirect);
+    } catch (err: any) {
+      const msg = err?.response?.data?.error || t('auth.googleFailed') || 'Google login failed';
+      setError(msg);
+    } finally {
+      setGoogleLoading(false);
+    }
+  };
+
+  const handleGoogleClick = async () => {
+    setError('');
+    if (!GOOGLE_CLIENT_ID) {
+      setError(t('auth.googleNotConfigured') || 'Google login is not configured');
+      return;
+    }
+    setGoogleLoading(true);
+    try {
+      await loadGoogleIdentityServices();
+      const g = (window as any).google?.accounts?.id;
+      if (!g) throw new Error('GIS unavailable');
+
+      if (!googleInitialisedRef.current) {
+        g.initialize({
+          client_id: GOOGLE_CLIENT_ID,
+          callback: (resp: any) => {
+            if (resp?.credential) {
+              onGoogleCredential(resp.credential);
+            } else {
+              setGoogleLoading(false);
+              setError(t('auth.googleCancelled') || 'Google sign-in cancelled');
+            }
+          },
+          ux_mode: 'popup',
+          auto_select: false,
+        });
+        googleInitialisedRef.current = true;
+      }
+
+      // Trigger the One-Tap / popup prompt. If the user dismisses it, fall
+      // back to rendering the official Google button briefly via prompt
+      // notification feedback.
+      g.prompt((notification: any) => {
+        if (notification?.isNotDisplayed?.() || notification?.isSkippedMoment?.()) {
+          // User has likely blocked third-party cookies / FedCM, etc.
+          setGoogleLoading(false);
+          setError(t('auth.googleBlocked') || 'Please allow popups for accounts.google.com and try again');
+        }
+      });
+    } catch (e: any) {
+      setGoogleLoading(false);
+      setError(t('auth.googleFailed') || 'Google login failed');
+    }
+  };
 
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
   const canSubmit =
@@ -278,7 +394,13 @@ export default function LoginPage() {
 
         {/* Social */}
         <div className="grid grid-cols-3 gap-2 sm:gap-3">
-          <SocialBtn label="Google" icon={<GoogleIcon />} />
+          <SocialBtn
+            label="Google"
+            icon={<GoogleIcon />}
+            onClick={handleGoogleClick}
+            loading={googleLoading}
+            enabled
+          />
           <SocialBtn label="Apple" icon={<AppleIcon />} />
           <SocialBtn label="Kakao" icon={<KakaoIcon />} />
         </div>
@@ -313,15 +435,33 @@ export default function LoginPage() {
   );
 }
 
-function SocialBtn({ label, icon }: { label: string; icon: React.ReactNode }) {
+function SocialBtn({
+  label,
+  icon,
+  onClick,
+  loading,
+  enabled,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  onClick?: () => void;
+  loading?: boolean;
+  enabled?: boolean;
+}) {
+  const disabled = !enabled || !!loading;
   return (
     <button
       type="button"
-      disabled
-      title={`${label} (coming soon)`}
+      disabled={disabled}
+      onClick={enabled ? onClick : undefined}
+      title={enabled ? label : `${label} (coming soon)`}
       className="flex items-center justify-center gap-2 h-12 sm:h-14 rounded-lg sm:rounded-xl border border-exchange-border bg-exchange-card hover:bg-exchange-hover disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
     >
-      {icon}
+      {loading ? (
+        <span className="w-4 h-4 sm:w-5 sm:h-5 rounded-full border-2 border-exchange-text-third border-t-transparent animate-spin" />
+      ) : (
+        icon
+      )}
       <span className="text-xs text-exchange-text-secondary hidden sm:inline">
         {label}
       </span>
