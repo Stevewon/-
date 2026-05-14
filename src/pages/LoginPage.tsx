@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { Eye, EyeOff, Mail, Lock, AlertCircle } from 'lucide-react';
+import { Eye, EyeOff, Mail, Lock, AlertCircle, Gift, Check, X } from 'lucide-react';
 import useStore from '../store/useStore';
 import { useI18n } from '../i18n';
 import api from '../utils/api';
@@ -136,6 +136,15 @@ export default function LoginPage() {
   const [params] = useSearchParams();
   const redirect = params.get('redirect') || '/trade/BTC-USDT';
 
+  // ---- Referral code (for Google new-signup; ignored for existing users) ----
+  // Mirrors RegisterPage pattern: ?ref=CODE auto-catch + live validation.
+  const [refCode, setRefCode] = useState('');
+  const [showRef, setShowRef] = useState(false);
+  const [refCheck, setRefCheck] = useState<{
+    state: 'idle' | 'checking' | 'valid' | 'invalid';
+    masked?: string;
+  }>({ state: 'idle' });
+
   const [mode, setMode] = useState<'email' | 'phone'>('email');
   const [email, setEmail] = useState(
     () => localStorage.getItem('quantaex_last_email') || ''
@@ -174,13 +183,56 @@ export default function LoginPage() {
     return () => { cancelled = true; };
   }, [googleClientId]);
 
+  // Auto-fill refCode from ?ref=CODE query param (referral link sharing).
+  // Mirrors RegisterPage; if user lands on /login?ref=ABC123 the code is
+  // captured and passed to /auth/google on new-account creation.
+  useEffect(() => {
+    const fromUrl = params.get('ref');
+    if (fromUrl) {
+      setRefCode(fromUrl.toUpperCase().trim());
+      setShowRef(true);
+    }
+  }, [params]);
+
+  // Live referral-code validation (debounced 400ms) — same UX as RegisterPage.
+  useEffect(() => {
+    const code = refCode.trim().toUpperCase();
+    if (!code) { setRefCheck({ state: 'idle' }); return; }
+    if (code.length < 4) { setRefCheck({ state: 'idle' }); return; }
+    setRefCheck({ state: 'checking' });
+    const tm = setTimeout(async () => {
+      try {
+        const r = await api.get(`/auth/referrals/check/${encodeURIComponent(code)}`);
+        if (r.data?.valid) {
+          setRefCheck({ state: 'valid', masked: r.data.masked_nickname });
+        } else {
+          setRefCheck({ state: 'invalid' });
+        }
+      } catch {
+        setRefCheck({ state: 'invalid' });
+      }
+    }, 400);
+    return () => clearTimeout(tm);
+  }, [refCode]);
+
   // Server-side login with the Google idToken.
+  // For new accounts (first Google sign-in), the optional refCode is attached
+  // to the upline so L1/L2/L3 referral rewards trigger. For existing accounts
+  // the server ignores refCode (already onboarded).
   const onGoogleCredential = async (idToken: string) => {
     if (!idToken) return;
     setError('');
     setGoogleLoading(true);
     try {
-      const res = await api.post('/auth/google', { idToken });
+      // Only attach refCode if it has been confirmed valid by the live check;
+      // we never block sign-in on an invalid code — silently drop it instead,
+      // because the user may have typed a typo and we don't want to deny them
+      // an account.
+      const payload: any = { idToken };
+      const code = refCode.trim().toUpperCase();
+      if (code && refCheck.state === 'valid') payload.refCode = code;
+
+      const res = await api.post('/auth/google', payload);
       setAuth(res.data.user, res.data.token);
       // Remember this email so the next non-Google login is also smooth.
       if (res.data?.user?.email) {
@@ -516,6 +568,63 @@ export default function LoginPage() {
               {t('auth.or')}
             </span>
           </div>
+        </div>
+
+        {/* Referral code (optional) — collapsible, auto-opens when ?ref=CODE present.
+            Only applied when creating a new account via Google sign-up; ignored
+            on existing-account login. Same UX as RegisterPage. */}
+        <div>
+          {!showRef ? (
+            <button
+              type="button"
+              onClick={() => setShowRef(true)}
+              className="w-full flex items-center justify-center gap-1.5 py-2 text-[12px] sm:text-[13px] text-exchange-text-secondary hover:text-exchange-yellow transition-colors"
+            >
+              <Gift size={13} className="opacity-70" />
+              <span>{t('auth.refCodeAdd') || '추천 코드 입력 (선택)'}</span>
+            </button>
+          ) : (
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-[12px] sm:text-[13px] font-medium text-exchange-text-secondary flex items-center gap-1.5">
+                  <Gift size={13} className="opacity-70" />
+                  {t('auth.refCode') || '추천 코드'}
+                  <span className="text-exchange-text-third">
+                    ({t('auth.optional') || '선택'})
+                  </span>
+                </label>
+                {refCheck.state === 'valid' && refCheck.masked && (
+                  <span className="flex items-center gap-1 text-[11px] text-exchange-buy">
+                    <Check size={12} /> {refCheck.masked}
+                  </span>
+                )}
+                {refCheck.state === 'invalid' && (
+                  <span className="flex items-center gap-1 text-[11px] text-exchange-sell">
+                    <X size={11} /> {t('auth.refCodeInvalid') || '유효하지 않은 코드'}
+                  </span>
+                )}
+                {refCheck.state === 'checking' && (
+                  <span className="text-[11px] text-exchange-text-third">…</span>
+                )}
+              </div>
+              <input
+                type="text"
+                value={refCode}
+                onChange={(e) =>
+                  setRefCode(e.target.value.toUpperCase().trim().slice(0, 16))
+                }
+                placeholder={t('auth.refCodePlaceholder') || '예: ABC123'}
+                maxLength={16}
+                spellCheck={false}
+                autoCapitalize="characters"
+                className="auth-input-plain text-sm tracking-wider font-mono"
+              />
+              <p className="text-[10.5px] sm:text-[11px] text-exchange-text-third leading-snug">
+                {t('auth.refCodeGoogleHint') ||
+                  '구글 신규 가입 시에만 적용 — 기존 계정 로그인엔 영향 없음'}
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Social */}

@@ -1,10 +1,112 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { Eye, EyeOff, Check, X, Mail, User as UserIcon, Gift } from 'lucide-react';
+import { Eye, EyeOff, Check, X, Mail, User as UserIcon, Gift, AlertCircle } from 'lucide-react';
 import useStore from '../store/useStore';
 import { useI18n } from '../i18n';
 import api from '../utils/api';
 import AuthLayout from '../components/common/AuthLayout';
+
+// ----------------------------------------------------------------------------
+// Google Identity Services (GIS) SDK loader — mirrors LoginPage.tsx.
+// Kept in-page (rather than extracted to a shared util) to minimise refactor
+// risk in this delivery. Behaviour must stay byte-identical to LoginPage so
+// sign-in / sign-up are indistinguishable to the server.
+// ----------------------------------------------------------------------------
+const GOOGLE_CLIENT_ID_BUILD =
+  (import.meta as any).env?.VITE_GOOGLE_OAUTH_CLIENT_ID ||
+  (typeof window !== 'undefined' && (window as any).__GOOGLE_OAUTH_CLIENT_ID__) ||
+  '';
+
+let gisLoadPromise: Promise<void> | null = null;
+function loadGoogleIdentityServices(): Promise<void> {
+  if (typeof window === 'undefined') return Promise.reject(new Error('SSR'));
+  if ((window as any).google?.accounts?.id) return Promise.resolve();
+  if (gisLoadPromise) return gisLoadPromise;
+  gisLoadPromise = new Promise<void>((resolve, reject) => {
+    const existing = document.querySelector<HTMLScriptElement>(
+      'script[src="https://accounts.google.com/gsi/client"]'
+    );
+    if (existing) {
+      existing.addEventListener('load', () => resolve());
+      existing.addEventListener('error', () => reject(new Error('GIS load failed')));
+      return;
+    }
+    const s = document.createElement('script');
+    s.src = 'https://accounts.google.com/gsi/client';
+    s.async = true;
+    s.defer = true;
+    s.onload = () => resolve();
+    s.onerror = () => {
+      gisLoadPromise = null;
+      reject(new Error('GIS load failed'));
+    };
+    document.head.appendChild(s);
+  });
+  return gisLoadPromise;
+}
+
+function openGoogleOAuthPopup(clientId: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (typeof window === 'undefined') return reject(new Error('SSR'));
+    const nonce = (crypto.randomUUID?.() || Math.random().toString(36).slice(2)).replace(/-/g, '');
+    const state = (crypto.randomUUID?.() || Math.random().toString(36).slice(2)).replace(/-/g, '');
+    sessionStorage.setItem('quantaex_google_oauth_state', state);
+
+    const w = 500;
+    const h = 650;
+    const dualLeft  = (window as any).screenLeft ?? window.screenX ?? 0;
+    const dualTop   = (window as any).screenTop  ?? window.screenY ?? 0;
+    const winW = window.innerWidth || document.documentElement.clientWidth || screen.width;
+    const winH = window.innerHeight || document.documentElement.clientHeight || screen.height;
+    const left = dualLeft + Math.max(0, (winW - w) / 2);
+    const top  = dualTop  + Math.max(0, (winH - h) / 2);
+
+    const redirectUri = `${window.location.origin}/auth/google/callback`;
+    const params = new URLSearchParams({
+      client_id:     clientId,
+      redirect_uri:  redirectUri,
+      response_type: 'id_token',
+      scope:         'openid email profile',
+      nonce,
+      state,
+      prompt:        'select_account',
+    });
+    const url = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+    const features =
+      `width=${w},height=${h},left=${Math.round(left)},top=${Math.round(top)},` +
+      `menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes`;
+    const popup = window.open(url, 'quantaex_google_oauth', features);
+    if (!popup) return reject(new Error('Popup blocked'));
+    try { popup.focus(); } catch {/* noop */}
+
+    let settled = false;
+    const cleanup = () => {
+      window.removeEventListener('message', onMessage);
+      clearInterval(closedTimer);
+    };
+    const onMessage = (ev: MessageEvent) => {
+      if (ev.origin !== window.location.origin) return;
+      const data: any = ev.data;
+      if (!data || data.source !== 'quantaex_google_oauth') return;
+      cleanup();
+      settled = true;
+      try { popup.close(); } catch {/* noop */}
+      if (data.error) return reject(new Error(data.error));
+      if (data.state !== state) return reject(new Error('state mismatch'));
+      if (!data.idToken) return reject(new Error('Missing idToken'));
+      resolve(data.idToken);
+    };
+    window.addEventListener('message', onMessage);
+    const closedTimer = setInterval(() => {
+      if (popup.closed) {
+        if (!settled) {
+          cleanup();
+          reject(new Error('Popup closed by user'));
+        }
+      }
+    }, 600);
+  });
+}
 
 // ============================================================================
 // Binance / Upbit-inspired register page
@@ -37,6 +139,136 @@ export default function RegisterPage() {
   const [agreeTerms, setAgreeTerms] = useState(false);
   const [agreeMarketing, setAgreeMarketing] = useState(false);
   const [focused, setFocused] = useState<string>('');
+
+  // ---- Google OAuth (sign-up via Google; sends refCode if a valid one is set) ----
+  const [googleLoading, setGoogleLoading] = useState(false);
+  const [googleClientId, setGoogleClientId] = useState<string>(GOOGLE_CLIENT_ID_BUILD);
+  const googleInitialisedRef = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        if (!googleClientId) {
+          const res = await api.get('/auth/google/config');
+          if (!cancelled && res.data?.enabled && res.data?.clientId) {
+            setGoogleClientId(res.data.clientId);
+          }
+        }
+      } catch {/* config endpoint may not be deployed yet */}
+      try { await loadGoogleIdentityServices(); } catch {/* retry on click */}
+    })();
+    return () => { cancelled = true; };
+  }, [googleClientId]);
+
+  // Server-side Google sign-up/login. For new accounts a valid refCode is
+  // attached so L1/L2/L3 referral rewards trigger upstream. Invalid codes are
+  // silently dropped (we never block sign-in on a typo).
+  const onGoogleCredential = async (idToken: string) => {
+    if (!idToken) return;
+    setError('');
+    setGoogleLoading(true);
+    try {
+      const payload: any = { idToken };
+      const code = refCode.trim().toUpperCase();
+      if (code && refCheck.state === 'valid') payload.refCode = code;
+
+      const res = await api.post('/auth/google', payload);
+      setAuth(res.data.user, res.data.token);
+      if (res.data?.user?.email) {
+        localStorage.setItem('quantaex_last_email', res.data.user.email);
+      }
+      navigate('/wallet');
+    } catch (err: any) {
+      const msg = err?.response?.data?.error || t('auth.googleFailed') || 'Google login failed';
+      setError(msg);
+    } finally {
+      setGoogleLoading(false);
+    }
+  };
+
+  const handleGoogleClick = async () => {
+    setError('');
+    // Block if refCode is non-empty but invalid — on the register page we
+    // expect the user to fix the code rather than silently ignore it.
+    if (refCode && refCheck.state === 'invalid') {
+      return setError(t('auth.refCodeInvalid') || 'Invalid referral code');
+    }
+
+    let clientId = googleClientId;
+    if (!clientId) {
+      try {
+        const res = await api.get('/auth/google/config');
+        if (res.data?.enabled && res.data?.clientId) {
+          clientId = res.data.clientId;
+          setGoogleClientId(clientId);
+        }
+      } catch {/* fall through */}
+    }
+    if (!clientId) {
+      setError(t('auth.googleNotConfigured') || 'Google login is not configured');
+      return;
+    }
+
+    const isDesktop =
+      typeof window !== 'undefined' && window.matchMedia
+        ? window.matchMedia('(min-width: 768px)').matches
+        : true;
+
+    setGoogleLoading(true);
+
+    if (isDesktop) {
+      try {
+        const idToken = await openGoogleOAuthPopup(clientId);
+        await onGoogleCredential(idToken);
+      } catch (e: any) {
+        setGoogleLoading(false);
+        const msg = (e?.message || '').toString();
+        if (msg.includes('Popup blocked')) {
+          setError(t('auth.googleBlocked') || 'Please allow popups and try again');
+        } else if (msg.includes('closed by user')) {
+          setError(t('auth.googleCancelled') || 'Google sign-in cancelled');
+        } else {
+          setError(t('auth.googleFailed') || 'Google login failed');
+        }
+      }
+      return;
+    }
+
+    // Mobile path — GIS prompt()
+    try {
+      await loadGoogleIdentityServices();
+      const g = (window as any).google?.accounts?.id;
+      if (!g) throw new Error('GIS unavailable');
+
+      if (!googleInitialisedRef.current) {
+        g.initialize({
+          client_id: clientId,
+          callback: (resp: any) => {
+            if (resp?.credential) {
+              onGoogleCredential(resp.credential);
+            } else {
+              setGoogleLoading(false);
+              setError(t('auth.googleCancelled') || 'Google sign-in cancelled');
+            }
+          },
+          ux_mode: 'popup',
+          auto_select: false,
+        });
+        googleInitialisedRef.current = true;
+      }
+
+      g.prompt((notification: any) => {
+        if (notification?.isNotDisplayed?.() || notification?.isSkippedMoment?.()) {
+          setGoogleLoading(false);
+          setError(t('auth.googleBlocked') || 'Please allow popups for accounts.google.com and try again');
+        }
+      });
+    } catch {
+      setGoogleLoading(false);
+      setError(t('auth.googleFailed') || 'Google login failed');
+    }
+  };
 
   const rules = useMemo(
     () => ({
@@ -477,7 +709,13 @@ export default function RegisterPage() {
 
         {/* Social */}
         <div className="grid grid-cols-3 gap-2">
-          <SocialBtn label="Google" icon={<GoogleIcon />} />
+          <SocialBtn
+            label="Google"
+            icon={<GoogleIcon />}
+            onClick={handleGoogleClick}
+            loading={googleLoading}
+            enabled
+          />
           <SocialBtn label="Apple" icon={<AppleIcon />} />
           <SocialBtn label="Kakao" icon={<KakaoIcon />} />
         </div>
@@ -557,15 +795,33 @@ function RuleRow({ ok, label }: { ok: boolean; label: string }) {
   );
 }
 
-function SocialBtn({ label, icon }: { label: string; icon: React.ReactNode }) {
+function SocialBtn({
+  label,
+  icon,
+  onClick,
+  loading,
+  enabled,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  onClick?: () => void;
+  loading?: boolean;
+  enabled?: boolean;
+}) {
+  const isInteractive = !!enabled;
   return (
     <button
       type="button"
-      disabled
-      title={`${label} (coming soon)`}
+      disabled={!isInteractive || !!loading}
+      onClick={isInteractive ? onClick : undefined}
+      title={isInteractive ? label : `${label} (coming soon)`}
       className="flex items-center justify-center gap-2 h-12 rounded-lg border border-exchange-border bg-exchange-card hover:bg-exchange-hover disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
     >
-      {icon}
+      {loading ? (
+        <span className="w-4 h-4 border-2 border-exchange-text-third border-t-transparent rounded-full animate-spin" />
+      ) : (
+        icon
+      )}
       <span className="text-xs text-exchange-text-secondary hidden sm:inline">
         {label}
       </span>
