@@ -67,10 +67,15 @@ const REFERRAL_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 // Rewards are now paid out in QX (the QuantaEX exchange token), not QTA.
 // Names retained for backward compat in API field keys, but the underlying
 // coin_symbol used in wallets / referrals.reward_coin is 'QX'.
-const REFERRER_REWARD_QX    = 50;   // L1 — kept for backward compat in messages
-const REFERRER_REWARD_L1_QX = 50;   // direct referrer (whose code was used)
-const REFERRER_REWARD_L2_QX = 30;   // referrer's referrer (upline 2)
-const REFERRER_REWARD_L3_QX = 20;   // upline 3
+// ────────────────────────────────────────────────────────────────────────────
+// Referrer reward amounts (per signup of a new account anywhere down-chain).
+// Applies to NEW signups only — historical rows in `referrals` keep their
+// original amounts. (사장님 명령 2026-05-14: 100/50/30 — 옵션 A: 신규만 적용)
+// ────────────────────────────────────────────────────────────────────────────
+const REFERRER_REWARD_QX    = 100;  // L1 — kept for backward compat in messages
+const REFERRER_REWARD_L1_QX = 100;  // direct referrer (whose code was used)
+const REFERRER_REWARD_L2_QX = 50;   // referrer's referrer (upline 2)
+const REFERRER_REWARD_L3_QX = 30;   // upline 3
 const REFERRED_WELCOME_QX   = 100;
 const REWARD_COIN           = 'QX';
 

@@ -339,7 +339,7 @@ export default function ReferralPage() {
                 </div>
                 <p className="text-[11px] text-exchange-text-third mt-2">
                   {t('referral.perInviteHint', {
-                    amount: String(data?.reward_per_referral_qx ?? data?.reward_per_referral_qta ?? 50),
+                    amount: String(data?.reward_per_referral_qx ?? data?.reward_per_referral_qta ?? 100),
                   })}
                 </p>
               </div>

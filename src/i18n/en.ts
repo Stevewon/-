@@ -1054,7 +1054,7 @@ const en = {
 
   // ── Referral program ────────────────────────────────────────────────
   'referral.menuLabel': 'Refer & earn',
-  'referral.menuDesc': 'Invite a friend, get 50 QX each',
+  'referral.menuDesc': 'Invite a friend, get 100 QX each',
   'referral.title': 'Referral program',
   'referral.subtitle': 'Invite friends and earn QX together',
   'referral.yourCode': 'Your referral code',

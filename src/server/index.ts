@@ -98,6 +98,11 @@ let referralQxBootstrapDone = false;
 // One-shot guard for Google OAuth schema self-apply (migration 0030).
 let googleOauthBootstrapDone = false;
 let referralMultilevelBootstrapDone = false;
+// 2026-05-14: boss-ordered rate change L1=100/L2=50/L3=30 (was 50/30/20).
+// Self-bootstrap that idempotently updates the policy markers; new signups
+// already credit at the new rate via REFERRER_REWARD_L*_QX. Historical
+// `referrals` rows keep their original reward_qta (option A — new only).
+let referralRate20260514BootstrapDone = false;
 
 app.use('/api/*', async (c, next) => {
   // Fast path: skip the DB lookup on every request by using an in-memory
@@ -628,10 +633,15 @@ app.use('/api/*', async (c, next) => {
             }
 
             // 6) Stamp policy markers (idempotent).
+            //    Note: amounts here represent the CURRENT policy. Historical
+            //    rows in `referrals` keep their original reward_qta value, so
+            //    a rate change (e.g. 2026-05-14: 50/30/20 → 100/50/30) is
+            //    reflected here without touching past data — only new signups
+            //    will be credited at the new rate.
             for (const [k, v] of [
-              ['referral_reward_l1', '50'],
-              ['referral_reward_l2', '30'],
-              ['referral_reward_l3', '20'],
+              ['referral_reward_l1', '100'],
+              ['referral_reward_l2', '50'],
+              ['referral_reward_l3', '30'],
               ['referral_levels',    '3'],
             ] as const) {
               try {
@@ -656,6 +666,73 @@ app.use('/api/*', async (c, next) => {
             console.log('[bootstrap] Referral multilevel schema (0031) applied to production D1');
           } catch (e) {
             captureError(c as any, e, { where: 'referral-multilevel-bootstrap' });
+          }
+        })()
+      );
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // 2026-05-14 boss-ordered rate change: L1 50→100, L2 30→50, L3 20→30
+  // (option A: new signups only — historical rows untouched).
+  //
+  // The 0031 bootstrap above already stamps `referral_reward_l1/l2/l3`
+  // markers, but only on its first run (gated by `migration_0031_*`).
+  // Workers that already cleared 0031 will never see the new values, so
+  // we need a separate marker-only bootstrap that refreshes the policy
+  // values to today's rate and records a permanent transition marker.
+  // Cheap (~2 SELECTs once per worker cold-start); gated by its own
+  // module flag and DB marker.
+  // ------------------------------------------------------------------
+  if (!referralRate20260514BootstrapDone) {
+    const ctx = c.executionCtx as any;
+    if (ctx && typeof ctx.waitUntil === 'function') {
+      ctx.waitUntil(
+        (async () => {
+          try {
+            const marker = await c.env.DB.prepare(
+              "SELECT value FROM system_markers WHERE key = 'referral_rate_change_2026_05_14'"
+            ).first<{ value: string }>();
+            if (marker && marker.value === 'live') {
+              referralRate20260514BootstrapDone = true;
+              return;
+            }
+
+            // Refresh the current-policy markers to today's rate. These are
+            // policy snapshots only; per-signup credit amounts live in
+            // REFERRER_REWARD_L*_QX in src/server/routes/auth.ts.
+            for (const [k, v] of [
+              ['referral_reward_l1', '100'],
+              ['referral_reward_l2', '50'],
+              ['referral_reward_l3', '30'],
+              ['referral_levels',    '3'],
+            ] as const) {
+              try {
+                await c.env.DB.prepare(
+                  `INSERT INTO system_markers (key, value, updated_at)
+                   VALUES (?, ?, CURRENT_TIMESTAMP)
+                   ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP`
+                ).bind(k, v).run();
+              } catch (e) {
+                console.warn('[bootstrap-rate-2026-05-14] marker', k, 'failed:', e);
+              }
+            }
+
+            // Record the transition itself so we can audit "from when did
+            // the new rate apply?" — value encodes the previous rates for
+            // forensic clarity.
+            await c.env.DB.prepare(
+              `INSERT INTO system_markers (key, value, updated_at)
+               VALUES ('referral_rate_change_2026_05_14',
+                       'live (prev: l1=50/l2=30/l3=20, new: l1=100/l2=50/l3=30, option A: new signups only)',
+                       CURRENT_TIMESTAMP)
+               ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP`
+            ).run();
+
+            referralRate20260514BootstrapDone = true;
+            console.log('[bootstrap] Referral rate change (2026-05-14) markers refreshed');
+          } catch (e) {
+            captureError(c as any, e, { where: 'referral-rate-2026-05-14-bootstrap' });
           }
         })()
       );

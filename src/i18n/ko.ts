@@ -1045,7 +1045,7 @@ const ko = {
 
   // ── Referral program ────────────────────────────────────────────────
   'referral.menuLabel': '친구 초대',
-  'referral.menuDesc': '친구 초대하고 50 QX씩 받기',
+  'referral.menuDesc': '친구 초대하고 100 QX씩 받기',
   'referral.title': '추천인 프로그램',
   'referral.subtitle': '친구를 초대하고 QX를 함께 받으세요',
   'referral.yourCode': '내 추천 코드',
