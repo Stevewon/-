@@ -1042,6 +1042,14 @@ const ko = {
   'auth.pwRuleNumber': '숫자 포함',
   'auth.referralCode': '추천인 코드',
   'auth.referralPlaceholder': '추천인 코드 입력',
+  // refCode UI on LoginPage + RegisterPage (Google OAuth refCode flow,
+  // Task 2 / 2026-05-14). Mirrors REGISTER refCode copy.
+  'auth.refCode': '추천 코드',
+  'auth.refCodeAdd': '추천 코드 입력 (선택)',
+  'auth.refCodeInvalid': '유효하지 않은 코드',
+  'auth.refCodePlaceholder': '예: ABC123',
+  'auth.refCodeGoogleHint': '구글 신규 가입 시에만 적용 — 기존 계정 로그인엔 영향 없음',
+  // 'auth.optional' is already defined below in the Register form section
 
   // ── Referral program ────────────────────────────────────────────────
   'referral.menuLabel': '친구 초대',

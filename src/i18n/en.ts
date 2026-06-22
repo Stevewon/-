@@ -1051,6 +1051,14 @@ const en = {
   'auth.pwRuleNumber': 'Contains a number',
   'auth.referralCode': 'Referral code',
   'auth.referralPlaceholder': 'Enter referral code',
+  // refCode UI on LoginPage + RegisterPage (Google OAuth refCode flow,
+  // Task 2 / 2026-05-14). Mirrors REGISTER refCode copy.
+  'auth.refCode': 'Referral code',
+  'auth.refCodeAdd': 'Add referral code (optional)',
+  'auth.refCodeInvalid': 'Invalid code',
+  'auth.refCodePlaceholder': 'e.g. ABC123',
+  'auth.refCodeGoogleHint': 'Applied only on new Google sign-up — no effect for existing accounts',
+  // 'auth.optional' is already defined below in the Register form section
 
   // ── Referral program ────────────────────────────────────────────────
   'referral.menuLabel': 'Refer & earn',
