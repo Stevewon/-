@@ -99,19 +99,32 @@ app.post('/deposit', authMiddleware, async (c) => {
 
 // Admin-only credit (kept for QA / compensation). Requires admin role.
 app.post('/admin-credit', authMiddleware, adminMiddleware, async (c) => {
-  const { user_id, coin_symbol, amount, memo } = await c.req.json();
+  const body = await c.req.json();
+  const { user_id, coin_symbol, amount, memo } = body;
   if (!user_id || !coin_symbol || !amount || amount <= 0) {
     return c.json({ error: 'Invalid request' }, 400);
   }
+  // ★★★★★★★ Boss's permanent rule (2026-06-22):
+  // Default: admin credit is COMPANY-ISSUED (locked from external
+  // withdrawal). Pass { withdrawable: true } to credit as user-owned.
+  const isWithdrawable = body.withdrawable === true;
 
   const coin = await c.env.DB.prepare('SELECT symbol FROM coins WHERE symbol = ?').bind(coin_symbol).first();
   if (!coin) return c.json({ error: 'Coin not found' }, 404);
 
   const wallet = await c.env.DB.prepare('SELECT id FROM wallets WHERE user_id = ? AND coin_symbol = ?').bind(user_id, coin_symbol).first() as any;
   if (wallet) {
-    await c.env.DB.prepare('UPDATE wallets SET available = available + ? WHERE id = ?').bind(amount, wallet.id).run();
+    if (isWithdrawable) {
+      await c.env.DB.prepare('UPDATE wallets SET available = available + ? WHERE id = ?').bind(amount, wallet.id).run();
+    } else {
+      await c.env.DB.prepare('UPDATE wallets SET available = available + ?, available_initial = COALESCE(available_initial, 0) + ? WHERE id = ?').bind(amount, amount, wallet.id).run();
+    }
   } else {
-    await c.env.DB.prepare('INSERT INTO wallets (id, user_id, coin_symbol, available) VALUES (?,?,?,?)').bind(uuid(), user_id, coin_symbol, amount).run();
+    if (isWithdrawable) {
+      await c.env.DB.prepare('INSERT INTO wallets (id, user_id, coin_symbol, available, available_initial) VALUES (?,?,?,?,0)').bind(uuid(), user_id, coin_symbol, amount).run();
+    } else {
+      await c.env.DB.prepare('INSERT INTO wallets (id, user_id, coin_symbol, available, available_initial) VALUES (?,?,?,?,?)').bind(uuid(), user_id, coin_symbol, amount, amount).run();
+    }
   }
 
   const depositId = uuid();
@@ -270,9 +283,28 @@ app.post('/withdraw', authMiddleware, rlWithdraw, requireKyc('approved'), async 
   }
 
   const wallet = await c.env.DB.prepare(
-    'SELECT id, available FROM wallets WHERE user_id = ? AND coin_symbol = ?'
+    'SELECT id, available, COALESCE(available_initial, 0) AS available_initial FROM wallets WHERE user_id = ? AND coin_symbol = ?'
   ).bind(user.id, coin_symbol).first<any>();
   if (!wallet || wallet.available < amount) return c.json({ error: 'Insufficient balance' }, 400);
+
+  // ★★★★★★★ Boss's permanent rule (2026-06-22):
+  // Company-issued amounts (welcome bonus, referral rewards, daily rewards,
+  // admin manual credit, etc.) are tracked in `available_initial` and MUST
+  // NOT leave the exchange. Withdrawable = available - available_initial.
+  // Internal trading still works against `available` (locked_initial only
+  // matters at external withdrawal time).
+  const initial = Number(wallet.available_initial || 0);
+  const withdrawable = Math.max(0, Number(wallet.available || 0) - initial);
+  if (amount > withdrawable) {
+    return c.json({
+      error: 'Insufficient withdrawable balance. Company-issued amounts (sign-up bonus, referral rewards, daily rewards) cannot be withdrawn externally — they can only be used for internal trading.',
+      code: 'WITHDRAWAL_BLOCKED_COMPANY_ISSUED',
+      available: Number(wallet.available || 0),
+      available_initial: initial,
+      withdrawable,
+      requested: amount,
+    }, 400);
+  }
 
   const fee = amount * 0.001;
   const withdrawalId = uuid();

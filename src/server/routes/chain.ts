@@ -117,6 +117,30 @@ chain.post('/qta/withdraw', authMiddleware, async (c) => {
     return c.json({ ok: false, error: 'invalid_amount' }, 400);
   }
 
+  // ★★★★★★★ Boss's permanent rule (2026-06-22):
+  // Block QTA withdrawal if it would dip into company-issued initial balance.
+  // Withdrawable = available - available_initial.
+  const qtaWallet = await c.env.DB.prepare(
+    `SELECT available, COALESCE(available_initial, 0) AS available_initial
+       FROM wallets WHERE user_id = ? AND coin_symbol = 'QTA'`
+  ).bind(user.id).first<any>();
+  if (!qtaWallet || Number(qtaWallet.available || 0) < amtNum) {
+    return c.json({ ok: false, error: 'insufficient_balance' }, 400);
+  }
+  const qtaInitial = Number(qtaWallet.available_initial || 0);
+  const qtaWithdrawable = Math.max(0, Number(qtaWallet.available || 0) - qtaInitial);
+  if (amtNum > qtaWithdrawable) {
+    return c.json({
+      ok: false,
+      error: 'withdrawal_blocked_company_issued',
+      message: 'Company-issued QTA (sign-up bonus, daily rewards, referral rewards, admin credits) cannot be withdrawn externally. Use it for internal trading instead.',
+      available: Number(qtaWallet.available || 0),
+      available_initial: qtaInitial,
+      withdrawable: qtaWithdrawable,
+      requested: amtNum,
+    }, 400);
+  }
+
   const id = crypto.randomUUID();
   await c.env.DB.prepare(
     `INSERT INTO qta_withdrawals

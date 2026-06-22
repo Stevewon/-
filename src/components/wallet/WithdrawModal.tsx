@@ -57,6 +57,13 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
     [wallets, coin]
   );
   const available = wallet?.available || 0;
+  // ★★★★★★★ Boss's permanent rule (2026-06-22):
+  // available_initial = company-issued amount (sign-up bonus, referral
+  // rewards, daily rewards, admin credits) — cannot leave the exchange.
+  // withdrawable = available - available_initial. Falls back to 0 for
+  // safety if the field is missing (old API response).
+  const availableInitial = Number((wallet as any)?.available_initial || 0);
+  const withdrawable = Math.max(0, available - availableInitial);
 
   const numAmount = parseFloat(amount) || 0;
   const fee = network?.withdrawFee || 0;
@@ -74,15 +81,15 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
   const amountValid = useMemo(() => {
     if (!numAmount) return null;
     if (numAmount < network.minWithdraw) return false;
-    if (numAmount > available) return false;
+    if (numAmount > withdrawable) return false;
     if (numAmount <= fee) return false;
     return true;
-  }, [numAmount, network, available, fee]);
+  }, [numAmount, network, withdrawable, fee]);
 
   const canProceed = addressValid === true && amountValid === true && (!network?.memoRequired || memo.trim());
 
   const setPercent = (p: number) => {
-    const v = (available * p) / 100;
+    const v = (withdrawable * p) / 100;
     setAmount(v > 0 ? String(Number(v.toFixed(8))) : '');
   };
 
@@ -168,6 +175,23 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
                   {formatAmount(available)} {coin}
                 </span>
               </p>
+              {/* ★ Withdrawable = available - available_initial */}
+              <p className="text-[11px] mt-0.5 flex justify-between">
+                <span className="text-exchange-buy">{t('wallet.withdrawable')}</span>
+                <span className="tabular-nums text-exchange-buy font-semibold">
+                  {formatAmount(withdrawable)} {coin}
+                </span>
+              </p>
+              {availableInitial > 0 && (
+                <p className="text-[10px] mt-0.5 flex justify-between text-exchange-text-third">
+                  <span title={t('wallet.companyIssuedHint')}>
+                    {t('wallet.companyIssued')} <span className="opacity-60">(?)</span>
+                  </span>
+                  <span className="tabular-nums">
+                    {formatAmount(availableInitial)} {coin}
+                  </span>
+                </p>
+              )}
             </div>
 
             {/* Network Select */}
@@ -279,8 +303,10 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
               {amountValid === false && numAmount > 0 && (
                 <p className="text-[11px] text-exchange-sell mt-1 flex items-center gap-1">
                   <AlertTriangle size={11} />
-                  {numAmount > available
-                    ? t('wallet.insufficientBalance')
+                  {numAmount > withdrawable
+                    ? (availableInitial > 0
+                        ? t('wallet.insufficientWithdrawable')
+                        : t('wallet.insufficientBalance'))
                     : numAmount < network.minWithdraw
                     ? t('wallet.belowMinWithdraw', { min: network.minWithdraw, coin })
                     : t('wallet.amountMustExceedFee')}

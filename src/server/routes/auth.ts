@@ -130,10 +130,17 @@ async function creditUplineRewards(
       ).bind(upline.id, REWARD_COIN).first<any>();
 
       if (wallet) {
+        // ★★★★★★★ Boss's permanent rule (2026-06-22):
+        // Referral rewards are COMPANY-ISSUED → bump `available_initial`
+        // by the same amount so the withdrawal endpoint can subtract it
+        // out of withdrawable balance. See migrations/0032.
         await db.batch([
           db.prepare(
-            `UPDATE wallets SET available = available + ? WHERE id = ?`
-          ).bind(reward, wallet.id),
+            `UPDATE wallets
+             SET available = available + ?,
+                 available_initial = COALESCE(available_initial, 0) + ?
+             WHERE id = ?`
+          ).bind(reward, reward, wallet.id),
           db.prepare(
             `INSERT OR IGNORE INTO referrals
                (id, referrer_id, referred_id, referral_code, reward_qta,
@@ -144,9 +151,9 @@ async function creditUplineRewards(
       } else {
         await db.batch([
           db.prepare(
-            `INSERT INTO wallets (id, user_id, coin_symbol, available, locked)
-             VALUES (?, ?, ?, ?, 0)`
-          ).bind(uuid(), upline.id, REWARD_COIN, reward),
+            `INSERT INTO wallets (id, user_id, coin_symbol, available, locked, available_initial)
+             VALUES (?, ?, ?, ?, 0, ?)`
+          ).bind(uuid(), upline.id, REWARD_COIN, reward, reward),
           db.prepare(
             `INSERT OR IGNORE INTO referrals
                (id, referrer_id, referred_id, referral_code, reward_qta,
@@ -1078,14 +1085,19 @@ app.post('/verify-email', async (c) => {
       if (qx && qx.locked > 0) {
         const unlock = Math.min(qx.locked, REFERRED_WELCOME_QX);
         bonusUnlocked = unlock;
+        // ★★★★★★★ Welcome bonus is COMPANY-ISSUED → bump available_initial
+        // so the user can trade it but cannot withdraw it externally.
         await c.env.DB.prepare(
           `UPDATE wallets
-           SET available = available + ?, locked = locked - ?
+           SET available = available + ?,
+               locked = locked - ?,
+               available_initial = COALESCE(available_initial, 0) + ?
            WHERE id = ?`
-        ).bind(unlock, unlock, qx.id).run();
+        ).bind(unlock, unlock, unlock, qx.id).run();
       }
       // Legacy QTA locked bonus (pre-QX migration) — also unlock so users
       // who registered under the old rule still get their credit.
+      // ★★★★★★★ Legacy QTA bonus is also company-issued → lock initial.
       const qta = await c.env.DB.prepare(
         `SELECT id, available, locked FROM wallets
          WHERE user_id = ? AND coin_symbol = 'QTA'`
@@ -1093,7 +1105,9 @@ app.post('/verify-email', async (c) => {
       if (qta && qta.locked > 0) {
         await c.env.DB.prepare(
           `UPDATE wallets
-           SET available = available + locked, locked = 0
+           SET available = available + locked,
+               available_initial = COALESCE(available_initial, 0) + locked,
+               locked = 0
            WHERE id = ?`
         ).bind(qta.id).run();
       }

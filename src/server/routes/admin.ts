@@ -453,6 +453,43 @@ app.post('/withdrawals/:id/approve', async (c) => {
   // Finalise: the amount was moved to `locked` at submission time.
   // `w.amount` stores NET (after fee); gross lock = w.amount + w.fee.
   const gross = Number(w.amount) + Number(w.fee || 0);
+
+  // ★★★★★★★ Boss's permanent rule (2026-06-22) — second-line defense:
+  // Even if a withdrawal somehow made it past the user-facing endpoint
+  // (legacy row, race window, future code regression), the admin approval
+  // MUST also verify the user's available_initial does not exceed the
+  // remaining available after this approval. Reject and refund otherwise.
+  try {
+    const walletRow = await db.prepare(
+      `SELECT available, locked, COALESCE(available_initial, 0) AS available_initial
+         FROM wallets WHERE user_id = ? AND coin_symbol = ?`
+    ).bind(w.user_id, w.coin_symbol).first<any>();
+    if (walletRow) {
+      // After approval: available stays the same (locked drops by gross).
+      // The withdrawable invariant we must always preserve:
+      //   available_initial <= available
+      // If subtracting `gross` from locked would expose company-issued funds
+      // beyond what's already on `available`, block.
+      const av = Number(walletRow.available || 0);
+      const init = Number(walletRow.available_initial || 0);
+      if (init > av) {
+        return c.json({
+          error: 'Withdrawal blocked — would expose company-issued balance. This withdrawal request appears to draw from initial bonus/reward funds and was rejected by the second-line guard. Please reject this withdrawal and ask the user to retry with a smaller amount.',
+          code: 'ADMIN_GUARD_COMPANY_ISSUED',
+          available: av,
+          available_initial: init,
+        }, 400);
+      }
+    }
+  } catch (e) {
+    console.warn('[admin/withdrawals/approve] guard check failed:', e);
+    // Fail-closed: refuse approval if the guard itself errored.
+    return c.json({
+      error: 'Admin guard check failed; withdrawal not approved. Please retry or contact engineering.',
+      code: 'ADMIN_GUARD_CHECK_FAILED',
+    }, 500);
+  }
+
   const tx = `0x${Date.now().toString(16)}${Math.random().toString(16).slice(2, 10)}`;
   await db.batch([
     db.prepare(
@@ -594,6 +631,12 @@ app.post('/deposits/manual', async (c) => {
   if (!user_id || !coin_symbol || !(amt > 0)) {
     return c.json({ error: 'user_id, coin_symbol, amount > 0 required' }, 400);
   }
+  // ★★★★★★★ Boss's permanent rule (2026-06-22):
+  // Default: manual deposit is COMPANY-ISSUED (locked from external
+  // withdrawal). To credit a verified real deposit (e.g. chain-watcher
+  // catch-up) the admin must pass { withdrawable: true } explicitly.
+  // This way nobody accidentally lets company funds out.
+  const isWithdrawable = body.withdrawable === true;
   const u = await db.prepare('SELECT id FROM users WHERE id = ?').bind(user_id).first();
   if (!u) return c.json({ error: 'User not found' }, 404);
   const coin = await db.prepare('SELECT symbol FROM coins WHERE symbol = ?').bind(coin_symbol).first();
@@ -614,15 +657,29 @@ app.post('/deposits/manual', async (c) => {
   const existing = await db.prepare('SELECT id FROM wallets WHERE user_id = ? AND coin_symbol = ?')
     .bind(user_id, coin_symbol).first();
   if (existing) {
-    statements.push(
-      db.prepare('UPDATE wallets SET available = available + ? WHERE user_id = ? AND coin_symbol = ?')
-        .bind(amt, user_id, coin_symbol)
-    );
+    if (isWithdrawable) {
+      statements.push(
+        db.prepare('UPDATE wallets SET available = available + ? WHERE user_id = ? AND coin_symbol = ?')
+          .bind(amt, user_id, coin_symbol)
+      );
+    } else {
+      statements.push(
+        db.prepare('UPDATE wallets SET available = available + ?, available_initial = COALESCE(available_initial, 0) + ? WHERE user_id = ? AND coin_symbol = ?')
+          .bind(amt, amt, user_id, coin_symbol)
+      );
+    }
   } else {
-    statements.push(
-      db.prepare('INSERT INTO wallets (id, user_id, coin_symbol, available, locked) VALUES (?, ?, ?, ?, 0)')
-        .bind(uuid(), user_id, coin_symbol, amt)
-    );
+    if (isWithdrawable) {
+      statements.push(
+        db.prepare('INSERT INTO wallets (id, user_id, coin_symbol, available, locked, available_initial) VALUES (?, ?, ?, ?, 0, 0)')
+          .bind(uuid(), user_id, coin_symbol, amt)
+      );
+    } else {
+      statements.push(
+        db.prepare('INSERT INTO wallets (id, user_id, coin_symbol, available, locked, available_initial) VALUES (?, ?, ?, ?, 0, ?)')
+          .bind(uuid(), user_id, coin_symbol, amt, amt)
+      );
+    }
   }
 
   await db.batch(statements);
