@@ -103,6 +103,17 @@ let referralMultilevelBootstrapDone = false;
 // already credit at the new rate via REFERRER_REWARD_L*_QX. Historical
 // `referrals` rows keep their original reward_qta (option A — new only).
 let referralRate20260514BootstrapDone = false;
+// 2026-06-22: ★★★★★★★ Boss's permanent rule — company-issued amounts
+// (sign-up bonus, referral rewards, daily rewards, admin credits) MUST NOT
+// be withdrawn externally. Schema-level lock via wallets.available_initial
+// (migration 0032). Self-bootstrap that idempotently:
+//   1) ADD COLUMN wallets.available_initial REAL DEFAULT 0 (try/catch if exists)
+//   2) Pre-launch backfill: SET available_initial = available for every row
+//      where available > 0 AND available_initial = 0 (fail-closed). Boss can
+//      selectively unlock test/admin accounts via SQL after deploy.
+//   3) Stamp marker company_issued_lock_2026_06_22 = migrated_v1 so steady-
+//      state cost is one SELECT.
+let companyIssuedLockBootstrapDone = false;
 
 app.use('/api/*', async (c, next) => {
   // Fast path: skip the DB lookup on every request by using an in-memory
@@ -733,6 +744,81 @@ app.use('/api/*', async (c, next) => {
             console.log('[bootstrap] Referral rate change (2026-05-14) markers refreshed');
           } catch (e) {
             captureError(c as any, e, { where: 'referral-rate-2026-05-14-bootstrap' });
+          }
+        })()
+      );
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // One-shot company-issued lock bootstrap (migration 0032 self-apply).
+  // ★★★★★★★ Boss's permanent rule (2026-06-22):
+  // Adds wallets.available_initial column tracking company-issued
+  // portion of each wallet. Withdrawable = available - available_initial.
+  // Pre-launch backfill: every existing wallet's available_initial is
+  // set to its current available (fail-closed). Boss can selectively
+  // unlock test accounts via SQL after deploy:
+  //   UPDATE wallets SET available_initial = 0
+  //   WHERE user_id IN (SELECT id FROM users WHERE email = 'X');
+  //
+  // Same self-apply pattern as 0028/0029/0030/0031: gated by marker
+  // so steady-state cost is one SELECT.
+  // ------------------------------------------------------------------
+  if (!companyIssuedLockBootstrapDone) {
+    const ctx = c.executionCtx as any;
+    if (ctx && typeof ctx.waitUntil === 'function') {
+      ctx.waitUntil(
+        (async () => {
+          try {
+            const marker = await c.env.DB.prepare(
+              "SELECT value FROM system_markers WHERE key = 'company_issued_lock_2026_06_22'"
+            ).first<{ value: string }>();
+            if (marker && marker.value === 'migrated_v1') {
+              companyIssuedLockBootstrapDone = true;
+              return;
+            }
+
+            // 1) Add the column (no IF NOT EXISTS in SQLite ALTER TABLE).
+            try {
+              await c.env.DB.prepare(
+                `ALTER TABLE wallets ADD COLUMN available_initial REAL DEFAULT 0`
+              ).run();
+              console.log('[bootstrap] wallets.available_initial column added');
+            } catch (_e) {
+              // Column already exists from a partial prior run — fine.
+            }
+
+            // 2) Index (idempotent).
+            try {
+              await c.env.DB.prepare(
+                `CREATE INDEX IF NOT EXISTS idx_wallets_user_coin
+                   ON wallets(user_id, coin_symbol)`
+              ).run();
+            } catch (_e) { /* ignore */ }
+
+            // 3) Pre-launch backfill: lock the entirety of every existing
+            //    balance as company-issued. This is the fail-closed default.
+            //    Boss explicitly unlocks test/admin accounts via SQL later.
+            const backfillRes = await c.env.DB.prepare(
+              `UPDATE wallets
+                  SET available_initial = available
+                WHERE available > 0
+                  AND (available_initial IS NULL OR available_initial = 0)`
+            ).run();
+            const changed = (backfillRes as any)?.meta?.changes ?? 0;
+            console.log(`[bootstrap] company_issued_lock backfill locked ${changed} wallet rows`);
+
+            // 4) Stamp marker.
+            await c.env.DB.prepare(
+              `INSERT INTO system_markers (key, value, updated_at)
+               VALUES ('company_issued_lock_2026_06_22', 'migrated_v1', CURRENT_TIMESTAMP)
+               ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP`
+            ).run();
+
+            companyIssuedLockBootstrapDone = true;
+            console.log('[bootstrap] Company-issued lock (0032) applied to production D1');
+          } catch (e) {
+            captureError(c as any, e, { where: 'company-issued-lock-bootstrap' });
           }
         })()
       );

@@ -9,3 +9,9 @@ node_modules/
 .DS_Store
 workers/node_modules/
 dist/
+
+# Auto-generated health-check logs
+signup_healthcheck.log
+signup_healthcheck.ALERT.log
+signup_healthcheck.stdout.log
+*.healthcheck.log
