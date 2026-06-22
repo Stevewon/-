@@ -351,10 +351,36 @@ app.get('/kyc/pending', async (c) => {
 app.post('/kyc/:userId/approve', async (c) => {
   const db = c.env.DB;
   const userId = c.req.param('userId');
-  const u = await db.prepare('SELECT id FROM users WHERE id = ?').bind(userId).first<any>();
+  // ★ Pre-launch hardening (2026-06-22):
+  // Load full KYC fields so admin can't accidentally approve an empty
+  // record. We refuse to approve if any of the required fields are missing.
+  const u = await db.prepare(
+    `SELECT id, kyc_status, kyc_name, kyc_phone, kyc_id_number, kyc_address
+       FROM users WHERE id = ?`
+  ).bind(userId).first<any>();
   if (!u) return c.json({ error: 'User not found' }, 404);
+
+  if (u.kyc_status !== 'pending') {
+    return c.json({
+      error: `Cannot approve KYC in status '${u.kyc_status}'. Only 'pending' submissions can be approved.`,
+      code: 'KYC_NOT_PENDING',
+    }, 400);
+  }
+  const missing: string[] = [];
+  if (!u.kyc_name || String(u.kyc_name).trim().length < 2)   missing.push('name');
+  if (!u.kyc_phone || String(u.kyc_phone).trim().length < 7) missing.push('phone');
+  if (!u.kyc_id_number || String(u.kyc_id_number).trim().length < 4) missing.push('id_number');
+  if (!u.kyc_address || String(u.kyc_address).trim().length < 5) missing.push('address');
+  if (missing.length > 0) {
+    return c.json({
+      error: `KYC record is missing required field(s): ${missing.join(', ')}. Reject and ask user to resubmit.`,
+      code: 'KYC_INCOMPLETE',
+      missing,
+    }, 400);
+  }
+
   await db.prepare(`
-    UPDATE users SET kyc_status = 'approved', kyc_reviewed_at = CURRENT_TIMESTAMP WHERE id = ?
+    UPDATE users SET kyc_status = 'approved', kyc_reviewed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?
   `).bind(u.id).run();
   try {
     await createNotification(db, u.id, {
@@ -384,12 +410,45 @@ app.post('/kyc/:userId/approve', async (c) => {
 app.post('/kyc/:userId/reject', async (c) => {
   const db = c.env.DB;
   const userId = c.req.param('userId');
-  const { reason } = await c.req.json().catch(() => ({}));
-  const u = await db.prepare('SELECT id FROM users WHERE id = ?').bind(userId).first<any>();
+  const body = await c.req.json().catch(() => ({} as any));
+  const reason = body.reason ? String(body.reason).slice(0, 500) : null;
+  // ★ Pre-launch hardening: optional flag to clear bad data so the user
+  // gets a clean re-submission UX. Defaults to true (privacy-friendly —
+  // we don't want to keep wrong PII around).
+  const clearData = body.clear_data !== false;
+
+  const u = await db.prepare(
+    'SELECT id, kyc_status FROM users WHERE id = ?'
+  ).bind(userId).first<any>();
   if (!u) return c.json({ error: 'User not found' }, 404);
-  await db.prepare(`
-    UPDATE users SET kyc_status = 'rejected', kyc_reviewed_at = CURRENT_TIMESTAMP WHERE id = ?
-  `).bind(u.id).run();
+  if (u.kyc_status !== 'pending') {
+    return c.json({
+      error: `Cannot reject KYC in status '${u.kyc_status}'. Only 'pending' submissions can be rejected.`,
+      code: 'KYC_NOT_PENDING',
+    }, 400);
+  }
+
+  if (clearData) {
+    await db.prepare(`
+      UPDATE users
+         SET kyc_status = 'rejected',
+             kyc_reviewed_at = CURRENT_TIMESTAMP,
+             kyc_name = NULL,
+             kyc_phone = NULL,
+             kyc_id_number = NULL,
+             kyc_address = NULL,
+             kyc_id_document_url = NULL,
+             kyc_address_document_url = NULL,
+             updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`).bind(u.id).run();
+  } else {
+    await db.prepare(`
+      UPDATE users
+         SET kyc_status = 'rejected',
+             kyc_reviewed_at = CURRENT_TIMESTAMP,
+             updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`).bind(u.id).run();
+  }
   try {
     await createNotification(db, u.id, {
       type: 'system',
@@ -403,7 +462,7 @@ app.post('/kyc/:userId/reject', async (c) => {
     action: 'kyc.reject',
     targetType: 'kyc',
     targetId: u.id,
-    payload: { reason: reason || null },
+    payload: { reason: reason || null, clear_data: clearData },
   });
 
   // S3-6 user-facing email

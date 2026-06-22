@@ -14,6 +14,111 @@ import { getUserFeeTier } from '../utils/fees';
 
 const app = new Hono<AppEnv>();
 
+// ============================================================================
+// KYC — Read / Submit
+// ----------------------------------------------------------------------------
+// Pre-launch audit (2026-06-22): the KycPage frontend was calling
+// `/api/profile/kyc` (GET to prefill, POST to submit) but the server only
+// had `POST /api/auth/kyc` with weak validation and no GET. Result: all
+// KYC submissions failed with 404. This block adds both endpoints with
+// proper validation:
+//   * Required: name, phone, id_number, address.
+//   * Optional: id_document_url, address_document_url (string, ≤2KB each;
+//     today these are simulated client-side and will be wired to R2 in a
+//     follow-up — but we already persist them so the admin reviewer can
+//     see what was submitted).
+//   * Length / format checks mirroring the KycPage client-side rules.
+//   * Re-submit policy: only `none` or `rejected` may re-submit. `pending`
+//     and `approved` are read-only here — preventing self-modification of
+//     a record that's already in review or live.
+//   * On submit, kyc_submitted_at = CURRENT_TIMESTAMP so the admin queue
+//     can sort by oldest-first (FIFO).
+// ============================================================================
+app.get('/kyc', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const row = await c.env.DB.prepare(
+    `SELECT kyc_status, kyc_name, kyc_phone, kyc_id_number, kyc_address,
+            kyc_id_document_url, kyc_address_document_url,
+            kyc_submitted_at, kyc_reviewed_at
+       FROM users WHERE id = ?`
+  ).bind(user.id).first<any>();
+  if (!row) return c.json({ error: 'User not found' }, 404);
+  return c.json(row);
+});
+
+app.post('/kyc', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const body = await c.req.json().catch(() => ({} as any));
+
+  // Status gate — can only submit when never submitted or previously rejected.
+  const cur = await c.env.DB.prepare(
+    'SELECT kyc_status FROM users WHERE id = ?'
+  ).bind(user.id).first<{ kyc_status: string | null }>();
+  const status = (cur?.kyc_status || 'none').toLowerCase();
+  if (status !== 'none' && status !== 'rejected') {
+    return c.json(
+      {
+        error:
+          status === 'pending'
+            ? 'KYC is already under review. Please wait for the result.'
+            : 'KYC is already approved. Contact support to make changes.',
+        code: status === 'pending' ? 'KYC_PENDING' : 'KYC_ALREADY_APPROVED',
+      },
+      400,
+    );
+  }
+
+  // Required-field validation (mirrors KycPage validateStep).
+  const name      = String(body.name || '').trim();
+  const phone     = String(body.phone || '').trim();
+  const idNumber  = String(body.id_number || '').trim();
+  const address   = String(body.address || '').trim();
+  const idDoc     = body.id_document_url != null ? String(body.id_document_url) : null;
+  const addrDoc   = body.address_document_url != null ? String(body.address_document_url) : null;
+
+  if (name.length < 2 || name.length > 100) {
+    return c.json({ error: 'Name must be 2-100 characters' }, 400);
+  }
+  if (phone.length < 7 || phone.length > 30) {
+    return c.json({ error: 'Phone must be 7-30 characters' }, 400);
+  }
+  if (idNumber.length < 4 || idNumber.length > 50) {
+    return c.json({ error: 'ID number must be 4-50 characters' }, 400);
+  }
+  if (address.length < 5 || address.length > 500) {
+    return c.json({ error: 'Address must be 5-500 characters' }, 400);
+  }
+  // Document URLs are optional today (R2 wiring pending). If supplied,
+  // cap their length to avoid storing arbitrary blobs in the users row.
+  if (idDoc && idDoc.length > 2048) {
+    return c.json({ error: 'id_document_url too long (max 2048 chars)' }, 400);
+  }
+  if (addrDoc && addrDoc.length > 2048) {
+    return c.json({ error: 'address_document_url too long (max 2048 chars)' }, 400);
+  }
+
+  await c.env.DB.prepare(
+    `UPDATE users
+        SET kyc_status = 'pending',
+            kyc_name = ?,
+            kyc_phone = ?,
+            kyc_id_number = ?,
+            kyc_address = ?,
+            kyc_id_document_url = ?,
+            kyc_address_document_url = ?,
+            kyc_submitted_at = CURRENT_TIMESTAMP,
+            kyc_reviewed_at = NULL,
+            updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?`
+  ).bind(name, phone, idNumber, address, idDoc, addrDoc, user.id).run();
+
+  return c.json({
+    ok: true,
+    message: 'KYC submitted — awaiting admin review',
+    kyc_status: 'pending',
+  });
+});
+
 // PATCH /api/profile - update nickname / avatar
 app.patch('/', authMiddleware, async (c) => {
   const user = c.get('user');

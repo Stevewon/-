@@ -1210,13 +1210,64 @@ app.post('/reset-password', async (c) => {
   return c.json({ ok: true, message: 'Password reset successful' });
 });
 
-// KYC
+// ============================================================================
+// KYC (legacy path) — DEPRECATED, kept for backward compatibility.
+// New code path: POST /api/profile/kyc (see src/server/routes/profile.ts).
+// This handler now applies the same validation + status gate as the new one
+// so legacy clients can't bypass safety checks. New clients should use the
+// /profile/kyc endpoint which returns more detail.
+// ============================================================================
 app.post('/kyc', authMiddleware, async (c) => {
   const u = c.get('user');
-  const { name, phone, id_number } = await c.req.json();
-  await c.env.DB.prepare('UPDATE users SET kyc_status = ?, kyc_name = ?, kyc_phone = ?, kyc_id_number = ? WHERE id = ?')
-    .bind('pending', name, phone, id_number, u.id).run();
-  return c.json({ message: 'KYC submitted' });
+  const body = await c.req.json().catch(() => ({} as any));
+
+  // Status gate — block re-submission on pending / approved.
+  const cur = await c.env.DB.prepare(
+    'SELECT kyc_status FROM users WHERE id = ?'
+  ).bind(u.id).first<{ kyc_status: string | null }>();
+  const status = (cur?.kyc_status || 'none').toLowerCase();
+  if (status === 'pending' || status === 'approved') {
+    return c.json(
+      {
+        error: status === 'pending'
+          ? 'KYC already under review'
+          : 'KYC already approved',
+        code: status === 'pending' ? 'KYC_PENDING' : 'KYC_ALREADY_APPROVED',
+      },
+      400,
+    );
+  }
+
+  const name      = String(body.name || '').trim();
+  const phone     = String(body.phone || '').trim();
+  const idNumber  = String(body.id_number || '').trim();
+  const address   = String(body.address || '').trim();
+  const idDoc     = body.id_document_url != null ? String(body.id_document_url) : null;
+  const addrDoc   = body.address_document_url != null ? String(body.address_document_url) : null;
+
+  if (name.length < 2 || name.length > 100)   return c.json({ error: 'Name must be 2-100 characters' }, 400);
+  if (phone.length < 7 || phone.length > 30)  return c.json({ error: 'Phone must be 7-30 characters' }, 400);
+  if (idNumber.length < 4 || idNumber.length > 50) return c.json({ error: 'ID number must be 4-50 characters' }, 400);
+  if (address && (address.length < 5 || address.length > 500)) {
+    return c.json({ error: 'Address must be 5-500 characters' }, 400);
+  }
+  if (idDoc && idDoc.length > 2048)   return c.json({ error: 'id_document_url too long' }, 400);
+  if (addrDoc && addrDoc.length > 2048) return c.json({ error: 'address_document_url too long' }, 400);
+
+  await c.env.DB.prepare(
+    `UPDATE users
+        SET kyc_status = 'pending',
+            kyc_name = ?, kyc_phone = ?, kyc_id_number = ?,
+            kyc_address = ?,
+            kyc_id_document_url = ?,
+            kyc_address_document_url = ?,
+            kyc_submitted_at = CURRENT_TIMESTAMP,
+            kyc_reviewed_at = NULL,
+            updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?`
+  ).bind(name, phone, idNumber, address || null, idDoc, addrDoc, u.id).run();
+
+  return c.json({ ok: true, message: 'KYC submitted', kyc_status: 'pending' });
 });
 
 export default app;
