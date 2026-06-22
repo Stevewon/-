@@ -1,6 +1,7 @@
-import { useState } from 'react';
-import { Bell, ChevronRight, Pin, Calendar, Tag, ArrowLeft, Search } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Bell, ChevronRight, Pin, Calendar, ArrowLeft, Search, Loader2 } from 'lucide-react';
 import { useI18n } from '../i18n';
+import api from '../utils/api';
 
 interface Notice {
   id: number;
@@ -11,7 +12,22 @@ interface Notice {
   content: string;
 }
 
-const NOTICES_KO: Notice[] = [
+// Raw row shape returned by GET /api/notices.
+interface NoticeRow {
+  id: number;
+  type: 'notice' | 'event' | 'maintenance' | 'listing';
+  title_ko: string;
+  title_en: string;
+  content_ko: string;
+  content_en: string;
+  pinned: number;
+  created_at: string;
+}
+
+// Fallback notices — used only if the API call fails (e.g., cold start before
+// the bootstrap finishes seeding the table). Kept in sync with migration 0033
+// seed data so the UI degrades gracefully instead of showing an empty page.
+const FALLBACK_NOTICES_KO: Notice[] = [
   {
     id: 1, type: 'notice', title: 'QuantaEX 글로벌 거래소 그랜드 오픈 안내', date: '2026-04-20', pinned: true,
     content: 'QuantaEX가 글로벌 디지털 자산 거래소로 정식 오픈되었습니다. BTC, ETH, QTA 등 13종의 암호화폐를 USDT 및 USDC 마켓에서 거래하실 수 있습니다. 회원가입 시 100 QX 웰컬 보너스(이메일 인증 후 잠금 해제)가 지급됩니다. 많은 이용 부탁드립니다.',
@@ -38,7 +54,7 @@ const NOTICES_KO: Notice[] = [
   },
 ];
 
-const NOTICES_EN: Notice[] = [
+const FALLBACK_NOTICES_EN: Notice[] = [
   {
     id: 1, type: 'notice', title: 'QuantaEX Global Exchange Grand Opening', date: '2026-04-20', pinned: true,
     content: 'QuantaEX is now officially open as a global digital-asset exchange. You can trade 13 cryptocurrencies including BTC, ETH, and QTA against USDT and USDC. Sign up to receive a 100 QX welcome bonus, unlocked after email verification. We look forward to your participation.',
@@ -80,8 +96,48 @@ export default function NoticePage() {
   const [selectedNotice, setSelectedNotice] = useState<Notice | null>(null);
   const [filter, setFilter] = useState<string>('all');
   const [search, setSearch] = useState('');
+  const [rows, setRows] = useState<NoticeRow[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
 
-  const NOTICES = isKo ? NOTICES_KO : NOTICES_EN;
+  // Fetch notices from the public API. Falls back to the hard-coded list
+  // if the API is unavailable (cold start, network failure, etc.).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api.get<{ notices: NoticeRow[] }>('/notices?limit=200');
+        if (cancelled) return;
+        setRows(Array.isArray(res.data?.notices) ? res.data.notices : []);
+      } catch {
+        if (!cancelled) setLoadError(true);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Map DB rows to the legacy { title, content, date, pinned, type } shape so
+  // the rest of the JSX doesn't need to change.
+  const NOTICES: Notice[] = (() => {
+    if (rows && rows.length > 0) {
+      return rows.map((r) => ({
+        id: r.id,
+        type: r.type,
+        title: isKo ? r.title_ko : r.title_en,
+        content: isKo ? r.content_ko : r.content_en,
+        date: (r.created_at || '').slice(0, 10),
+        pinned: r.pinned === 1,
+      }));
+    }
+    // Fallback only when the API failed AND the DB is empty (which is what
+    // we'd see during a cold start before the bootstrap finishes seeding).
+    if (loadError || (rows && rows.length === 0)) {
+      return isKo ? FALLBACK_NOTICES_KO : FALLBACK_NOTICES_EN;
+    }
+    return [];
+  })();
 
   const filtered = NOTICES
     .filter(n => filter === 'all' || n.type === filter)
@@ -181,7 +237,12 @@ export default function NoticePage() {
         ) : (
           /* Notice List */
           <div className="card overflow-hidden divide-y divide-exchange-border/40">
-            {filtered.length === 0 ? (
+            {loading ? (
+              <div className="p-12 text-center text-exchange-text-third">
+                <Loader2 size={28} className="mx-auto mb-3 animate-spin opacity-50" />
+                <p className="text-sm">{t('common.loading')}</p>
+              </div>
+            ) : filtered.length === 0 ? (
               <div className="p-12 text-center text-exchange-text-third">
                 <Bell size={32} className="mx-auto mb-3 opacity-30" />
                 <p>{t('market.noResults')}</p>

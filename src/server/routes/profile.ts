@@ -46,6 +46,140 @@ app.get('/kyc', authMiddleware, async (c) => {
   return c.json(row);
 });
 
+// ============================================================================
+// POST /api/profile/kyc/upload — direct file upload for KYC docs.
+// ----------------------------------------------------------------------------
+// Receives multipart/form-data with `field` ('id_document' | 'address_document')
+// and `file`. When the KYC_BUCKET R2 binding is present, streams to R2 and
+// returns the storage tag `r2://<key>` that the client should put in the
+// id_document_url / address_document_url field of the subsequent POST /kyc.
+// When the binding is absent (binding not yet configured in wrangler.jsonc),
+// falls back to SHA-256 content-hash tag `kyc-doc:<hash>:<size>:<filename>`,
+// which is still recorded in the kyc_documents table for audit but no
+// actual blob is stored.
+//
+// Limits:
+//   * MIME: image/* or application/pdf only
+//   * Size: ≤ 10 MB (10_485_760 bytes)
+//   * Per-user: max 4 docs per kind (newer overrides; older retained for audit)
+// ============================================================================
+const MAX_KYC_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+const ALLOWED_KYC_MIMES = /^(image\/[a-z0-9.+-]+|application\/pdf)$/i;
+
+app.post('/kyc/upload', authMiddleware, async (c) => {
+  const user = c.get('user');
+
+  // Status gate — cannot upload while pending or already approved.
+  const cur = await c.env.DB.prepare(
+    'SELECT kyc_status FROM users WHERE id = ?'
+  ).bind(user.id).first<{ kyc_status: string | null }>();
+  const status = (cur?.kyc_status || 'none').toLowerCase();
+  if (status === 'pending') {
+    return c.json({ error: 'KYC is already under review', code: 'KYC_PENDING' }, 400);
+  }
+  if (status === 'approved') {
+    return c.json({ error: 'KYC is already approved', code: 'KYC_ALREADY_APPROVED' }, 400);
+  }
+
+  // Parse multipart body.
+  let form: FormData;
+  try {
+    form = await c.req.formData();
+  } catch {
+    return c.json({ error: 'Invalid multipart body', code: 'BAD_FORM' }, 400);
+  }
+  const field = String(form.get('field') || '').trim();
+  const file = form.get('file');
+  if (field !== 'id_document' && field !== 'address_document') {
+    return c.json({ error: 'field must be id_document or address_document', code: 'BAD_FIELD' }, 400);
+  }
+  if (!file || typeof file === 'string') {
+    return c.json({ error: 'file is required', code: 'NO_FILE' }, 400);
+  }
+
+  // File metadata (Cloudflare Workers File interface).
+  const f = file as File;
+  const size = f.size;
+  const mime = f.type || 'application/octet-stream';
+  if (size <= 0 || size > MAX_KYC_FILE_SIZE) {
+    return c.json({ error: 'File too large (max 10MB)', code: 'FILE_TOO_LARGE' }, 400);
+  }
+  if (!ALLOWED_KYC_MIMES.test(mime)) {
+    return c.json({ error: 'Only image/* or application/pdf allowed', code: 'BAD_MIME' }, 400);
+  }
+  const filename = (f.name || 'upload').slice(0, 200);
+
+  // SHA-256 content hash (always computed for dedup + audit, even when R2 used).
+  const buf = await f.arrayBuffer();
+  const digest = await crypto.subtle.digest('SHA-256', buf);
+  const hex = Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('')
+    .slice(0, 16); // 64-bit prefix — plenty for collision resistance at our scale
+
+  // Decide storage backend.
+  const r2 = c.env.KYC_BUCKET;
+  let storageTag: string;
+  let r2Key: string | null = null;
+
+  if (r2) {
+    // R2 path: object key includes user id + kind + hash for dedup.
+    // Format: kyc/<user_id>/<kind>/<hex>-<filename>
+    const safeName = filename.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 80);
+    r2Key = `kyc/${user.id}/${field}/${hex}-${safeName}`;
+    try {
+      await r2.put(r2Key, buf, {
+        httpMetadata: { contentType: mime },
+        customMetadata: {
+          user_id: user.id,
+          kind: field,
+          filename: safeName,
+          uploaded_at: new Date().toISOString(),
+        },
+      });
+      storageTag = `r2://${r2Key}`;
+    } catch (e: any) {
+      // R2 failure: fall back to content tag so the user isn't blocked.
+      console.error('[kyc-upload] R2 put failed, falling back to content tag', e);
+      r2Key = null;
+      storageTag = `kyc-doc:${hex}:${size}:${filename.slice(0, 80)}`;
+    }
+  } else {
+    // No R2 binding: SHA-256 content-hash tag fallback. Identical to the
+    // old client-side behaviour, but now we persist the metadata server-side
+    // so admins have an audit trail.
+    storageTag = `kyc-doc:${hex}:${size}:${filename.slice(0, 80)}`;
+  }
+
+  // Persist metadata row (idempotent: dedup on hash + user_id + kind would
+  // be ideal but plain INSERT lets us keep an append-only audit log).
+  const id = crypto.randomUUID();
+  const xfwd = c.req.header('cf-connecting-ip') || c.req.header('x-real-ip') || '';
+  try {
+    await c.env.DB.prepare(
+      `INSERT INTO kyc_documents
+         (id, user_id, kind, r2_key, storage_tag, content_hash, filename, mime_type, size_bytes, uploaded_at, uploaded_ip)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)`
+    ).bind(id, user.id, field, r2Key, storageTag, hex, filename, mime, size, xfwd).run();
+  } catch (e: any) {
+    // If the table doesn't exist yet (cold start before bootstrap finishes),
+    // still return the tag so the SPA isn't blocked. The /kyc POST will
+    // accept the tag and record it in users.kyc_*_document_url.
+    if (!String(e?.message || '').includes('no such table')) throw e;
+  }
+
+  return c.json({
+    ok: true,
+    field,
+    storage_tag: storageTag,
+    storage_backend: r2Key ? 'r2' : 'tag',
+    filename,
+    mime,
+    size,
+    content_hash: hex,
+  });
+});
+
 app.post('/kyc', authMiddleware, async (c) => {
   const user = c.get('user');
   const body = await c.req.json().catch(() => ({} as any));

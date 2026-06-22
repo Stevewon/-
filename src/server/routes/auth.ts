@@ -238,6 +238,11 @@ app.post('/register', rlRegister, async (c) => {
   const password = (body.password || '').toString();
   const nickname = (body.nickname || '').toString().trim();
   const refCode = body.ref_code ? String(body.ref_code).trim().toUpperCase() : null;
+  // 2026-06-22: Age gate (18+). Frontend sends date_of_birth as ISO
+  // YYYY-MM-DD. Required for new accounts; this is the legal floor per
+  // the Terms of Service Article 4 (18+ to register on QuantaEX Holdings
+  // Ltd., a Seychelles IBC).
+  const dateOfBirth = body.date_of_birth ? String(body.date_of_birth).trim() : null;
   // agree_marketing accepted for future use; currently logged only.
   // const agreeMarketing = !!body.agree_marketing;
 
@@ -248,6 +253,36 @@ app.post('/register', rlRegister, async (c) => {
   if (password.length < 8) return c.json({ error: 'Password must be at least 8 characters' }, 400);
   if (!/[A-Za-z]/.test(password) || !/[0-9]/.test(password)) {
     return c.json({ error: 'Password must contain both letters and numbers' }, 400);
+  }
+
+  // ---- Age gate (18+) ----
+  // Strict ISO date validation + age calculation. We compute age based on
+  // calendar logic, not a 365.25-day approximation, so leap-year babies
+  // born exactly 18 years ago today qualify.
+  if (!dateOfBirth) {
+    return c.json({ error: 'Date of birth is required', code: 'DOB_REQUIRED' }, 400);
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateOfBirth)) {
+    return c.json({ error: 'Invalid date of birth format (use YYYY-MM-DD)', code: 'DOB_INVALID_FORMAT' }, 400);
+  }
+  const dob = new Date(dateOfBirth + 'T00:00:00Z');
+  if (isNaN(dob.getTime())) {
+    return c.json({ error: 'Invalid date of birth', code: 'DOB_INVALID' }, 400);
+  }
+  const now = new Date();
+  // Reject obviously bogus dates (future or before 1900).
+  if (dob.getTime() > now.getTime()) {
+    return c.json({ error: 'Date of birth cannot be in the future', code: 'DOB_FUTURE' }, 400);
+  }
+  if (dob.getUTCFullYear() < 1900) {
+    return c.json({ error: 'Invalid date of birth', code: 'DOB_INVALID' }, 400);
+  }
+  // Compute age in completed years (UTC, calendar-based).
+  let age = now.getUTCFullYear() - dob.getUTCFullYear();
+  const m = now.getUTCMonth() - dob.getUTCMonth();
+  if (m < 0 || (m === 0 && now.getUTCDate() < dob.getUTCDate())) age--;
+  if (age < 18) {
+    return c.json({ error: 'You must be at least 18 years old to register', code: 'AGE_UNDER_18' }, 403);
   }
 
   const existing = await c.env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first();
@@ -272,8 +307,8 @@ app.post('/register', rlRegister, async (c) => {
   const id = uuid();
   const hashedPw = bcrypt.hashSync(password, 10);
 
-  await c.env.DB.prepare('INSERT INTO users (id, email, password, nickname) VALUES (?,?,?,?)')
-    .bind(id, email, hashedPw, nickname).run();
+  await c.env.DB.prepare('INSERT INTO users (id, email, password, nickname, date_of_birth) VALUES (?,?,?,?,?)')
+    .bind(id, email, hashedPw, nickname, dateOfBirth).run();
 
   // Allocate a unique referral code for the new user (so they can refer
   // others immediately).

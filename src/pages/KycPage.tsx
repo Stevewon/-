@@ -95,18 +95,17 @@ export default function KycPage() {
     }
   };
 
-  // Real file upload — reads the user's image, downsizes it client-side to
-  // ≤1024px on the long edge, JPEG-compresses to ~75% quality, and stores
-  // the resulting base64 data URL in form state. The server caps each URL
-  // at 2048 chars right now (data URLs are larger than that for any real
-  // photo) — TODO: wire up POST /api/profile/kyc-upload backed by R2 for
-  // the real binary. For now we keep just the metadata and short tag so
-  // the admin reviewer at least sees the user *did* upload something.
+  // Real file upload — streams the file to POST /api/profile/kyc/upload as
+  // multipart/form-data. The server stores the blob in R2 (when the
+  // KYC_BUCKET binding is configured) and returns a storage tag like
+  //   'r2://kyc/<user_id>/<kind>/<hash>-<filename>'    (R2 backed)
+  //   'kyc-doc:<sha256-prefix>:<size>:<filename>'      (fallback)
+  // We put that tag into form state so the subsequent POST /api/profile/kyc
+  // records it in users.kyc_*_document_url for the reviewer.
   //
-  // Until R2 is in place, we store a short tag like
-  //   "kyc-doc:<sha256-prefix>:<size>:<filename>"
-  // which fits in 2048 chars and is auditable. The actual binary can be
-  // re-collected via support if needed.
+  // Limits enforced both client-side (UX) and server-side (security):
+  //   * 10 MB max
+  //   * image/* or application/pdf only
   const handleFileSelect = async (
     field: 'id_document_url' | 'address_document_url',
     file: File | null,
@@ -116,21 +115,31 @@ export default function KycPage() {
       showToast('error', t('kyc.invalidFile') || 'Invalid file', t('kyc.imageOrPdfOnly') || 'Image or PDF only');
       return;
     }
-    if (file.size > 8 * 1024 * 1024) {
-      showToast('error', t('kyc.fileTooLarge') || 'File too large', '8MB max');
+    if (file.size > 10 * 1024 * 1024) {
+      showToast('error', t('kyc.fileTooLarge') || 'File too large', '10MB max');
       return;
     }
     try {
-      // Compute SHA-256 prefix as a content tag.
-      const buf = await file.arrayBuffer();
-      const hash = await crypto.subtle.digest('SHA-256', buf);
-      const hex = Array.from(new Uint8Array(hash)).slice(0, 8)
-        .map(b => b.toString(16).padStart(2, '0')).join('');
-      const tag = `kyc-doc:${hex}:${file.size}:${file.name.slice(0, 80)}`;
+      // Map UI field name -> server kind.
+      const kind = field === 'id_document_url' ? 'id_document' : 'address_document';
+      const fd = new FormData();
+      fd.append('field', kind);
+      fd.append('file', file);
+
+      // Use axios `api` instance so the JWT auth header is attached. Browsers
+      // set the multipart boundary automatically when we pass FormData.
+      const res = await api.post('/profile/kyc/upload', fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        // Allow large files without timeout escalation (default is fine for 10MB).
+      });
+      const tag = res.data?.storage_tag;
+      if (!tag) throw new Error('Server did not return storage_tag');
       setForm(prev => ({ ...prev, [field]: tag }));
-      showToast('success', t('kyc.fileUploaded') || 'Uploaded', file.name);
+      const backend = res.data?.storage_backend === 'r2' ? ' (R2)' : '';
+      showToast('success', t('kyc.fileUploaded') || 'Uploaded', file.name + backend);
     } catch (e: any) {
-      showToast('error', t('kyc.fileUploaded') || 'Upload failed', e?.message || 'unknown');
+      const msg = e?.response?.data?.error || e?.message || 'unknown';
+      showToast('error', t('kyc.fileUploaded') || 'Upload failed', msg);
     }
   };
 

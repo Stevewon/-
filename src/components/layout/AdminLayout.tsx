@@ -13,7 +13,7 @@ import QuantaLogo from '../common/QuantaLogo';
 
 export type AdminTab =
   | 'overview' | 'users' | 'kyc' | 'deposits' | 'withdrawals'
-  | 'trades' | 'coins' | 'broadcast' | 'fees' | 'audit' | 'system'
+  | 'trades' | 'coins' | 'broadcast' | 'notices' | 'fees' | 'audit' | 'system'
   // Sprint 4 Phase C — QTA chain admin
   | 'chainWallets' | 'chainQueue' | 'chainHealth' | 'risk'
   // Sprint 4 Phase G — QTA <-> ETH bridge
@@ -72,6 +72,7 @@ export default function AdminLayout({
         { key: 'trades',    label: t('admin.tradesTab'), icon: BarChart3 },
         { key: 'coins',     label: t('admin.coins'),     icon: Coins },
         { key: 'broadcast', label: t('admin.broadcast'), icon: Megaphone },
+        { key: 'notices',   label: t('admin.notices'),   icon: Bell },
       ],
     },
     {

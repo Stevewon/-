@@ -6,6 +6,7 @@ import orderRoutes from './routes/order';
 import walletRoutes from './routes/wallet';
 import adminRoutes from './routes/admin';
 import notificationRoutes from './routes/notifications';
+import noticeRoutes from './routes/notices';
 import priceAlertRoutes from './routes/priceAlerts';
 import profileRoutes from './routes/profile';
 import chainRoutes from './routes/chain';
@@ -37,6 +38,13 @@ export type Env = {
   ETH_RPC_URL?: string;
   BRIDGE_PRIVATE_KEY?: string;      // bridge custodian wallet (signs mint/burn)
   QQTA_CONTRACT_ADDR?: string;
+  // Sprint 6 Phase A — R2 bucket for KYC documents (optional).
+  // When this binding is present, KYC document uploads stream to R2 and the
+  // returned key is stored in kyc_documents.r2_key. When absent, the code
+  // falls back to SHA-256 content-hash tags (no actual storage). Boss must
+  // add an r2_buckets entry in wrangler.jsonc to enable R2 storage:
+  //   "r2_buckets": [{ "binding": "KYC_BUCKET", "bucket_name": "quantaex-kyc" }]
+  KYC_BUCKET?: R2Bucket;
 };
 
 export type AppVars = {
@@ -114,6 +122,20 @@ let referralRate20260514BootstrapDone = false;
 //   3) Stamp marker company_issued_lock_2026_06_22 = migrated_v1 so steady-
 //      state cost is one SELECT.
 let companyIssuedLockBootstrapDone = false;
+// 2026-06-22: Boss-ordered post-launch quality items:
+//   (a) Age gate (18+) — adds users.date_of_birth; new registrations must
+//       supply it, existing users get NULL and can fill in later.
+//   (b) DB-managed notices — drops the hard-coded NOTICES_KO/NOTICES_EN
+//       array in NoticePage.tsx in favour of `notices` table that admins
+//       can CRUD via the AdminPage > Notices tab. Seeded with the 6
+//       legacy notices so users see the same content.
+//   (c) KYC document registry — `kyc_documents` table tracks R2 object
+//       keys (when R2 binding is present) or SHA-256 content tags
+//       (fallback). Replaces single TEXT columns kyc_id_document_url /
+//       kyc_address_document_url with a full audit trail (filename,
+//       mime, size, uploader IP, timestamp).
+// Same self-apply pattern as 0028/0029/0030/0031/0032.
+let ageGateNoticesKycDocsBootstrapDone = false;
 
 app.use('/api/*', async (c, next) => {
   // Fast path: skip the DB lookup on every request by using an in-memory
@@ -825,6 +847,168 @@ app.use('/api/*', async (c, next) => {
     }
   }
 
+  // ------------------------------------------------------------------
+  // Self-bootstrap for migration 0033 — age gate + notices + KYC doc registry.
+  // Adds:
+  //   (a) users.date_of_birth TEXT (ISO YYYY-MM-DD) — required at signup
+  //   (b) notices table + 6-row seed
+  //   (c) kyc_documents table for R2 / SHA-256 tag dual-mode tracking
+  // ------------------------------------------------------------------
+  if (!ageGateNoticesKycDocsBootstrapDone) {
+    const ctx = c.executionCtx as any;
+    if (ctx && typeof ctx.waitUntil === 'function') {
+      ctx.waitUntil(
+        (async () => {
+          try {
+            const marker = await c.env.DB.prepare(
+              "SELECT value FROM system_markers WHERE key = 'age_gate_notices_kyc_docs_2026_06_22'"
+            ).first<{ value: string }>();
+            if (marker && marker.value === 'migrated_v1') {
+              ageGateNoticesKycDocsBootstrapDone = true;
+              return;
+            }
+
+            // (a) users.date_of_birth — SQLite ALTER TABLE has no IF NOT EXISTS.
+            try {
+              await c.env.DB.prepare(
+                `ALTER TABLE users ADD COLUMN date_of_birth TEXT`
+              ).run();
+              console.log('[bootstrap] users.date_of_birth column added');
+            } catch (_e) { /* already exists */ }
+
+            // (b) notices table.
+            try {
+              await c.env.DB.prepare(
+                `CREATE TABLE IF NOT EXISTS notices (
+                  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                  type         TEXT    NOT NULL DEFAULT 'notice',
+                  title_ko     TEXT    NOT NULL,
+                  title_en     TEXT    NOT NULL,
+                  content_ko   TEXT    NOT NULL,
+                  content_en   TEXT    NOT NULL,
+                  pinned       INTEGER NOT NULL DEFAULT 0,
+                  published    INTEGER NOT NULL DEFAULT 1,
+                  created_at   TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  updated_at   TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  created_by   TEXT,
+                  CHECK (type IN ('notice','event','maintenance','listing'))
+                )`
+              ).run();
+            } catch (_e) { /* ignore */ }
+            try {
+              await c.env.DB.prepare(
+                `CREATE INDEX IF NOT EXISTS idx_notices_published_pinned
+                   ON notices(published, pinned DESC, created_at DESC)`
+              ).run();
+            } catch (_e) { /* ignore */ }
+
+            // Seed only if empty.
+            const existing = await c.env.DB.prepare('SELECT COUNT(*) AS n FROM notices').first<{ n: number }>();
+            if (!existing || (existing.n || 0) === 0) {
+              const seeds = [
+                {
+                  id: 1, type: 'notice', pinned: 1, created_at: '2026-04-20 00:00:00',
+                  title_ko: 'QuantaEX 글로벌 거래소 그랜드 오픈 안내',
+                  title_en: 'QuantaEX Global Exchange Grand Opening',
+                  content_ko: 'QuantaEX가 글로벌 디지털 자산 거래소로 정식 오픈되었습니다. BTC, ETH, QTA 등 13종의 암호화폐를 USDT 및 USDC 마켓에서 거래하실 수 있습니다. 회원가입 시 100 QX 웰컴 보너스(이메일 인증 후 잠금 해제)가 지급됩니다. 많은 이용 부탁드립니다.',
+                  content_en: 'QuantaEX is now officially open as a global digital-asset exchange. You can trade 13 cryptocurrencies including BTC, ETH, and QTA against USDT and USDC. Sign up to receive a 100 QX welcome bonus, unlocked after email verification. We look forward to your participation.',
+                },
+                {
+                  id: 2, type: 'listing', pinned: 1, created_at: '2026-04-20 00:00:00',
+                  title_ko: '[신규 상장] QTA (Quanta Token) 상장 안내',
+                  title_en: '[New Listing] QTA (Quanta Token) Listed',
+                  content_ko: 'QTA (Quanta Token)이 QuantaEX 거래소에 신규 상장되었습니다.\n\n■ 상장일시: 2026년 4월 20일 (일) 00:00 UTC\n■ 거래쌍: QTA/USDT, QTA/USDC\n■ 입출금: 즉시 가능\n\n상장 기념 이벤트로 QTA 거래 수수료 50% 할인이 진행됩니다.',
+                  content_en: 'QTA (Quanta Token) has been listed on QuantaEX.\n\n■ Listing Date: April 20, 2026 (Sun) 00:00 UTC\n■ Trading Pairs: QTA/USDT, QTA/USDC\n■ Deposits/Withdrawals: Available immediately\n\nTo celebrate the listing, QTA trading fees are discounted by 50%.',
+                },
+                {
+                  id: 3, type: 'event', pinned: 0, created_at: '2026-04-20 00:00:00',
+                  title_ko: '[이벤트] 회원가입 웰컴 보너스 이벤트',
+                  title_en: '[Event] Welcome Bonus Giveaway',
+                  content_ko: '신규 회원가입 시 다음 보너스를 지급합니다:\n\n• 100 QX (이메일 인증 후 잠금 해제)\n\n※ QX는 회사가 지급하는 프로모션 자산으로 거래소 내에서 거래 및 수수료 할인에 사용될 수 있으며, 외부 출금은 제한됩니다.\n\n이벤트 기간: 2026년 4월 20일 ~ 별도 공지 시까지\n\nKYC 인증 완료 회원에게는 추가 거래 수수료 할인이 적용됩니다.',
+                  content_en: 'New members will receive the following welcome bonus upon registration:\n\n• 100 QX (unlocked after email verification)\n\n※ QX is a promotional asset issued by the Company. It can be used for trading and fee discounts within the exchange but is restricted from external withdrawals.\n\nEvent period: April 20, 2026 ~ until further notice\n\nKYC-verified members are eligible for additional trading-fee discounts.',
+                },
+                {
+                  id: 4, type: 'notice', pinned: 0, created_at: '2026-04-19 00:00:00',
+                  title_ko: 'KYC 인증 절차 안내',
+                  title_en: 'KYC Verification Process Guide',
+                  content_ko: '원활한 거래를 위해 KYC 인증을 완료해 주시기 바랍니다.\n\n■ 인증 방법: 마이페이지 > 보안설정 > KYC 인증\n■ 필요 서류: 성명, 연락처, 신분증 번호\n■ 처리 기간: 신청 후 최대 24시간 이내\n\nKYC 미인증 시 출금이 제한될 수 있습니다.',
+                  content_en: 'Please complete your KYC verification for uninterrupted trading.\n\n■ How to verify: My Page > Security Settings > KYC Verification\n■ Required documents: Full name, phone number, ID number\n■ Processing time: Within 24 hours of submission\n\nWithdrawals may be restricted without KYC verification.',
+                },
+                {
+                  id: 5, type: 'maintenance', pinned: 0, created_at: '2026-04-18 00:00:00',
+                  title_ko: '[점검 완료] 서버 정기 점검 안내',
+                  title_en: '[Completed] Scheduled Server Maintenance',
+                  content_ko: '서버 정기 점검이 완료되었습니다.\n\n■ 점검일시: 2026년 4월 18일 02:00 ~ 04:00 (KST)\n■ 영향 범위: 전 서비스 일시 중단\n■ 현재 상태: 정상 운영 중\n\n이용에 불편을 드려 죄송합니다.',
+                  content_en: 'Scheduled server maintenance has been completed.\n\n■ Maintenance window: April 18, 2026, 02:00 ~ 04:00 (KST)\n■ Scope: Temporary suspension of all services\n■ Current status: Normal operation\n\nWe apologize for any inconvenience.',
+                },
+                {
+                  id: 6, type: 'notice', pinned: 0, created_at: '2026-04-17 00:00:00',
+                  title_ko: '이상 거래 탐지 시스템 업데이트 안내',
+                  title_en: 'Anomaly Detection System Update',
+                  content_ko: '고객 자산 보호를 위해 이상 거래 탐지 시스템이 업데이트되었습니다.\n\n주요 변경사항:\n• 비정상 대량 주문 자동 차단\n• IP 기반 접속 제한 강화\n• 출금 시 추가 인증 절차 도입',
+                  content_en: 'The anomaly detection system has been updated to better protect customer assets.\n\nKey changes:\n• Automatic blocking of abnormal large orders\n• Enhanced IP-based access restrictions\n• Additional verification steps for withdrawals',
+                },
+              ];
+              for (const s of seeds) {
+                try {
+                  await c.env.DB.prepare(
+                    `INSERT INTO notices (id, type, title_ko, title_en, content_ko, content_en, pinned, published, created_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`
+                  ).bind(s.id, s.type, s.title_ko, s.title_en, s.content_ko, s.content_en, s.pinned, s.created_at).run();
+                } catch (_e) { /* ignore duplicate */ }
+              }
+              console.log('[bootstrap] notices seeded (6 rows)');
+            }
+
+            // (c) kyc_documents table.
+            try {
+              await c.env.DB.prepare(
+                `CREATE TABLE IF NOT EXISTS kyc_documents (
+                  id           TEXT    PRIMARY KEY,
+                  user_id      TEXT    NOT NULL,
+                  kind         TEXT    NOT NULL,
+                  r2_key       TEXT,
+                  storage_tag  TEXT    NOT NULL,
+                  content_hash TEXT    NOT NULL,
+                  filename     TEXT    NOT NULL,
+                  mime_type    TEXT    NOT NULL,
+                  size_bytes   INTEGER NOT NULL,
+                  uploaded_at  TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  uploaded_ip  TEXT,
+                  CHECK (kind IN ('id_document','address_document'))
+                )`
+              ).run();
+            } catch (_e) { /* ignore */ }
+            try {
+              await c.env.DB.prepare(
+                `CREATE INDEX IF NOT EXISTS idx_kyc_docs_user_kind
+                   ON kyc_documents(user_id, kind, uploaded_at DESC)`
+              ).run();
+            } catch (_e) { /* ignore */ }
+            try {
+              await c.env.DB.prepare(
+                `CREATE INDEX IF NOT EXISTS idx_kyc_docs_hash
+                   ON kyc_documents(content_hash)`
+              ).run();
+            } catch (_e) { /* ignore */ }
+
+            // Stamp marker.
+            await c.env.DB.prepare(
+              `INSERT INTO system_markers (key, value, updated_at)
+               VALUES ('age_gate_notices_kyc_docs_2026_06_22', 'migrated_v1', CURRENT_TIMESTAMP)
+               ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP`
+            ).run();
+
+            ageGateNoticesKycDocsBootstrapDone = true;
+            console.log('[bootstrap] Age gate + notices + KYC docs (0033) applied to production D1');
+          } catch (e) {
+            captureError(c as any, e, { where: 'age-gate-notices-kyc-docs-bootstrap' });
+          }
+        })()
+      );
+    }
+  }
+
   await next();
 });
 
@@ -835,6 +1019,8 @@ app.route('/api/orders', orderRoutes);
 app.route('/api/wallet', walletRoutes);
 app.route('/api/admin', adminRoutes);
 app.route('/api/notifications', notificationRoutes);
+// Public notice board (read-only). Admin CRUD lives in /api/admin/notices.
+app.route('/api/notices', noticeRoutes);
 app.route('/api/price-alerts', priceAlertRoutes);
 app.route('/api/profile', profileRoutes);
 app.route('/api/chain', chainRoutes);

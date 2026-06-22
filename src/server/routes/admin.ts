@@ -1429,4 +1429,128 @@ app.post('/external-trading-api/toggle', async (c) => {
   return c.json({ ok: true, enabled: desired === 'on' });
 });
 
+// ============================================================================
+// Sprint 6 Phase A — Notice board CRUD (admin only)
+// ----------------------------------------------------------------------------
+// The public read API lives in /api/notices. Admin operations (create, edit,
+// delete, pin) live here so they inherit the admin gate set up at the top of
+// this file.
+// ============================================================================
+
+const NOTICE_TYPES = ['notice', 'event', 'maintenance', 'listing'] as const;
+
+function validateNoticeBody(body: any): { ok: true; data: any } | { ok: false; error: string } {
+  const type = String(body.type || '').trim();
+  if (!NOTICE_TYPES.includes(type as any)) {
+    return { ok: false, error: `type must be one of: ${NOTICE_TYPES.join(', ')}` };
+  }
+  const title_ko = String(body.title_ko || '').trim();
+  const title_en = String(body.title_en || '').trim();
+  const content_ko = String(body.content_ko || '').trim();
+  const content_en = String(body.content_en || '').trim();
+  if (!title_ko || title_ko.length > 200) return { ok: false, error: 'title_ko required, max 200 chars' };
+  if (!title_en || title_en.length > 200) return { ok: false, error: 'title_en required, max 200 chars' };
+  if (!content_ko || content_ko.length > 20000) return { ok: false, error: 'content_ko required, max 20000 chars' };
+  if (!content_en || content_en.length > 20000) return { ok: false, error: 'content_en required, max 20000 chars' };
+  const pinned = body.pinned === true || body.pinned === 1 ? 1 : 0;
+  const published = body.published === false || body.published === 0 ? 0 : 1;
+  return { ok: true, data: { type, title_ko, title_en, content_ko, content_en, pinned, published } };
+}
+
+// GET /api/admin/notices — admin list (includes unpublished)
+app.get('/notices', async (c) => {
+  const includeDeleted = c.req.query('include_deleted') === 'true';
+  let query =
+    `SELECT id, type, title_ko, title_en, content_ko, content_en,
+            pinned, published, created_at, updated_at, created_by
+       FROM notices`;
+  if (!includeDeleted) query += ' WHERE published = 1';
+  query += ' ORDER BY pinned DESC, created_at DESC LIMIT 500';
+  const res = await c.env.DB.prepare(query).all<any>();
+  return c.json({ notices: res.results || [] });
+});
+
+// POST /api/admin/notices — create
+app.post('/notices', async (c) => {
+  const me = c.get('user');
+  const body = await c.req.json().catch(() => ({}));
+  const v = validateNoticeBody(body);
+  if (!v.ok) return c.json({ error: v.error }, 400);
+  const d = v.data;
+  const res = await c.env.DB.prepare(
+    `INSERT INTO notices (type, title_ko, title_en, content_ko, content_en, pinned, published, created_at, updated_at, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?)`
+  ).bind(d.type, d.title_ko, d.title_en, d.content_ko, d.content_en, d.pinned, d.published, me.id).run();
+  const newId = (res as any)?.meta?.last_row_id ?? null;
+  // Audit
+  try {
+    await c.env.DB.prepare(
+      `INSERT INTO admin_audit_logs (id, admin_user_id, admin_email, action, target, details, created_at)
+       VALUES (?, ?, ?, 'notice_create', ?, ?, datetime('now'))`
+    ).bind(
+      crypto.randomUUID(), me.id, me.email || '',
+      `notices/${newId}`,
+      JSON.stringify({ type: d.type, title_ko: d.title_ko.slice(0, 80) }),
+    ).run();
+  } catch { /* audit best-effort */ }
+  return c.json({ ok: true, id: newId });
+});
+
+// PUT /api/admin/notices/:id — update
+app.put('/notices/:id', async (c) => {
+  const me = c.get('user');
+  const id = parseInt(c.req.param('id'), 10);
+  if (isNaN(id) || id < 1) return c.json({ error: 'Invalid id' }, 400);
+
+  const exist = await c.env.DB.prepare('SELECT id FROM notices WHERE id = ?').bind(id).first();
+  if (!exist) return c.json({ error: 'Notice not found' }, 404);
+
+  const body = await c.req.json().catch(() => ({}));
+  const v = validateNoticeBody(body);
+  if (!v.ok) return c.json({ error: v.error }, 400);
+  const d = v.data;
+
+  await c.env.DB.prepare(
+    `UPDATE notices
+        SET type = ?, title_ko = ?, title_en = ?, content_ko = ?, content_en = ?,
+            pinned = ?, published = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?`
+  ).bind(d.type, d.title_ko, d.title_en, d.content_ko, d.content_en, d.pinned, d.published, id).run();
+
+  try {
+    await c.env.DB.prepare(
+      `INSERT INTO admin_audit_logs (id, admin_user_id, admin_email, action, target, details, created_at)
+       VALUES (?, ?, ?, 'notice_update', ?, ?, datetime('now'))`
+    ).bind(
+      crypto.randomUUID(), me.id, me.email || '',
+      `notices/${id}`,
+      JSON.stringify({ type: d.type, pinned: d.pinned, published: d.published }),
+    ).run();
+  } catch { /* audit best-effort */ }
+
+  return c.json({ ok: true });
+});
+
+// DELETE /api/admin/notices/:id — soft delete (set published = 0)
+app.delete('/notices/:id', async (c) => {
+  const me = c.get('user');
+  const id = parseInt(c.req.param('id'), 10);
+  if (isNaN(id) || id < 1) return c.json({ error: 'Invalid id' }, 400);
+
+  const res = await c.env.DB.prepare(
+    'UPDATE notices SET published = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+  ).bind(id).run();
+  const changed = (res as any)?.meta?.changes ?? 0;
+  if (changed === 0) return c.json({ error: 'Notice not found' }, 404);
+
+  try {
+    await c.env.DB.prepare(
+      `INSERT INTO admin_audit_logs (id, admin_user_id, admin_email, action, target, details, created_at)
+       VALUES (?, ?, ?, 'notice_delete', ?, ?, datetime('now'))`
+    ).bind(crypto.randomUUID(), me.id, me.email || '', `notices/${id}`, '{}').run();
+  } catch { /* audit best-effort */ }
+
+  return c.json({ ok: true });
+});
+
 export default app;

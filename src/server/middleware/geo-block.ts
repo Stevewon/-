@@ -105,6 +105,10 @@ const BYPASS_PATH_PREFIXES = [
   '/api/futures',                   // public futures markets metadata
   '/api/margin',                    // public margin markets metadata
   '/api/price-alerts',              // public price-alert poll endpoint
+  // Sprint 6 Phase A — Public notice board. Users in blocked jurisdictions
+  // (US/CN/JP/etc.) still need to see notices explaining why they're blocked
+  // and what jurisdictions are eligible. No PII, no auth state.
+  '/api/notices',
 ];
 
 /**

@@ -98,6 +98,7 @@ export default function AdminPage() {
       {tab === 'trades'      && <TradesTab t={t} />}
       {tab === 'coins'       && <CoinsTab t={t} />}
       {tab === 'broadcast'   && <BroadcastTab t={t} />}
+      {tab === 'notices'     && <NoticesTab t={t} />}
       {tab === 'fees'        && <FeesTab t={t} />}
       {tab === 'audit'       && <AuditTab t={t} />}
       {tab === 'system'      && <SystemTab t={t} />}
@@ -1182,6 +1183,239 @@ function BroadcastTab({ t }: any) {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// Notices tab — DB-managed notice board CRUD (Sprint 6 Phase A)
+// ----------------------------------------------------------------------------
+// Replaces the hard-coded NOTICES_KO/NOTICES_EN arrays in NoticePage.tsx with
+// /api/notices reads + /api/admin/notices writes. Soft-delete only — rows
+// are flipped to published=0, never physically deleted, for audit purposes.
+// ============================================================================
+function NoticesTab({ t }: any) {
+  const [rows, setRows] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [editingId, setEditingId] = useState<number | 'new' | null>(null);
+  const blank = {
+    type: 'notice',
+    title_ko: '', title_en: '',
+    content_ko: '', content_en: '',
+    pinned: 0, published: 1,
+  };
+  const [draft, setDraft] = useState<any>(blank);
+  const [includeDeleted, setIncludeDeleted] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const res = await api.get('/admin/notices' + (includeDeleted ? '?include_deleted=true' : ''));
+      setRows(res.data?.notices || []);
+    } catch (e: any) {
+      showToast('error', t('common.error'), e.response?.data?.error || 'Failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, [includeDeleted]);
+
+  const startEdit = (row?: any) => {
+    if (row) {
+      setEditingId(row.id);
+      setDraft({
+        type: row.type,
+        title_ko: row.title_ko, title_en: row.title_en,
+        content_ko: row.content_ko, content_en: row.content_en,
+        pinned: row.pinned, published: row.published,
+      });
+    } else {
+      setEditingId('new');
+      setDraft(blank);
+    }
+  };
+
+  const cancelEdit = () => { setEditingId(null); setDraft(blank); };
+
+  const save = async () => {
+    // Client-side validation mirrors the server limits.
+    if (!draft.title_ko.trim() || !draft.title_en.trim()) {
+      return showToast('error', t('common.error'), 'Title (ko + en) required');
+    }
+    if (!draft.content_ko.trim() || !draft.content_en.trim()) {
+      return showToast('error', t('common.error'), 'Content (ko + en) required');
+    }
+    try {
+      if (editingId === 'new') {
+        await api.post('/admin/notices', draft);
+        showToast('success', t('common.success'), 'Notice created');
+      } else {
+        await api.put(`/admin/notices/${editingId}`, draft);
+        showToast('success', t('common.success'), 'Notice updated');
+      }
+      setEditingId(null);
+      setDraft(blank);
+      load();
+    } catch (e: any) {
+      showToast('error', t('common.error'), e.response?.data?.error || 'Save failed');
+    }
+  };
+
+  const remove = async (id: number) => {
+    if (!confirm('Delete this notice? (soft delete — can be undone via SQL)')) return;
+    try {
+      await api.delete(`/admin/notices/${id}`);
+      showToast('success', t('common.success'), 'Deleted');
+      load();
+    } catch (e: any) {
+      showToast('error', t('common.error'), e.response?.data?.error || 'Delete failed');
+    }
+  };
+
+  const typeBadgeClass = (typ: string) => {
+    switch (typ) {
+      case 'event': return 'bg-exchange-yellow/10 text-exchange-yellow';
+      case 'listing': return 'bg-exchange-buy/10 text-exchange-buy';
+      case 'maintenance': return 'bg-exchange-sell/10 text-exchange-sell';
+      default: return 'bg-blue-400/10 text-blue-400';
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Toolbar */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <h2 className="text-lg font-bold">{t('admin.notices') || 'Notices'}</h2>
+          <label className="flex items-center gap-1.5 text-xs text-exchange-text-secondary cursor-pointer">
+            <input
+              type="checkbox"
+              checked={includeDeleted}
+              onChange={(e) => setIncludeDeleted(e.target.checked)}
+              className="rounded"
+            />
+            {t('admin.showDeleted') || 'Show deleted'}
+          </label>
+        </div>
+        <button
+          onClick={() => startEdit()}
+          className="px-3 py-1.5 rounded-lg bg-exchange-yellow text-black text-sm font-semibold hover:opacity-90"
+        >
+          + {t('admin.newNotice') || 'New notice'}
+        </button>
+      </div>
+
+      {/* Editor */}
+      {editingId !== null && (
+        <div className="card p-4 space-y-3 border-exchange-yellow/40">
+          <div className="text-sm font-semibold">
+            {editingId === 'new' ? (t('admin.newNotice') || 'New notice') : `Edit #${editingId}`}
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <label className="text-xs text-exchange-text-secondary">
+              Type
+              <select
+                value={draft.type}
+                onChange={(e) => setDraft({ ...draft, type: e.target.value })}
+                className="w-full mt-1 px-2 py-1.5 rounded bg-exchange-card border border-exchange-border text-sm"
+              >
+                <option value="notice">notice</option>
+                <option value="event">event</option>
+                <option value="maintenance">maintenance</option>
+                <option value="listing">listing</option>
+              </select>
+            </label>
+            <div className="flex items-end gap-4">
+              <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+                <input type="checkbox" checked={!!draft.pinned} onChange={(e) => setDraft({ ...draft, pinned: e.target.checked ? 1 : 0 })} className="rounded" />
+                Pinned
+              </label>
+              <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+                <input type="checkbox" checked={draft.published !== 0} onChange={(e) => setDraft({ ...draft, published: e.target.checked ? 1 : 0 })} className="rounded" />
+                Published
+              </label>
+            </div>
+            <label className="text-xs text-exchange-text-secondary sm:col-span-2">
+              Title (Korean)
+              <input
+                type="text" maxLength={200}
+                value={draft.title_ko}
+                onChange={(e) => setDraft({ ...draft, title_ko: e.target.value })}
+                className="w-full mt-1 px-2 py-1.5 rounded bg-exchange-card border border-exchange-border text-sm"
+              />
+            </label>
+            <label className="text-xs text-exchange-text-secondary sm:col-span-2">
+              Title (English)
+              <input
+                type="text" maxLength={200}
+                value={draft.title_en}
+                onChange={(e) => setDraft({ ...draft, title_en: e.target.value })}
+                className="w-full mt-1 px-2 py-1.5 rounded bg-exchange-card border border-exchange-border text-sm"
+              />
+            </label>
+            <label className="text-xs text-exchange-text-secondary sm:col-span-2">
+              Content (Korean) — supports newlines
+              <textarea
+                rows={6} maxLength={20000}
+                value={draft.content_ko}
+                onChange={(e) => setDraft({ ...draft, content_ko: e.target.value })}
+                className="w-full mt-1 px-2 py-1.5 rounded bg-exchange-card border border-exchange-border text-sm font-mono"
+              />
+            </label>
+            <label className="text-xs text-exchange-text-secondary sm:col-span-2">
+              Content (English) — supports newlines
+              <textarea
+                rows={6} maxLength={20000}
+                value={draft.content_en}
+                onChange={(e) => setDraft({ ...draft, content_en: e.target.value })}
+                className="w-full mt-1 px-2 py-1.5 rounded bg-exchange-card border border-exchange-border text-sm font-mono"
+              />
+            </label>
+          </div>
+          <div className="flex gap-2 justify-end">
+            <button onClick={cancelEdit} className="px-3 py-1.5 rounded-lg bg-exchange-hover text-sm">
+              {t('common.cancel') || 'Cancel'}
+            </button>
+            <button onClick={save} className="px-3 py-1.5 rounded-lg bg-exchange-yellow text-black text-sm font-semibold">
+              {t('common.save') || 'Save'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* List */}
+      {loading ? (
+        <div className="p-8 text-center text-exchange-text-third">Loading…</div>
+      ) : rows.length === 0 ? (
+        <div className="p-8 text-center text-exchange-text-third">No notices</div>
+      ) : (
+        <div className="card divide-y divide-exchange-border/40 overflow-hidden">
+          {rows.map((r) => (
+            <div key={r.id} className={`p-4 flex items-start justify-between gap-3 ${r.published === 0 ? 'opacity-50' : ''}`}>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 mb-1 flex-wrap">
+                  <span className="text-[10px] text-exchange-text-third">#{r.id}</span>
+                  <span className={`text-[10px] font-medium px-2 py-0.5 rounded ${typeBadgeClass(r.type)}`}>
+                    {r.type}
+                  </span>
+                  {r.pinned === 1 && <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-exchange-yellow/10 text-exchange-yellow">📌 pinned</span>}
+                  {r.published === 0 && <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-exchange-sell/10 text-exchange-sell">deleted</span>}
+                  <span className="text-[10px] text-exchange-text-third">{(r.created_at || '').slice(0, 10)}</span>
+                </div>
+                <div className="text-sm font-medium truncate">{r.title_ko}</div>
+                <div className="text-xs text-exchange-text-third truncate">{r.title_en}</div>
+              </div>
+              <div className="flex gap-1.5 shrink-0">
+                <button onClick={() => startEdit(r)} className="px-2 py-1 rounded bg-exchange-hover text-xs">Edit</button>
+                {r.published === 1 && (
+                  <button onClick={() => remove(r.id)} className="px-2 py-1 rounded bg-exchange-sell/10 text-exchange-sell text-xs">Delete</button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
