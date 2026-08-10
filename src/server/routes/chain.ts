@@ -35,13 +35,36 @@ chain.get('/qta/state', async (c) => {
             block_time_ms, required_confs, last_tick_at, last_error
      FROM qta_chain_state
      WHERE network = ?`
-  ).bind(currentNetwork(c.env)).first<any>();
+  ).bind(currentNetwork(c.env)).first<any>().catch(() => null);
+
+  // Real-chain identity (Quantarium, chain_id 60000). Reported alongside
+  // whatever the ticker last wrote so admin UI / status pages can render
+  // the correct on-chain metadata even before the first cron tick.
+  const chainId = String((c.env as any).QTA_CHAIN_ID || '60000');
+  const rpcUrl = String((c.env as any).QTA_RPC_URL || 'https://rpc.quantarium.io');
+  const explorerUrl = String((c.env as any).QTA_EXPLORER_URL || 'https://scan.quantarium.io');
+  const driver = String((c.env as any).QTA_CHAIN_DRIVER || 'mock').toLowerCase();
+  const hotWallet = String(
+    (c.env as any).QTA_HOT_WALLET_ADDRESS ||
+      '0x496EEaCE6Cf759C95e9eFea5d4C16A35D0524E97',
+  );
 
   return c.json({
     ok: true,
+    chain: {
+      chain_id: chainId,
+      name: 'Quantarium',
+      rpc_url: rpcUrl,
+      explorer_url: explorerUrl,
+      driver, // 'mock' | 'real'
+      integration_status: driver === 'real' ? 'live' : 'pending',
+      exchange_hot_wallet: hotWallet,
+      block_signature_scheme: 'SPHINCS+-SHA2-128s',
+      tx_signature_scheme: 'ECDSA (EIP-1559)',
+    },
     state: row || {
       network: currentNetwork(c.env),
-      signature_scheme: 'CRYSTALS-Dilithium3',
+      signature_scheme: 'SPHINCS+-SHA2-128s (blocks) / ECDSA (tx)',
       block_time_ms: 2000,
       required_confs: 12,
     },
@@ -54,6 +77,27 @@ chain.get('/qta/state', async (c) => {
 chain.post('/qta/deposit-address', authMiddleware, async (c) => {
   const user = c.get('user') as { id: string };
   const network = currentNetwork(c.env);
+
+  // ─── HARD SAFETY GATE ──────────────────────────────────────────────────
+  // Do NOT issue mock qta1... addresses to real users. Quantarium is a live
+  // EVM chain (chain_id 60000) and the real adapter (bot API / EVM RPC)
+  // is not wired yet. Issuing a mock address would result in permanent
+  // loss of any funds a user sent to it.
+  //
+  // This gate stays until env.QTA_CHAIN_DRIVER === 'real' AND the real
+  // adapter is implemented.
+  const driver = String((c.env as any).QTA_CHAIN_DRIVER || 'mock').toLowerCase();
+  if (driver !== 'real') {
+    return c.json({
+      ok: false,
+      error: 'CHAIN_INTEGRATION_PENDING',
+      message:
+        'QTA on-chain deposit is being finalized against Quantarium (chain_id 60000). ' +
+        'On-chain deposit addresses will be enabled shortly. ' +
+        'Internal QTA/QX/QKEY balances and trading remain fully operational.',
+    }, 503);
+  }
+  // ───────────────────────────────────────────────────────────────────────
 
   const existing = await c.env.DB.prepare(
     `SELECT id, address, pubkey, derivation, network
@@ -100,6 +144,22 @@ chain.get('/qta/deposits', authMiddleware, async (c) => {
 // ---------------------------------------------------------------------------
 chain.post('/qta/withdraw', authMiddleware, async (c) => {
   const user = c.get('user') as { id: string };
+
+  // ─── HARD SAFETY GATE (mirror of /qta/deposit-address) ─────────────────
+  // Block external QTA on-chain withdrawal until the real Quantarium
+  // adapter is wired. Internal balances stay editable via admin only.
+  const driver = String((c.env as any).QTA_CHAIN_DRIVER || 'mock').toLowerCase();
+  if (driver !== 'real') {
+    return c.json({
+      ok: false,
+      error: 'CHAIN_INTEGRATION_PENDING',
+      message:
+        'On-chain QTA withdrawal is being finalized against Quantarium ' +
+        '(chain_id 60000). This feature will be enabled shortly.',
+    }, 503);
+  }
+  // ───────────────────────────────────────────────────────────────────────
+
   let body: any;
   try {
     body = await c.req.json();
@@ -109,7 +169,8 @@ chain.post('/qta/withdraw', authMiddleware, async (c) => {
 
   const to = String(body.to_address || '').trim();
   const amount = String(body.amount || '').trim();
-  if (!to || !/^qta1[a-z0-9]{20,}$/i.test(to)) {
+  // Quantarium is EVM: accept 0x + 40 hex. Reject legacy qta1 mock addresses.
+  if (!to || !/^0x[0-9a-fA-F]{40}$/.test(to)) {
     return c.json({ ok: false, error: 'invalid_address' }, 400);
   }
   const amtNum = Number(amount);

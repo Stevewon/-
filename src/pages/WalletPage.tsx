@@ -169,6 +169,34 @@ export default function WalletPage() {
 
   return (
     <DesktopPageLayout>
+      {/*
+        Quantarium native + ERC-20 (QTA / QX / QKEY) on-chain deposit &
+        withdrawal notice — the chain is live (chain_id 60000), but the
+        exchange-side adapter is being finalized against the dedicated
+        hot wallet (0x496EEaCE...4E97). Internal balances and trading
+        are unaffected.
+      */}
+      <div
+        style={{
+          marginBottom: 16,
+          padding: '12px 16px',
+          borderRadius: 8,
+          border: '1px solid #3a2a12',
+          background: 'linear-gradient(90deg, rgba(240,185,11,0.08), rgba(240,185,11,0.03))',
+          color: '#f0b90b',
+          fontSize: 13,
+          lineHeight: 1.5,
+        }}
+      >
+        <strong style={{ color: '#f0b90b' }}>Notice · QTA / QX / QKEY on-chain transfers</strong>
+        <div style={{ color: '#c9b56a', marginTop: 4 }}>
+          On-chain deposit & withdrawal for QTA (native), QX and QKEY on the
+          Quantarium network (chain_id 60000) are being finalized. Internal
+          balances and trading remain fully operational. On-chain transfers
+          for these three assets will be enabled shortly.
+        </div>
+      </div>
+
       {/* ========== SUMMARY GRID (Desktop 2-col, Mobile 1-col) ========== */}
       <div
         className="grid"

@@ -11,5 +11,23 @@
       "database_id": "5eb4f183-1dfc-4310-8872-07b014078dbc"
     }
   ],
-  "vars": {}
+  "vars": {
+    // Quantarium chain (chain_id 60000) — EVM-compatible Geth fork.
+    // Block signatures: SPHINCS+-SHA2-128s (NIST PQC).
+    // Transactions: standard ECDSA (EIP-1559).
+    "QTA_CHAIN_ID": "60000",
+    "QTA_CHAIN_NAME": "Quantarium",
+    "QTA_RPC_URL": "https://rpc.quantarium.io",
+    "QTA_EXPLORER_URL": "https://scan.quantarium.io",
+    "QTA_CHAIN_DRIVER": "mock",
+    "QTA_NETWORK": "qta-mainnet",
+    // Exchange hot wallet — dedicated EOA (separate from Master/Treasury).
+    // Verified 2026-08-10: EOA, nonce=0, balance=0 at issuance.
+    "QTA_HOT_WALLET_ADDRESS": "0x496EEaCE6Cf759C95e9eFea5d4C16A35D0524E97",
+    // On-chain ERC-20 contracts on Quantarium.
+    "QTA_TOKEN_QX_ADDRESS": "0xad447d42fB065a5b505772235F0c96d27501e6Fb",
+    "QTA_TOKEN_QX_DECIMALS": "18",
+    "QTA_TOKEN_QKEY_ADDRESS": "0x216621D3b3dB600F35DBf6c5709486dDC8882a16",
+    "QTA_TOKEN_QKEY_DECIMALS": "18"
+  }
 }

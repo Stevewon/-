@@ -27,11 +27,21 @@ export type Env = {
   LOGFLARE_API_KEY?: string;
   LOGFLARE_SOURCE?: string;
   ENVIRONMENT?: string;
-  // Sprint 4 Phase B — QTA native chain integration (all optional, mock by default)
+  // Sprint 4 Phase B — Quantarium chain integration (real chain: chain_id 60000).
+  // Public identity is baked in wrangler.jsonc.vars; only the driver flag and
+  // hot-wallet private key are runtime-sensitive.
   QTA_CHAIN_DRIVER?: string;        // 'mock' | 'real'
   QTA_NETWORK?: string;             // 'qta-mainnet' | 'qta-testnet'
-  QTA_RPC_URL?: string;
-  QTA_HOT_WALLET_PRIVATE_KEY?: string;
+  QTA_CHAIN_ID?: string;            // '60000'
+  QTA_CHAIN_NAME?: string;          // 'Quantarium'
+  QTA_RPC_URL?: string;             // https://rpc.quantarium.io
+  QTA_EXPLORER_URL?: string;        // https://scan.quantarium.io
+  QTA_HOT_WALLET_ADDRESS?: string;  // 0x496EEaCE6Cf759C95e9eFea5d4C16A35D0524E97
+  QTA_HOT_WALLET_PRIVATE_KEY?: string; // secret, set via `wrangler pages secret put`
+  QTA_TOKEN_QX_ADDRESS?: string;
+  QTA_TOKEN_QX_DECIMALS?: string;
+  QTA_TOKEN_QKEY_ADDRESS?: string;
+  QTA_TOKEN_QKEY_DECIMALS?: string;
   // Sprint 4 Phase G — QTA <-> ETH bridge (all optional, mock by default)
   BRIDGE_DRIVER?: string;           // 'mock' | 'real'
   BRIDGE_NETWORK?: string;          // 'mainnet' | 'sepolia'
@@ -153,6 +163,16 @@ let ageGateNoticesKycDocsBootstrapDone = false;
 //   the marker so production D1 gets the schema without a manual wrangler
 //   run.
 let userConsentsBootstrapDone = false;
+
+// Sprint 6 Phase D · 2026-08-10 · migration 0035 self-bootstrap:
+//   Quantarium chain metadata correction. Migration 0015 seeded
+//   qta_chain_state.signature_scheme='CRYSTALS-Dilithium3' based on an old
+//   assumption that QTA was a bespoke PQ mainnet. On-chain verification
+//   (scan.quantarium.io / rpc.quantarium.io) confirmed it is an EVM-
+//   compatible Geth fork (chain_id 60000) with SPHINCS+ block signatures
+//   and standard ECDSA transaction signatures. This bootstrap also records
+//   the dedicated exchange hot wallet address issued 2026-08-10.
+let qtaChainCorrectionBootstrapDone = false;
 
 app.use('/api/*', async (c, next) => {
   // Fast path: skip the DB lookup on every request by using an in-memory
@@ -1084,6 +1104,86 @@ app.use('/api/*', async (c, next) => {
             console.log('[bootstrap] user_consents (0034) applied to production D1');
           } catch (e) {
             captureError(c as any, e, { where: 'user-consents-bootstrap' });
+          }
+        })()
+      );
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Sprint 6 Phase D · 2026-08-10 · migration 0035 self-bootstrap:
+  //   Quantarium chain metadata correction — flip signature_scheme in
+  //   qta_chain_state from the incorrect 'CRYSTALS-Dilithium3' label
+  //   to the truthful 'SPHINCS+-SHA2-128s (blocks) / ECDSA (tx)', and
+  //   record the dedicated exchange hot wallet address into system_state.
+  // ------------------------------------------------------------------
+  if (!qtaChainCorrectionBootstrapDone) {
+    const ctx = c.executionCtx as any;
+    if (ctx && typeof ctx.waitUntil === 'function') {
+      ctx.waitUntil(
+        (async () => {
+          try {
+            const marker = await c.env.DB.prepare(
+              "SELECT value FROM system_state WHERE key = 'qta_chain_correction_2026_08_10'"
+            ).first<{ value: string }>().catch(() => null);
+            if (marker && marker.value === 'migrated_v1') {
+              qtaChainCorrectionBootstrapDone = true;
+              return;
+            }
+
+            // 1) Correct signature_scheme label. Guarded so it only rewrites
+            //    the stale value; anything already set to the truthful label
+            //    or a newer scheme is left alone.
+            try {
+              await c.env.DB.prepare(
+                `UPDATE qta_chain_state
+                    SET signature_scheme = 'SPHINCS+-SHA2-128s (blocks) / ECDSA (tx)'
+                  WHERE signature_scheme = 'CRYSTALS-Dilithium3'
+                     OR signature_scheme IS NULL`
+              ).run();
+            } catch (_e) { /* table may not exist yet; safe to ignore */ }
+
+            // 2) Adopt the dedicated exchange hot wallet as the canonical
+            //    hot_wallet_addr wherever it hasn't been set or was still
+            //    holding a legacy qta1... mock value.
+            try {
+              await c.env.DB.prepare(
+                `UPDATE qta_chain_state
+                    SET hot_wallet_addr = '0x496EEaCE6Cf759C95e9eFea5d4C16A35D0524E97'
+                  WHERE hot_wallet_addr IS NULL
+                     OR hot_wallet_addr = ''
+                     OR hot_wallet_addr LIKE 'qta1%'`
+              ).run();
+            } catch (_e) { /* ignore */ }
+
+            // 3) Long-lived audit record independent of qta_chain_state.
+            await c.env.DB.prepare(
+              `INSERT OR REPLACE INTO system_state (key, value, updated_at)
+               VALUES (
+                 'qta_exchange_hot_wallet',
+                 '{"address":"0x496EEaCE6Cf759C95e9eFea5d4C16A35D0524E97",'
+                   || '"chain_id":60000,'
+                   || '"chain_name":"Quantarium",'
+                   || '"kind":"EOA",'
+                   || '"role":"exchange_hot_wallet",'
+                   || '"issued_at":"2026-08-10",'
+                   || '"verified":{"nonce":0,"balance_qta":"0","is_contract":false},'
+                   || '"custody_model":"scenario_c_hybrid",'
+                   || '"bot_wallet":"@quantarium_bot"}',
+                 CURRENT_TIMESTAMP
+               )`
+            ).run();
+
+            // 4) Marker.
+            await c.env.DB.prepare(
+              `INSERT OR REPLACE INTO system_state (key, value, updated_at)
+               VALUES ('qta_chain_correction_2026_08_10', 'migrated_v1', CURRENT_TIMESTAMP)`
+            ).run();
+
+            qtaChainCorrectionBootstrapDone = true;
+            console.log('[bootstrap] qta_chain_correction (0035) applied to production D1');
+          } catch (e) {
+            captureError(c as any, e, { where: 'qta-chain-correction-bootstrap' });
           }
         })()
       );

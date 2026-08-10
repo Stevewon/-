@@ -213,6 +213,24 @@ app.post('/withdraw', authMiddleware, rlWithdraw, requireKyc('approved'), async 
     return c.json({ error: 'Invalid request' }, 400);
   }
 
+  // ─── HARD SAFETY GATE (Quantarium native + ERC-20 tokens) ──────────────
+  // QTA / QX / QKEY live on the Quantarium chain (chain_id 60000).
+  // The real chain adapter (bot API or EVM RPC) is not wired yet, so
+  // external on-chain withdrawal is blocked to prevent asset loss.
+  // Internal balances and trading are unaffected.
+  const QUANTARIUM_SYMBOLS = new Set(['QTA', 'QX', 'QKEY']);
+  const driver = String((c.env as any).QTA_CHAIN_DRIVER || 'mock').toLowerCase();
+  if (QUANTARIUM_SYMBOLS.has(String(coin_symbol).toUpperCase()) && driver !== 'real') {
+    return c.json({
+      error: 'CHAIN_INTEGRATION_PENDING',
+      message:
+        `External on-chain withdrawal for ${coin_symbol} is being finalized ` +
+        `against Quantarium (chain_id 60000). It will be enabled shortly. ` +
+        `Internal balance and trading are unaffected.`,
+    }, 503);
+  }
+  // ───────────────────────────────────────────────────────────────────────
+
   // Load user + coin meta
   const [u, coin, risk] = await Promise.all([
     c.env.DB.prepare(

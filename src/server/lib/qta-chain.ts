@@ -1,19 +1,61 @@
 /**
- * QTA Native Mainnet client — Phase B (stub adapter).
+ * Quantarium chain client — Phase B (stub adapter, real chain confirmed live).
  *
- * This module defines the abstract interface QuantaEX uses to talk to its own
- * post-quantum mainnet. A Mock adapter is provided so the rest of the stack
- * (DB schema, REST routes, admin UI, cron monitor) can be built and tested
- * end-to-end while the real RPC details are finalised.
+ * On-chain reality (verified 2026-08-10 against scan.quantarium.io / rpc.quantarium.io):
+ *   - chain_id: 60000
+ *   - Consensus: EVM-compatible Geth fork
+ *   - Block signatures: SPHINCS+-SHA2-128s (NIST PQC, hash-based)
+ *   - Transaction signatures: standard ECDSA (EIP-1559)
+ *   - Addresses: standard 20-byte EVM (0x...), NOT bech32
+ *   - Native coin: QTA (18 decimals)
+ *   - Reference tokens: QX (ERC-20), QKEY (ERC-20)
+ *   - Explorer: https://scan.quantarium.io (Blockscout v2 API)
+ *   - RPC:      https://rpc.quantarium.io
  *
- * To switch to the real chain later, implement RealQtaChainClient (HTTP RPC
- * + Dilithium3 signing) and select it via env.QTA_CHAIN_DRIVER === 'real'.
+ * Exchange hot wallet (dedicated EOA, separate from Treasury):
+ *   0x496EEaCE6Cf759C95e9eFea5d4C16A35D0524E97
  *
- * Defaults:
- *   - Signature scheme: CRYSTALS-Dilithium3 (NIST PQC)
- *   - Block time: 2,000 ms
- *   - Required deposit confirmations (mainnet): 12
+ * Custody model (Scenario C — Hybrid):
+ *   Each QuantaEX user maps to a subwallet under @quantarium_bot's master
+ *   account; QuantaEX orchestrates subwallets via the bot API. The hot
+ *   wallet above is the exchange's sweep destination and withdrawal source.
+ *
+ * NOTE: The MockQtaChainClient below still uses the OLD placeholder shape
+ * (qta1... bech32 addresses, Dilithium3 label) because previous route/DB
+ * code was written against it. This is retained ONLY as a compile-time
+ * placeholder; the /chain/qta/* routes now hard-guard against issuing
+ * mock addresses to real users (see routes/chain.ts). The real adapter
+ * will be an EVM adapter (ethers/viem) OR a Telegram bot API adapter
+ * depending on final Scenario C bot-API spec — implemented in a follow-up.
+ *
+ * Required deposit confirmations (mainnet): 12
  */
+
+// -----------------------------------------------------------------------------
+// Quantarium chain constants (single source of truth for real-adapter work).
+// -----------------------------------------------------------------------------
+export const QUANTARIUM_CHAIN = {
+  chainId: 60000,
+  name: 'Quantarium',
+  rpcUrl: 'https://rpc.quantarium.io',
+  explorerUrl: 'https://scan.quantarium.io',
+  blockSignatureScheme: 'SPHINCS+-SHA2-128s',
+  txSignatureScheme: 'ECDSA (EIP-1559)',
+  nativeSymbol: 'QTA',
+  nativeDecimals: 18,
+  requiredConfirmations: 12,
+  // Exchange hot wallet (dedicated EOA — separate from Treasury).
+  exchangeHotWallet: '0x496EEaCE6Cf759C95e9eFea5d4C16A35D0524E97',
+  tokens: {
+    QX:   { address: '0xad447d42fB065a5b505772235F0c96d27501e6Fb', decimals: 18 },
+    QKEY: { address: '0x216621D3b3dB600F35DBf6c5709486dDC8882a16', decimals: 18 },
+  },
+} as const;
+
+/** Returns true if a string is a well-formed 20-byte EVM address (0x + 40 hex). */
+export function isEvmAddress(s: string): boolean {
+  return typeof s === 'string' && /^0x[0-9a-fA-F]{40}$/.test(s);
+}
 
 export type QtaNetwork = 'qta-mainnet' | 'qta-testnet';
 
