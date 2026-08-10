@@ -37,7 +37,8 @@ export type Env = {
   QTA_RPC_URL?: string;             // https://rpc.quantarium.io
   QTA_EXPLORER_URL?: string;        // https://scan.quantarium.io
   QTA_HOT_WALLET_ADDRESS?: string;  // 0x496EEaCE6Cf759C95e9eFea5d4C16A35D0524E97
-  QTA_HOT_WALLET_PRIVATE_KEY?: string; // secret, set via `wrangler pages secret put`
+  QTA_HOT_WALLET_PRIVATE_KEY?: string; // 32-byte hex, secret via `wrangler pages secret put`
+  QTA_HD_WALLET_MNEMONIC?: string;  // 12/24-word BIP-39 mnemonic, secret via `wrangler pages secret put`
   QTA_TOKEN_QX_ADDRESS?: string;
   QTA_TOKEN_QX_DECIMALS?: string;
   QTA_TOKEN_QKEY_ADDRESS?: string;
@@ -173,6 +174,12 @@ let userConsentsBootstrapDone = false;
 //   and standard ECDSA transaction signatures. This bootstrap also records
 //   the dedicated exchange hot wallet address issued 2026-08-10.
 let qtaChainCorrectionBootstrapDone = false;
+
+// Sprint 6 Phase E · 2026-08-10 · migration 0036 self-bootstrap:
+//   qta_hd_indexes table — stable BIP-44 index per user for Quantarium HD
+//   deposit address derivation. Required by EvmQtaChainClient.generateAddress
+//   once QTA_CHAIN_DRIVER='real' is flipped.
+let qtaHdIndexesBootstrapDone = false;
 
 app.use('/api/*', async (c, next) => {
   // Fast path: skip the DB lookup on every request by using an in-memory
@@ -1184,6 +1191,60 @@ app.use('/api/*', async (c, next) => {
             console.log('[bootstrap] qta_chain_correction (0035) applied to production D1');
           } catch (e) {
             captureError(c as any, e, { where: 'qta-chain-correction-bootstrap' });
+          }
+        })()
+      );
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Sprint 6 Phase E · 2026-08-10 · migration 0036 self-bootstrap:
+  //   qta_hd_indexes table — one row per user, address_index is a
+  //   monotonic, never-reused BIP-44 leaf index for Quantarium HD
+  //   deposit address derivation.
+  // ------------------------------------------------------------------
+  if (!qtaHdIndexesBootstrapDone) {
+    const ctx = c.executionCtx as any;
+    if (ctx && typeof ctx.waitUntil === 'function') {
+      ctx.waitUntil(
+        (async () => {
+          try {
+            const marker = await c.env.DB.prepare(
+              "SELECT value FROM system_state WHERE key = 'qta_hd_indexes_2026_08_10'"
+            ).first<{ value: string }>().catch(() => null);
+            if (marker && marker.value === 'migrated_v1') {
+              qtaHdIndexesBootstrapDone = true;
+              return;
+            }
+
+            await c.env.DB.prepare(
+              `CREATE TABLE IF NOT EXISTS qta_hd_indexes (
+                user_id        TEXT PRIMARY KEY,
+                address_index  INTEGER NOT NULL UNIQUE,
+                address        TEXT,
+                created_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE NO ACTION
+              )`
+            ).run();
+
+            try {
+              await c.env.DB.prepare(
+                `CREATE INDEX IF NOT EXISTS idx_qta_hd_indexes_index ON qta_hd_indexes(address_index)`
+              ).run();
+              await c.env.DB.prepare(
+                `CREATE INDEX IF NOT EXISTS idx_qta_hd_indexes_address ON qta_hd_indexes(address)`
+              ).run();
+            } catch (_e) { /* ignore */ }
+
+            await c.env.DB.prepare(
+              `INSERT OR REPLACE INTO system_state (key, value, updated_at)
+               VALUES ('qta_hd_indexes_2026_08_10', 'migrated_v1', CURRENT_TIMESTAMP)`
+            ).run();
+
+            qtaHdIndexesBootstrapDone = true;
+            console.log('[bootstrap] qta_hd_indexes (0036) applied to production D1');
+          } catch (e) {
+            captureError(c as any, e, { where: 'qta-hd-indexes-bootstrap' });
           }
         })()
       );

@@ -176,41 +176,203 @@ export class MockQtaChainClient implements QtaChainClient {
 }
 
 // ---------------------------------------------------------------------------
-// Real adapter placeholder — to be filled in when mainnet RPC is published.
-// Keep the surface identical so the routes don't change.
+// Real adapter — Quantarium (EVM, chain_id 60000).
+//
+// Architecture (per boss's 2026-08-10 decision — Option 2):
+//   - HD wallet seed lives in QTA_HD_WALLET_MNEMONIC (Cloudflare Pages secret).
+//   - Each user gets a stable BIP-44 derived address (path m/44'/60'/0'/0/i).
+//     Index `i` is allocated once per user in qta_hd_indexes and never reused
+//     even after account deletion, so an old address can never re-map to a
+//     different user.
+//   - Hot wallet (0x496EEaCE...4E97) is a separate secret QTA_HOT_WALLET_PRIVATE_KEY
+//     — the signer for outbound withdrawals and the destination for sweeps.
+//
+// This client is only ever returned by getQtaChainClient() when
+// env.QTA_CHAIN_DRIVER === 'real' AND all required secrets are present.
+// Otherwise the routes' 503 CHAIN_INTEGRATION_PENDING gate stays engaged.
 // ---------------------------------------------------------------------------
-export class RealQtaChainClient implements QtaChainClient {
+import {
+  deriveAddressFromMnemonic,
+  isValidMnemonic,
+  toChecksumAddress,
+} from './qta-hd';
+import {
+  getBlockNumber,
+  getNativeBalance,
+  sendNative,
+  verifyHotWalletKeypair,
+  type EvmRpcConfig,
+} from './qta-evm';
+import { parseHexPrivateKey } from './qta-hd';
+
+export interface EvmChainEnvBindings {
+  DB?: D1Database;
+}
+
+export class EvmQtaChainClient implements QtaChainClient {
   network: QtaNetwork;
-  signatureScheme = 'CRYSTALS-Dilithium3';
+  signatureScheme = 'SPHINCS+-SHA2-128s (blocks) / ECDSA (tx)';
   blockTimeMs = 2000;
   requiredConfirmations: number;
 
-  constructor(
-    public readonly rpcUrl: string,
-    public readonly hotWalletPrivKey: string, // PQ private key, base64 / hex
-    network: QtaNetwork = 'qta-mainnet',
-  ) {
-    this.network = network;
-    this.requiredConfirmations = network === 'qta-mainnet' ? 12 : 6;
+  private readonly cfg: EvmRpcConfig;
+  private readonly mnemonic: string;
+  private readonly hotWalletAddress: string;
+  private readonly hotWalletPrivKeyHex: string;
+  private readonly db?: D1Database;
+
+  constructor(params: {
+    rpcUrl: string;
+    chainId: number;
+    mnemonic: string;
+    hotWalletAddress: string;
+    hotWalletPrivKeyHex: string;
+    network?: QtaNetwork;
+    db?: D1Database;
+  }) {
+    if (!isValidMnemonic(params.mnemonic)) {
+      throw new Error('EvmQtaChainClient: QTA_HD_WALLET_MNEMONIC missing/invalid');
+    }
+    // Verify at construct time that the hot wallet privkey matches the address.
+    const check = verifyHotWalletKeypair(params.hotWalletPrivKeyHex, params.hotWalletAddress);
+    if (!check.ok) {
+      throw new Error(
+        `EvmQtaChainClient: hot wallet key/address mismatch (derived=${check.derived}, expected=${check.expected})`,
+      );
+    }
+
+    this.cfg = { rpcUrl: params.rpcUrl, chainId: params.chainId };
+    this.mnemonic = params.mnemonic;
+    this.hotWalletAddress = toChecksumAddress(params.hotWalletAddress);
+    this.hotWalletPrivKeyHex = params.hotWalletPrivKeyHex;
+    this.db = params.db;
+    this.network = params.network || 'qta-mainnet';
+    this.requiredConfirmations = this.network === 'qta-mainnet' ? 12 : 6;
   }
 
-  // NOTE: All methods are intentionally not implemented yet. They throw a
-  // descriptive error so we can't accidentally route prod traffic through an
-  // unfinished adapter.
   async getHead(): Promise<QtaChainHead> {
-    throw new Error('RealQtaChainClient.getHead not implemented yet');
+    const height = await getBlockNumber(this.cfg);
+    return {
+      height,
+      timestamp: Math.floor(Date.now() / 1000),
+      validatorsOnline: 0, // Not exposed by standard eth_ RPC; leave 0 for now.
+    };
   }
-  async generateAddress(_userId: string): Promise<QtaAddress> {
-    throw new Error('RealQtaChainClient.generateAddress not implemented yet');
+
+  async generateAddress(userId: string): Promise<QtaAddress> {
+    if (!this.db) {
+      throw new Error('EvmQtaChainClient.generateAddress requires DB binding (HD index allocation)');
+    }
+    const index = await allocateHdIndex(this.db, userId);
+    const derived = deriveAddressFromMnemonic(this.mnemonic, index);
+    return {
+      address: derived.address,
+      pubkey: derived.pubkey,
+      derivation: derived.path,
+    };
   }
-  async getBalance(_address: string): Promise<string> {
-    throw new Error('RealQtaChainClient.getBalance not implemented yet');
+
+  async getBalance(address: string): Promise<string> {
+    const wei = await getNativeBalance(this.cfg, address);
+    return wei.toString();
   }
+
   async listIncomingTxs(_address: string, _fromBlock: number): Promise<QtaTx[]> {
-    throw new Error('RealQtaChainClient.listIncomingTxs not implemented yet');
+    // Deposit detection is done by the cron ticker via Blockscout API
+    // (much cheaper than getLogs over a large range on RPC), so this
+    // stays a no-op for now. See cron/qta-tick.ts in the follow-up.
+    return [];
   }
-  async signAndBroadcast(_params: { to: string; amount: string; memo?: string }) {
-    throw new Error('RealQtaChainClient.signAndBroadcast not implemented yet');
+
+  async signAndBroadcast(params: {
+    to: string;
+    amount: string;
+    memo?: string;
+  }): Promise<QtaBroadcastResult> {
+    if (!/^0x[0-9a-fA-F]{40}$/.test(params.to)) {
+      throw new Error('to must be a 20-byte 0x-address');
+    }
+    // amount is decimal QTA (18 decimals). Convert to wei bigint safely.
+    const amountWei = decimalStringToWei(params.amount, 18);
+    if (amountWei <= 0n) throw new Error('amount must be > 0');
+
+    const priv = parseHexPrivateKey(this.hotWalletPrivKeyHex);
+    const { txHash } = await sendNative({
+      cfg: this.cfg,
+      fromAddress: this.hotWalletAddress,
+      fromPrivkey: priv,
+      to: params.to,
+      amountWei,
+    });
+    return { hash: txHash, acceptedAt: Math.floor(Date.now() / 1000) };
+  }
+}
+
+/**
+ * Convert a decimal string like "1.5" to wei-scale bigint at `decimals` (18 for QTA).
+ * Rejects negative / NaN / more decimals than allowed to avoid silent truncation.
+ */
+function decimalStringToWei(s: string, decimals: number): bigint {
+  if (typeof s !== 'string') throw new Error('amount must be string');
+  const trimmed = s.trim();
+  if (!/^\d+(\.\d+)?$/.test(trimmed)) throw new Error(`invalid amount: ${s}`);
+  const [intPart, fracRaw = ''] = trimmed.split('.');
+  if (fracRaw.length > decimals) {
+    throw new Error(`amount has more than ${decimals} decimals`);
+  }
+  const frac = (fracRaw + '0'.repeat(decimals)).slice(0, decimals);
+  return BigInt(intPart) * 10n ** BigInt(decimals) + BigInt(frac || '0');
+}
+
+/**
+ * Allocate a stable BIP-44 HD index for a user. Idempotent per user_id so
+ * repeated calls to /chain/qta/deposit-address always yield the same address.
+ *
+ * Requires table `qta_hd_indexes` (created by migration 0036 in follow-up):
+ *   user_id TEXT PRIMARY KEY, address_index INTEGER UNIQUE NOT NULL,
+ *   address TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP
+ *
+ * Falls back to a deterministic hash of user_id if the table is missing so
+ * the code doesn't blow up before the migration lands — the address is still
+ * stable, just not reserved in a monotonic sequence.
+ */
+async function allocateHdIndex(db: D1Database, userId: string): Promise<number> {
+  try {
+    const existing = await db
+      .prepare('SELECT address_index FROM qta_hd_indexes WHERE user_id = ?')
+      .bind(userId)
+      .first<{ address_index: number }>();
+    if (existing && Number.isInteger(existing.address_index)) {
+      return existing.address_index;
+    }
+    const row = await db
+      .prepare(
+        'SELECT COALESCE(MAX(address_index), -1) + 1 AS next_ix FROM qta_hd_indexes',
+      )
+      .first<{ next_ix: number }>();
+    const nextIx = Number(row?.next_ix ?? 0);
+    await db
+      .prepare(
+        `INSERT INTO qta_hd_indexes (user_id, address_index, created_at)
+         VALUES (?, ?, CURRENT_TIMESTAMP)
+         ON CONFLICT(user_id) DO NOTHING`,
+      )
+      .bind(userId, nextIx)
+      .run();
+    // Re-read in case of ON CONFLICT race so we always return the winning row.
+    const finalRow = await db
+      .prepare('SELECT address_index FROM qta_hd_indexes WHERE user_id = ?')
+      .bind(userId)
+      .first<{ address_index: number }>();
+    return Number(finalRow?.address_index ?? nextIx);
+  } catch (_e) {
+    // Table missing: fall back to a stable hash-based index in [0, 2^30).
+    // Runtime code will still work; the follow-up migration replaces this path.
+    let h = 2166136261;
+    for (let i = 0; i < userId.length; i++) {
+      h = (h ^ userId.charCodeAt(i)) * 16777619;
+    }
+    return Math.abs(h) % (1 << 30);
   }
 }
 
@@ -221,8 +383,12 @@ export class RealQtaChainClient implements QtaChainClient {
 export interface QtaChainEnv {
   QTA_CHAIN_DRIVER?: string;        // 'mock' | 'real'
   QTA_NETWORK?: string;             // 'qta-mainnet' | 'qta-testnet'
+  QTA_CHAIN_ID?: string;
   QTA_RPC_URL?: string;
+  QTA_HOT_WALLET_ADDRESS?: string;
   QTA_HOT_WALLET_PRIVATE_KEY?: string;
+  QTA_HD_WALLET_MNEMONIC?: string;
+  DB?: D1Database;
 }
 
 export function getQtaChainClient(env: QtaChainEnv): QtaChainClient {
@@ -230,8 +396,22 @@ export function getQtaChainClient(env: QtaChainEnv): QtaChainClient {
   const network: QtaNetwork =
     (env.QTA_NETWORK as QtaNetwork) === 'qta-testnet' ? 'qta-testnet' : 'qta-mainnet';
 
-  if (driver === 'real' && env.QTA_RPC_URL && env.QTA_HOT_WALLET_PRIVATE_KEY) {
-    return new RealQtaChainClient(env.QTA_RPC_URL, env.QTA_HOT_WALLET_PRIVATE_KEY, network);
+  if (
+    driver === 'real' &&
+    env.QTA_RPC_URL &&
+    env.QTA_HOT_WALLET_ADDRESS &&
+    env.QTA_HOT_WALLET_PRIVATE_KEY &&
+    env.QTA_HD_WALLET_MNEMONIC
+  ) {
+    return new EvmQtaChainClient({
+      rpcUrl: env.QTA_RPC_URL,
+      chainId: Number(env.QTA_CHAIN_ID || '60000'),
+      mnemonic: env.QTA_HD_WALLET_MNEMONIC,
+      hotWalletAddress: env.QTA_HOT_WALLET_ADDRESS,
+      hotWalletPrivKeyHex: env.QTA_HOT_WALLET_PRIVATE_KEY,
+      network,
+      db: env.DB,
+    });
   }
   return new MockQtaChainClient(network);
 }
