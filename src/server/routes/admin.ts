@@ -1181,6 +1181,27 @@ app.get('/system-health', async (c) => {
   return c.json(probes);
 });
 
+// GET /admin/consents/:user_id — regulatory / audit view of a single user's
+// consent history (Terms, Privacy, marketing opt-in, age_gate) with version,
+// timestamp, IP and UA. Returns an empty array when the table is missing
+// (pre-0034) so the admin dashboard degrades gracefully.
+app.get('/consents/:user_id', async (c) => {
+  const userId = c.req.param('user_id');
+  try {
+    const { results } = await c.env.DB.prepare(
+      `SELECT kind, version, effective_date, agreed, ip_address, user_agent, agreed_at, withdrew_at
+       FROM user_consents
+       WHERE user_id = ?
+       ORDER BY agreed_at DESC`
+    ).bind(userId).all();
+    return c.json({ user_id: userId, consents: results || [] });
+  } catch (e) {
+    // Table not created yet (migration 0034 not applied). Fail soft.
+    console.warn('[admin/consents] user_consents missing:', (e as Error).message);
+    return c.json({ user_id: userId, consents: [], table_missing: true });
+  }
+});
+
 // GET /admin/audit-stats — counts for the dashboard summary cards.
 app.get('/audit-stats', async (c) => {
   const db = c.env.DB;

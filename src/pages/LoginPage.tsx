@@ -5,6 +5,7 @@ import useStore from '../store/useStore';
 import { useI18n } from '../i18n';
 import api from '../utils/api';
 import AuthLayout from '../components/common/AuthLayout';
+import Turnstile from '../components/Turnstile';
 
 // ----------------------------------------------------------------------------
 // Google Identity Services (GIS) SDK loader.
@@ -159,6 +160,8 @@ export default function LoginPage() {
 
   const [needs2fa, setNeeds2fa] = useState(false);
   const [totp, setTotp] = useState('');
+  // Cloudflare Turnstile token 2014 empty when unconfigured (dev/preview).
+  const [turnstileToken, setTurnstileToken] = useState('');
 
   // ---- Google OAuth state ----
   const [googleLoading, setGoogleLoading] = useState(false);
@@ -349,6 +352,7 @@ export default function LoginPage() {
     try {
       const payload: any = { email, password };
       if (needs2fa) payload.totp_code = totp;
+      if (turnstileToken) payload.turnstile_token = turnstileToken;
       const res = await api.post('/auth/login', payload);
       setAuth(res.data.user, res.data.token);
       if (remember) localStorage.setItem('quantaex_last_email', email);
@@ -544,6 +548,12 @@ export default function LoginPage() {
             />
           </div>
         )}
+
+        {/* Cloudflare Turnstile bot protection — renders nothing when
+             VITE_TURNSTILE_SITE_KEY is unset (dev/preview). */}
+        <div className="pt-1">
+          <Turnstile onToken={setTurnstileToken} theme="dark" size="flexible" />
+        </div>
 
         {/* Desktop / tablet inline submit */}
         <button

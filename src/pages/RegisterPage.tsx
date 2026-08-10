@@ -5,6 +5,7 @@ import useStore from '../store/useStore';
 import { useI18n } from '../i18n';
 import api from '../utils/api';
 import AuthLayout from '../components/common/AuthLayout';
+import Turnstile from '../components/Turnstile';
 
 // ----------------------------------------------------------------------------
 // Google Identity Services (GIS) SDK loader — mirrors LoginPage.tsx.
@@ -371,6 +372,8 @@ export default function RegisterPage() {
         date_of_birth: dateOfBirth,
         ref_code: refCode || undefined,
         agree_marketing: agreeMarketing,
+        agree_terms: agreeTerms,
+        turnstile_token: turnstileToken || undefined,
       });
       setAuth(res.data.user, res.data.token);
       navigate('/wallet');
@@ -727,6 +730,12 @@ export default function RegisterPage() {
               </span>
             </span>
           </label>
+        </div>
+
+        {/* Cloudflare Turnstile bot protection — renders nothing when
+             VITE_TURNSTILE_SITE_KEY is unset (dev/preview). */}
+        <div className="pt-1">
+          <Turnstile onToken={setTurnstileToken} theme="dark" size="flexible" />
         </div>
 
         {/* Desktop / tablet inline submit */}

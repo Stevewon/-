@@ -38,6 +38,13 @@ export type Env = {
   ETH_RPC_URL?: string;
   BRIDGE_PRIVATE_KEY?: string;      // bridge custodian wallet (signs mint/burn)
   QQTA_CONTRACT_ADDR?: string;
+  // Sprint 6 Phase B — Cloudflare Turnstile bot protection (optional).
+  // When set, register/login/forgot-password/request-verification enforce
+  // Turnstile token verification. When absent, middleware is fail-open so
+  // preview / local dev keeps working. Also required on the client side:
+  //   VITE_TURNSTILE_SITE_KEY  (public, embedded in the widget)
+  //   TURNSTILE_SECRET         (server, used here for /siteverify)
+  TURNSTILE_SECRET?: string;
   // Sprint 6 Phase A — R2 bucket for KYC documents (optional).
   // When this binding is present, KYC document uploads stream to R2 and the
   // returned key is stored in kyc_documents.r2_key. When absent, the code
@@ -136,6 +143,16 @@ let companyIssuedLockBootstrapDone = false;
 //       mime, size, uploader IP, timestamp).
 // Same self-apply pattern as 0028/0029/0030/0031/0032.
 let ageGateNoticesKycDocsBootstrapDone = false;
+
+// 2026-06-22 · Migration 0034 self-bootstrap:
+//   user_consents table (GDPR Art. 7 / Seychelles DPA evidence). RegisterPage
+//   already forces the visitor to tick "I agree to Terms and Privacy Policy",
+//   but until 2026-06-22 the server accepted the flag without persisting it.
+//   Auditors need durable evidence of consent (version, timestamp, IP, UA);
+//   this migration creates the table and the self-apply block below stamps
+//   the marker so production D1 gets the schema without a manual wrangler
+//   run.
+let userConsentsBootstrapDone = false;
 
 app.use('/api/*', async (c, next) => {
   // Fast path: skip the DB lookup on every request by using an in-memory
@@ -1003,6 +1020,70 @@ app.use('/api/*', async (c, next) => {
             console.log('[bootstrap] Age gate + notices + KYC docs (0033) applied to production D1');
           } catch (e) {
             captureError(c as any, e, { where: 'age-gate-notices-kyc-docs-bootstrap' });
+          }
+        })()
+      );
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Sprint 6 Phase C · 2026-06-22 · migration 0034 self-bootstrap:
+  //   user_consents table — GDPR Art. 7 / Seychelles DPA evidence.
+  //   Persists Terms/Privacy/marketing/age_gate consent per user with
+  //   version, effective_date, ip and ua for regulatory audits.
+  // ------------------------------------------------------------------
+  if (!userConsentsBootstrapDone) {
+    const ctx = c.executionCtx as any;
+    if (ctx && typeof ctx.waitUntil === 'function') {
+      ctx.waitUntil(
+        (async () => {
+          try {
+            const marker = await c.env.DB.prepare(
+              "SELECT value FROM system_markers WHERE key = 'user_consents_2026_06_22'"
+            ).first<{ value: string }>();
+            if (marker && marker.value === 'migrated_v1') {
+              userConsentsBootstrapDone = true;
+              return;
+            }
+
+            await c.env.DB.prepare(
+              `CREATE TABLE IF NOT EXISTS user_consents (
+                id             TEXT PRIMARY KEY,
+                user_id        TEXT NOT NULL,
+                kind           TEXT NOT NULL,
+                version        TEXT NOT NULL,
+                effective_date TEXT,
+                agreed         INTEGER NOT NULL DEFAULT 1,
+                ip_address     TEXT,
+                user_agent     TEXT,
+                agreed_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                withdrew_at    TEXT,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+              )`
+            ).run();
+
+            try {
+              await c.env.DB.prepare(
+                `CREATE INDEX IF NOT EXISTS idx_user_consents_user ON user_consents(user_id)`
+              ).run();
+              await c.env.DB.prepare(
+                `CREATE INDEX IF NOT EXISTS idx_user_consents_user_kind ON user_consents(user_id, kind)`
+              ).run();
+              await c.env.DB.prepare(
+                `CREATE INDEX IF NOT EXISTS idx_user_consents_agreed_at ON user_consents(agreed_at)`
+              ).run();
+            } catch (_e) { /* ignore */ }
+
+            await c.env.DB.prepare(
+              `INSERT INTO system_markers (key, value, updated_at)
+               VALUES ('user_consents_2026_06_22', 'migrated_v1', CURRENT_TIMESTAMP)
+               ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP`
+            ).run();
+
+            userConsentsBootstrapDone = true;
+            console.log('[bootstrap] user_consents (0034) applied to production D1');
+          } catch (e) {
+            captureError(c as any, e, { where: 'user-consents-bootstrap' });
           }
         })()
       );

@@ -316,7 +316,7 @@ export default function HomePage() {
             {/* Bonus badges */}
             <div className="flex flex-wrap justify-center gap-2.5 sm:gap-3 lg:gap-4 mb-8 sm:mb-10">
               <span className="text-sm sm:text-base font-bold px-5 sm:px-8 py-2 sm:py-3 rounded-full bg-exchange-hover/80 border border-exchange-yellow/20 text-exchange-yellow">
-                1,000 QTA
+                100 QX
               </span>
             </div>
 

@@ -1,0 +1,120 @@
+// ============================================================================
+// Cloudflare Turnstile React wrapper.
+// ----------------------------------------------------------------------------
+// Renders the invisible/managed challenge widget and calls onToken when the
+// visitor solves it. When VITE_TURNSTILE_SITE_KEY is unset we no-op and fire
+// onToken('') on mount so the parent form does not block — this preserves the
+// "fail-open in dev" contract that the server middleware also honours.
+//
+// The script (challenges.cloudflare.com/turnstile/v0/api.js) is loaded on
+// demand and shared across all mount points.
+// ============================================================================
+
+import { useEffect, useRef } from 'react';
+
+const SCRIPT_ID = 'cf-turnstile-script';
+const SCRIPT_SRC = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+
+declare global {
+  interface Window {
+    turnstile?: {
+      render: (
+        el: HTMLElement,
+        opts: {
+          sitekey: string;
+          callback?: (token: string) => void;
+          'error-callback'?: () => void;
+          'expired-callback'?: () => void;
+          theme?: 'light' | 'dark' | 'auto';
+          size?: 'normal' | 'compact' | 'flexible';
+          appearance?: 'always' | 'execute' | 'interaction-only';
+        },
+      ) => string;
+      reset: (id?: string) => void;
+      remove: (id?: string) => void;
+    };
+  }
+}
+
+function loadScript(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (typeof window === 'undefined') return resolve();
+    if (window.turnstile) return resolve();
+    let el = document.getElementById(SCRIPT_ID) as HTMLScriptElement | null;
+    if (el) {
+      el.addEventListener('load', () => resolve());
+      el.addEventListener('error', () => reject(new Error('turnstile script failed')));
+      return;
+    }
+    el = document.createElement('script');
+    el.id = SCRIPT_ID;
+    el.src = SCRIPT_SRC;
+    el.async = true;
+    el.defer = true;
+    el.onload = () => resolve();
+    el.onerror = () => reject(new Error('turnstile script failed'));
+    document.head.appendChild(el);
+  });
+}
+
+interface Props {
+  onToken: (token: string) => void;
+  theme?: 'light' | 'dark' | 'auto';
+  size?: 'normal' | 'compact' | 'flexible';
+  className?: string;
+}
+
+/**
+ * Turnstile widget. Fails OPEN when VITE_TURNSTILE_SITE_KEY is unset so the
+ * form still submits — the server side likewise fails open when its secret
+ * is not configured.
+ */
+export default function Turnstile({ onToken, theme = 'dark', size = 'flexible', className }: Props) {
+  const ref = useRef<HTMLDivElement>(null);
+  const widgetIdRef = useRef<string | null>(null);
+  const siteKey = (import.meta as any).env?.VITE_TURNSTILE_SITE_KEY as string | undefined;
+
+  useEffect(() => {
+    // Fail-open: no site key configured → immediately signal empty token so
+    // the parent form treats this as "no challenge required".
+    if (!siteKey) {
+      onToken('');
+      return;
+    }
+
+    let cancelled = false;
+    loadScript()
+      .then(() => {
+        if (cancelled) return;
+        if (!ref.current || !window.turnstile) return;
+        widgetIdRef.current = window.turnstile.render(ref.current, {
+          sitekey: siteKey,
+          theme,
+          size,
+          callback: (token: string) => onToken(token),
+          'expired-callback': () => onToken(''),
+          'error-callback': () => onToken(''),
+        });
+      })
+      .catch((e) => {
+        console.warn('[turnstile] load failed — failing open:', e);
+        onToken('');
+      });
+
+    return () => {
+      cancelled = true;
+      try {
+        if (widgetIdRef.current && window.turnstile) {
+          window.turnstile.remove(widgetIdRef.current);
+        }
+      } catch { /* noop */ }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [siteKey]);
+
+  // When no key is configured we still render nothing (invisible in prod-like
+  // preview builds without secrets).
+  if (!siteKey) return null;
+
+  return <div ref={ref} className={className} />;
+}

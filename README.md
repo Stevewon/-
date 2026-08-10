@@ -3,7 +3,9 @@
 A professional, full-featured cryptocurrency exchange platform.  
 React SPA + Hono API, deployed as a single Cloudflare Pages project.
 
-**Production URL**: https://www.quantaex.io
+**Production URL**: https://www.quantaex.io  
+**Operator**: QuantaEX Holdings Ltd. (Seychelles IBC)  
+**Governing law**: Republic of Seychelles
 
 ---
 
@@ -12,23 +14,40 @@ React SPA + Hono API, deployed as a single Cloudflare Pages project.
 ### Trading
 - Real-time candlestick charts (1m, 5m, 15m, 1h, 4h, 1d)
 - Live order book with depth visualization
-- Limit & Market orders with instant matching engine
-- 22 trading pairs (USDT & KRW markets)
+- Spot: Limit, Market, Stop-Limit orders with real matching engine
+- Time-in-force: GTC / IOC / FOK / POST_ONLY
+- Self-Trade Prevention (STP) enforced at matching layer
+- Futures (USDT-margined) with cross / isolated margin
+- Cross-margin lending (margin trading)
+- USDT & USDC quote markets
 
 ### Supported Coins
-BTC, ETH, BNB, SOL, XRP, ADA, DOGE, DOT, AVAX, MATIC, QTA + USDT, KRW
+BTC, ETH, BNB, SOL, XRP, ADA, DOGE, DOT, AVAX, MATIC, QTA, QX + USDT, USDC quotes
 
 ### User Features
-- Email registration with KYC verification
-- Wallet management (deposit/withdraw)
-- Order history & trade history
-- Mobile-responsive dark mode UI (Binance/Upbit style)
+- Email + Google OAuth registration
+- Age gate (18+) via date-of-birth verification
+- KYC verification (tiered) with R2-backed document storage
+- 2FA (TOTP / RFC 6238)
+- Withdrawal whitelist + 24h cooldown + 2FA + daily USD limits
+- Deposit / withdraw / order history
+- Referral program (multi-level, QX rewards)
+- Mobile-responsive dark mode UI (Binance / Upbit style, KO+EN i18n)
 
 ### Admin Dashboard
 - User management & KYC approval
-- Withdrawal approval/rejection
-- Coin price management
-- Platform statistics
+- Withdrawal approval / rejection
+- Coin & market management, fee tiers
+- Global circuit breaker (trade halt)
+- IP blocklist, forced-logout (token rotation)
+- Notices CRUD (DB-managed with KO+EN)
+- Audit log of all admin actions
+
+### Compliance & Security
+- Geo-block: KR, US, CN, JP (regulatory) + IR, KP, CU, SY, RU, BY (OFAC/UN sanctions) → HTTP 451
+- Company-issued asset lock (QX bonus cannot be externally withdrawn)
+- JWT (HMAC-SHA256) with token_version-based revocation
+- Per-endpoint rate limits (register 5/h, login 10/5min, withdraw 20/h, order 100/min)
 
 ---
 

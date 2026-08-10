@@ -4,6 +4,7 @@ import { Mail, CheckCircle2, AlertCircle } from 'lucide-react';
 import api from '../utils/api';
 import { useI18n } from '../i18n';
 import AuthLayout from '../components/common/AuthLayout';
+import Turnstile from '../components/Turnstile';
 
 export default function ForgotPasswordPage() {
   const { t } = useI18n();
@@ -12,6 +13,7 @@ export default function ForgotPasswordPage() {
   const [sent, setSent] = useState(false);
   const [error, setError] = useState('');
   const [devUrl, setDevUrl] = useState<string | null>(null);
+  const [turnstileToken, setTurnstileToken] = useState('');
 
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
@@ -21,7 +23,10 @@ export default function ForgotPasswordPage() {
     if (!emailValid) return setError(t('auth.invalidEmail') || 'Invalid email');
     setLoading(true);
     try {
-      const res = await api.post('/auth/forgot-password', { email });
+      const res = await api.post('/auth/forgot-password', {
+        email,
+        turnstile_token: turnstileToken || undefined,
+      });
       setSent(true);
       if (res.data?.dev_url) setDevUrl(res.data.dev_url);
     } catch (err: any) {
@@ -89,6 +94,9 @@ export default function ForgotPasswordPage() {
               />
             </div>
           </div>
+          {/* Cloudflare Turnstile bot protection — renders nothing when
+              VITE_TURNSTILE_SITE_KEY is unset (dev/preview). */}
+          <Turnstile onToken={setTurnstileToken} theme="dark" size="flexible" />
           <button
             type="submit"
             disabled={!emailValid || loading}

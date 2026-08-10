@@ -9,10 +9,10 @@ interface FAQ {
 }
 
 const FAQS_KO: FAQ[] = [
-  { category: 'account', question: '회원가입은 어떻게 하나요?', answer: '상단 "회원가입" 버튼을 클릭하고, 이메일, 닉네임, 비밀번호를 입력하면 바로 가입할 수 있습니다. 가입 후 이메일 인증을 완료하면 1,000 QTA 웰컬 보너스가 지급됩니다.' },
+  { category: 'account', question: '회원가입은 어떻게 하나요?', answer: '상단 "회원가입" 버튼을 클릭하고, 이메일, 닉네임, 비밀번호, 생년월일(만 18세 이상)을 입력하면 바로 가입할 수 있습니다. 가입 후 이메일 인증을 완료하면 100 QX 웰컴 보너스가 지급됩니다. QX는 회사가 지급하는 프로모션 자산으로 거래 및 수수료 할인에 사용할 수 있으며 외부 출금은 제한됩니다.' },
   { category: 'account', question: 'KYC 인증은 어떻게 하나요?', answer: '로그인 후 마이페이지(지갑) > KYC 인증 메뉴에서 성명, 연락처, 신분증 번호를 입력하여 신청할 수 있습니다. 인증 처리는 최대 24시간 이내에 완료됩니다.' },
-  { category: 'account', question: '비밀번호를 분실했어요. 어떻게 하나요?', answer: '로그인 페이지에서 "비밀번호 찾기"를 클릭하고, 가입 시 사용한 이메일을 입력하면 비밀번호 재설정 링크가 전송됩니다. (현재 준비 중인 기능입니다)' },
-  { category: 'account', question: '2단계 인증(2FA)은 어떻게 설정하나요?', answer: 'Google Authenticator 앱을 설치한 후, 마이페이지 > 보안설정에서 2FA 설정을 진행할 수 있습니다. (향후 업데이트 예정)' },
+  { category: 'account', question: '비밀번호를 분실했어요. 어떻게 하나요?', answer: '로그인 페이지에서 "비밀번호 찾기"를 클릭하고, 가입 시 사용한 이메일을 입력하면 비밀번호 재설정 링크가 전송됩니다. 링크는 발송 후 1시간 동안 유효합니다.' },
+  { category: 'account', question: '2단계 인증(2FA)은 어떻게 설정하나요?', answer: 'Google Authenticator, Authy 등 TOTP 호환 앱을 설치한 후, 마이페이지 > 보안 설정에서 QR 코드를 스캔하여 2FA를 활성화할 수 있습니다. 2FA 활성화 후에는 출금 및 화이트리스트 등록 시 6자리 인증 코드가 필수입니다.' },
   { category: 'trade', question: '주문은 어떻게 하나요?', answer: '거래소 페이지에서 원하는 코인을 선택한 후, 주문 패널에서 매수/매도 탭을 선택합니다. 지정가 주문은 원하는 가격과 수량을, 시장가 주문은 수량만 입력하면 됩니다.' },
   { category: 'trade', question: '지정가 주문과 시장가 주문의 차이는 무엇인가요?', answer: '지정가 주문은 원하는 가격을 직접 설정하여 주문하는 방식입니다. 해당 가격에 도달했을 때 체결됩니다. 시장가 주문은 현재 호가 기준으로 즉시 체결되는 주문입니다.' },
   { category: 'trade', question: '미체결 주문은 어떻게 취소하나요?', answer: '거래소 페이지 하단의 "미체결 주문" 탭에서 취소하고자 하는 주문의 "취소" 버튼을 클릭하면 됩니다. 취소 시 잠금된 자산은 즉시 해제됩니다.' },
@@ -21,15 +21,15 @@ const FAQS_KO: FAQ[] = [
   { category: 'wallet', question: '출금은 어떻게 하나요?', answer: '자산 페이지에서 출금 버튼을 클릭하고, 출금할 코인, 수량, 출금 주소를 입력한 후 출금을 신청합니다. 관리자 승인 후 처리됩니다.' },
   { category: 'wallet', question: '출금은 얼마나 걸리나요?', answer: '출금 신청 후 관리자 승인 절차를 거쳐 처리됩니다. 통상 1~2시간 이내에 처리되며, 블록체인 네트워크 상황에 따라 지연될 수 있습니다.' },
   { category: 'wallet', question: '최소 출금액은 얼마인가요?', answer: '코인별로 최소 출금액이 다릅니다. 예를 들어 BTC는 0.001 BTC, ETH는 0.01 ETH입니다. 자세한 내용은 수수료 안내 페이지를 참고하세요.' },
-  { category: 'other', question: 'QuantaEX는 어떤 거래소인가요?', answer: 'QuantaEX는 BTC, ETH, QTA 등 13종 이상의 암호화폐를 USDT 및 USDC 마켓에서 거래할 수 있는 글로벌 디지털 자산 거래 플랫폼입니다. 실시간 차트, 호가창, 빠른 주문 체결 등 전문적인 거래 환경을 제공합니다.' },
+  { category: 'other', question: 'QuantaEX는 어떤 거래소인가요?', answer: 'QuantaEX는 BTC, ETH, QTA 등 다양한 암호화폐를 USDT 및 USDC 마켓에서 거래할 수 있는 글로벌 디지털 자산 거래 플랫폼입니다. QuantaEX Holdings Ltd.(세이셸 IBC)가 운영하며, 실시간 차트, 호가창, 현물·선물·마진 거래 등 전문 거래 환경을 제공합니다.' },
   { category: 'other', question: 'QTA 토큰은 무엇인가요?', answer: 'QTA(Quanta Token)은 QuantaEX 거래소의 자체 토큰입니다. 거래 수수료 할인(25%), 이벤트 참여, 거버넌스 투표 등 다양한 혜택이 제공됩니다.' },
 ];
 
 const FAQS_EN: FAQ[] = [
-  { category: 'account', question: 'How do I sign up?', answer: 'Click the "Register" button at the top, enter your email, nickname, and password to create an account instantly. After verifying your email, you will receive a 1,000 QTA welcome bonus.' },
+  { category: 'account', question: 'How do I sign up?', answer: 'Click the "Register" button at the top and enter your email, nickname, password, and date of birth (must be 18+). After verifying your email you receive a 100 QX welcome bonus. QX is a promotional asset issued by the Company usable for trading and fee discounts inside the exchange, but restricted from external withdrawals.' },
   { category: 'account', question: 'How do I complete KYC verification?', answer: 'After logging in, go to My Page > KYC Verification and submit your full name, phone number, and ID number. Verification is typically completed within 24 hours.' },
-  { category: 'account', question: 'I forgot my password. What should I do?', answer: 'On the login page, click "Forgot Password" and enter the email you used to register. A password reset link will be sent to you. (This feature is currently in development.)' },
-  { category: 'account', question: 'How do I set up 2FA?', answer: 'Install the Google Authenticator app, then go to My Page > Security Settings to enable 2FA. (Coming in a future update.)' },
+  { category: 'account', question: 'I forgot my password. What should I do?', answer: 'On the login page click "Forgot Password" and enter the email you used to register. A password reset link will be sent to your inbox and remains valid for 1 hour.' },
+  { category: 'account', question: 'How do I set up 2FA?', answer: 'Install a TOTP-compatible app such as Google Authenticator or Authy, then go to My Page > Security Settings and scan the QR code to enable 2FA. Once enabled, a 6-digit code is required for withdrawals and whitelist additions.' },
   { category: 'trade', question: 'How do I place an order?', answer: 'Select a coin on the Trade page, choose Buy or Sell in the order panel. For limit orders, enter your desired price and quantity. For market orders, just enter the quantity.' },
   { category: 'trade', question: 'What is the difference between limit and market orders?', answer: 'A limit order lets you set a specific price. It is executed when the market reaches that price. A market order is executed immediately at the current best price.' },
   { category: 'trade', question: 'How do I cancel an open order?', answer: 'Go to the "Open Orders" section at the bottom of the Trade page and click "Cancel" on the order you wish to cancel. Locked assets will be released immediately.' },
@@ -38,7 +38,7 @@ const FAQS_EN: FAQ[] = [
   { category: 'wallet', question: 'How do I withdraw?', answer: 'Go to the Wallet page, click Withdraw, select the coin, enter the amount and withdrawal address, then submit. Withdrawals are processed after admin approval.' },
   { category: 'wallet', question: 'How long does a withdrawal take?', answer: 'After submission, withdrawals go through an admin approval process. They are typically processed within 1-2 hours, though blockchain network conditions may cause delays.' },
   { category: 'wallet', question: 'What is the minimum withdrawal amount?', answer: 'Minimum withdrawal amounts vary by coin. For example, BTC is 0.001 BTC and ETH is 0.01 ETH. Check the Fees page for full details.' },
-  { category: 'other', question: 'What is QuantaEX?', answer: 'QuantaEX is a global digital asset trading platform where you can trade 13+ cryptocurrencies including BTC, ETH, and QTA on USDT and USDC markets. We offer professional trading tools including real-time charts, order book, and fast order execution.' },
+  { category: 'other', question: 'What is QuantaEX?', answer: 'QuantaEX is a global digital-asset trading platform where you can trade a range of cryptocurrencies including BTC, ETH, and QTA on USDT and USDC markets. Operated by QuantaEX Holdings Ltd. (Seychelles IBC), it offers professional trading tools including real-time charts, an order book, and spot / futures / margin trading.' },
   { category: 'other', question: 'What is the QTA token?', answer: 'QTA (Quanta Token) is the native token of QuantaEX. It offers various benefits including a 25% trading fee discount, event participation, and governance voting.' },
 ];
 

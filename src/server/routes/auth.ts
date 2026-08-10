@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { AppEnv } from '../index';
 import { generateToken, authMiddleware } from '../middleware/auth';
 import { rateLimit } from '../middleware/rateLimit';
+import { requireTurnstile } from '../middleware/turnstile';
 import {
   sendMail,
   templateBasic,
@@ -52,6 +53,11 @@ const rlRegister  = rateLimit({ key: 'auth:register',  max: 5,  windowSec: 3600 
 const rlLogin     = rateLimit({ key: 'auth:login',     max: 10, windowSec: 300 });    // 10/5min per IP
 const rlForgotPw  = rateLimit({ key: 'auth:forgot-pw', max: 5,  windowSec: 3600 });   // 5/h per IP
 const rlReqVerify = rateLimit({ key: 'auth:req-verif', max: 5,  windowSec: 3600 });   // 5/h per IP
+
+// Cloudflare Turnstile bot protection. Fails OPEN when TURNSTILE_SECRET is
+// unset so preview / local dev is unaffected. Applied to all human-facing
+// auth-critical endpoints below.
+const turnstile = requireTurnstile();
 
 // ============================================================================
 // Referral helpers
@@ -232,7 +238,7 @@ async function allocateReferralCode(db: D1Database, userId: string): Promise<str
 }
 
 // Register
-app.post('/register', rlRegister, async (c) => {
+app.post('/register', rlRegister, turnstile, async (c) => {
   const body = await c.req.json();
   const email = (body.email || '').toString().trim().toLowerCase();
   const password = (body.password || '').toString();
@@ -243,8 +249,11 @@ app.post('/register', rlRegister, async (c) => {
   // the Terms of Service Article 4 (18+ to register on QuantaEX Holdings
   // Ltd., a Seychelles IBC).
   const dateOfBirth = body.date_of_birth ? String(body.date_of_birth).trim() : null;
-  // agree_marketing accepted for future use; currently logged only.
-  // const agreeMarketing = !!body.agree_marketing;
+  // Consent flags — persisted to user_consents table below as GDPR / Seychelles
+  // DPA evidence. The client already blocks submit when agree_terms is false,
+  // but we double-check here so an API caller can't bypass it.
+  const agreeTerms = body.agree_terms === undefined ? true : !!body.agree_terms;
+  const agreeMarketing = !!body.agree_marketing;
 
   // ---- Validation (matches frontend rules) ----
   if (!email || !password || !nickname) return c.json({ error: 'All fields required' }, 400);
@@ -283,6 +292,16 @@ app.post('/register', rlRegister, async (c) => {
   if (m < 0 || (m === 0 && now.getUTCDate() < dob.getUTCDate())) age--;
   if (age < 18) {
     return c.json({ error: 'You must be at least 18 years old to register', code: 'AGE_UNDER_18' }, 403);
+  }
+
+  // Terms and Privacy consent is mandatory. Frontend gates this, but we
+  // enforce server-side so API callers cannot bypass. See user_consents table
+  // (migration 0034) — we persist the actual record after INSERT users below.
+  if (!agreeTerms) {
+    return c.json(
+      { error: 'You must agree to the Terms of Service and Privacy Policy', code: 'CONSENT_REQUIRED' },
+      400,
+    );
   }
 
   const existing = await c.env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first();
@@ -350,6 +369,43 @@ app.post('/register', rlRegister, async (c) => {
     ).bind(uuid(), id, d.symbol, d.available, d.locked),
   );
   await c.env.DB.batch(batch);
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Persist consent evidence (GDPR Art. 7 / Seychelles DPA).
+  // ──────────────────────────────────────────────────────────────────────────
+  // Terms + Privacy + age_gate are always recorded on successful signup
+  // (implied by the successful validation above). Marketing is only recorded
+  // when the user actively ticked the opt-in box. Version strings mirror
+  // TermsPage.VERSION / PrivacyPage.VERSION and their EFFECTIVE_DATE.
+  // Failures never block signup — we log and continue so a missing 0034
+  // migration cannot break the register endpoint.
+  try {
+    const ipAddr =
+      c.req.header('CF-Connecting-IP') ||
+      c.req.header('X-Forwarded-For')?.split(',')[0]?.trim() ||
+      '';
+    const ua = c.req.header('User-Agent') || '';
+    const TERMS_VERSION = '1.0';
+    const PRIVACY_VERSION = '1.0';
+    const EFFECTIVE_DATE = '2026-06-22';
+
+    const consentRows = [
+      { kind: 'terms',     version: TERMS_VERSION,   agreed: 1 },
+      { kind: 'privacy',   version: PRIVACY_VERSION, agreed: 1 },
+      { kind: 'age_gate',  version: '1.0',           agreed: 1 },
+      { kind: 'marketing', version: '1.0',           agreed: agreeMarketing ? 1 : 0 },
+    ];
+    const consentBatch = consentRows.map(r =>
+      c.env.DB.prepare(
+        `INSERT INTO user_consents
+           (id, user_id, kind, version, effective_date, agreed, ip_address, user_agent)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(uuid(), id, r.kind, r.version, EFFECTIVE_DATE, r.agreed, ipAddr, ua),
+    );
+    await c.env.DB.batch(consentBatch);
+  } catch (e) {
+    console.warn('[register] user_consents insert failed (migration 0034 missing?):', e);
+  }
 
   // ──────────────────────────────────────────────────────────────────────────
   // Multi-level referral rewards (L1=50, L2=30, L3=20 QX).
@@ -457,7 +513,7 @@ app.post('/register', rlRegister, async (c) => {
 });
 
 // Login
-app.post('/login', rlLogin, async (c) => {
+app.post('/login', rlLogin, turnstile, async (c) => {
   const body = await c.req.json();
   const email = (body.email || '').toString().trim().toLowerCase();
   const password = (body.password || '').toString();
@@ -1025,7 +1081,7 @@ async function sha256Hex(input: string): Promise<string> {
 // 🚧 TODO: plug in a real mail service (Resend/SES/Postmark). For now the
 // endpoint returns `dev_token` so QA can complete the flow.
 // ============================================================================
-app.post('/request-verification', rlReqVerify, async (c) => {
+app.post('/request-verification', rlReqVerify, turnstile, async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const rawEmail = (body.email || '').toString().trim().toLowerCase();
   if (!rawEmail) return c.json({ error: 'Email required' }, 400);
@@ -1164,7 +1220,7 @@ app.post('/verify-email', async (c) => {
 // POST /api/auth/forgot-password { email } -> always 200 (no user enumeration)
 // POST /api/auth/reset-password   { token, new_password }
 // ============================================================================
-app.post('/forgot-password', rlForgotPw, async (c) => {
+app.post('/forgot-password', rlForgotPw, turnstile, async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const rawEmail = (body.email || '').toString().trim().toLowerCase();
   if (!rawEmail) return c.json({ error: 'Email required' }, 400);
