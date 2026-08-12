@@ -531,6 +531,167 @@ chain.get('/qta/admin/deposits', authMiddleware, adminMiddleware, async (c) => {
 });
 
 // ---------------------------------------------------------------------------
+// (admin) Env diagnostic — reports which QTA_* env bindings are present,
+// their approximate shape (never their value), and pinpoints why the
+// integration_status is 'pending' if it is.
+//
+// SECURITY: This endpoint NEVER returns:
+//   - The mnemonic
+//   - The private key
+//   - The first/last N chars of any secret
+// It only returns: presence flag, length, and (for QTA_CHAIN_DRIVER only)
+// the plaintext value because that's a config flag, not a secret.
+// ---------------------------------------------------------------------------
+chain.get('/qta/admin/env-check', authMiddleware, adminMiddleware, async (c) => {
+  const env = c.env as any;
+
+  const describeSecret = (name: string) => {
+    const v = env[name];
+    if (v === undefined || v === null || v === '') {
+      return { present: false, reason: 'MISSING' };
+    }
+    if (typeof v !== 'string') {
+      return { present: true, type: typeof v, note: 'non-string binding' };
+    }
+    const trimmed = v.trim();
+    const hasWhitespaceEdges = trimmed !== v;
+    return {
+      present: true,
+      length: v.length,
+      trimmed_length: trimmed.length,
+      has_whitespace_edges: hasWhitespaceEdges,
+    };
+  };
+
+  // Driver is a config flag (not a secret), so it's safe to echo the actual value.
+  const rawDriver = env.QTA_CHAIN_DRIVER;
+  const driverInfo = rawDriver === undefined || rawDriver === null
+    ? { present: false, value: null, effective: 'mock', reason: 'not set' }
+    : {
+        present: true,
+        raw_value: String(rawDriver),
+        trimmed_value: String(rawDriver).trim(),
+        effective: String(rawDriver).trim().toLowerCase(),
+        has_whitespace_edges: String(rawDriver).trim() !== String(rawDriver),
+      };
+
+  // Mnemonic shape check (word count) without ever echoing content.
+  const mnemonicRaw = env.QTA_HD_WALLET_MNEMONIC;
+  let mnemonicInfo: Record<string, unknown> = { present: false, reason: 'MISSING' };
+  if (typeof mnemonicRaw === 'string' && mnemonicRaw.trim()) {
+    const trimmed = mnemonicRaw.trim();
+    const words = trimmed.split(/\s+/);
+    mnemonicInfo = {
+      present: true,
+      char_length: mnemonicRaw.length,
+      trimmed_char_length: trimmed.length,
+      word_count: words.length,
+      has_whitespace_edges: trimmed !== mnemonicRaw,
+      shape_ok: words.length === 12 || words.length === 24,
+      shape_reason: words.length === 12 || words.length === 24
+        ? 'valid word count'
+        : `expected 12 or 24 words, got ${words.length}`,
+    };
+  }
+
+  // Private key shape check (hex length) — never echo content.
+  const pkRaw = env.QTA_HOT_WALLET_PRIVATE_KEY;
+  let pkInfo: Record<string, unknown> = { present: false, reason: 'MISSING' };
+  if (typeof pkRaw === 'string' && pkRaw.trim()) {
+    const trimmed = pkRaw.trim();
+    const cleaned = trimmed.replace(/^0x/i, '');
+    pkInfo = {
+      present: true,
+      char_length: pkRaw.length,
+      trimmed_char_length: trimmed.length,
+      has_0x_prefix: /^0x/i.test(trimmed),
+      hex_char_length: cleaned.length,
+      has_whitespace_edges: trimmed !== pkRaw,
+      shape_ok: /^[0-9a-fA-F]{64}$/.test(cleaned),
+      shape_reason: /^[0-9a-fA-F]{64}$/.test(cleaned)
+        ? 'valid 32-byte hex'
+        : `expected 64 hex chars, got ${cleaned.length} (with non-hex chars? ${/[^0-9a-fA-F]/.test(cleaned)})`,
+    };
+  }
+
+  // Hot wallet key <-> address match check.
+  let keypairMatch: Record<string, unknown> = { checked: false, reason: 'skipped' };
+  const hotAddrRaw = env.QTA_HOT_WALLET_ADDRESS;
+  if (
+    typeof pkRaw === 'string' && pkRaw.trim() && (pkInfo as any).shape_ok &&
+    typeof hotAddrRaw === 'string' && hotAddrRaw.trim()
+  ) {
+    try {
+      const { verifyHotWalletKeypair } = await import('../lib/qta-evm');
+      const check = verifyHotWalletKeypair(pkRaw.trim(), hotAddrRaw.trim());
+      if (check.ok) {
+        keypairMatch = { checked: true, ok: true };
+      } else {
+        keypairMatch = {
+          checked: true,
+          ok: false,
+          derived_address: check.derived,
+          expected_address: check.expected,
+          reason: 'private key does not derive the expected hot wallet address',
+        };
+      }
+    } catch (e: any) {
+      keypairMatch = { checked: true, ok: false, error: String(e?.message || e) };
+    }
+  } else if (!(pkInfo as any).shape_ok) {
+    keypairMatch = { checked: false, reason: 'private key shape invalid — cannot verify' };
+  }
+
+  // Diagnose why integration_status is still 'pending'.
+  const reasons: string[] = [];
+  if (driverInfo.effective !== 'real') {
+    reasons.push(`QTA_CHAIN_DRIVER must be 'real' (currently: '${driverInfo.effective || '<missing>'}')`);
+  }
+  if (!(env.QTA_RPC_URL)) reasons.push('QTA_RPC_URL missing');
+  if (!(env.QTA_HOT_WALLET_ADDRESS)) reasons.push('QTA_HOT_WALLET_ADDRESS missing');
+  if (!(mnemonicInfo as any).present) reasons.push('QTA_HD_WALLET_MNEMONIC missing');
+  else if (!(mnemonicInfo as any).shape_ok) reasons.push(`QTA_HD_WALLET_MNEMONIC shape: ${(mnemonicInfo as any).shape_reason}`);
+  if (!(pkInfo as any).present) reasons.push('QTA_HOT_WALLET_PRIVATE_KEY missing');
+  else if (!(pkInfo as any).shape_ok) reasons.push(`QTA_HOT_WALLET_PRIVATE_KEY shape: ${(pkInfo as any).shape_reason}`);
+  if ((keypairMatch as any).checked && (keypairMatch as any).ok === false) {
+    reasons.push(`hot wallet key/address mismatch: derived=${(keypairMatch as any).derived_address}, expected=${(keypairMatch as any).expected_address}`);
+  }
+
+  const willRouteToRealAdapter =
+    driverInfo.effective === 'real' &&
+    !!env.QTA_RPC_URL &&
+    !!env.QTA_HOT_WALLET_ADDRESS &&
+    (pkInfo as any).shape_ok === true &&
+    (mnemonicInfo as any).shape_ok === true &&
+    ((keypairMatch as any).ok === true);
+
+  return c.json({
+    ok: true,
+    integration_status: willRouteToRealAdapter ? 'live' : 'pending',
+    verdict: reasons.length === 0
+      ? 'All required env vars are set and shapes look correct. Real adapter should route on next request.'
+      : `Real adapter is NOT active because: ${reasons.join(' | ')}`,
+    reasons_pending: reasons,
+    env: {
+      QTA_CHAIN_DRIVER: driverInfo,
+      QTA_NETWORK: describeSecret('QTA_NETWORK'),
+      QTA_CHAIN_ID: describeSecret('QTA_CHAIN_ID'),
+      QTA_RPC_URL: describeSecret('QTA_RPC_URL'),
+      QTA_EXPLORER_URL: describeSecret('QTA_EXPLORER_URL'),
+      QTA_HOT_WALLET_ADDRESS: describeSecret('QTA_HOT_WALLET_ADDRESS'),
+      QTA_HOT_WALLET_PRIVATE_KEY: pkInfo,
+      QTA_HD_WALLET_MNEMONIC: mnemonicInfo,
+      QTA_TOKEN_QX_ADDRESS: describeSecret('QTA_TOKEN_QX_ADDRESS'),
+      QTA_TOKEN_QKEY_ADDRESS: describeSecret('QTA_TOKEN_QKEY_ADDRESS'),
+    },
+    keypair_check: keypairMatch,
+    note:
+      'This endpoint intentionally never returns secret values, not even fragments. ' +
+      'Only presence, length, and shape are reported. Access requires admin role.',
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 function currentNetwork(env: any): QtaNetwork {
