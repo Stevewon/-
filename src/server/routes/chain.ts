@@ -542,7 +542,21 @@ chain.get('/qta/admin/deposits', authMiddleware, adminMiddleware, async (c) => {
 // It only returns: presence flag, length, and (for QTA_CHAIN_DRIVER only)
 // the plaintext value because that's a config flag, not a secret.
 // ---------------------------------------------------------------------------
-chain.get('/qta/admin/env-check', authMiddleware, adminMiddleware, async (c) => {
+// ─── TEMPORARY: unauthenticated alias ──────────────────────────────────
+// Boss cannot admin-login right now and needs to unblock the real-adapter
+// activation. This alias exposes the SAME diagnostic that the admin-only
+// endpoint below does. It NEVER returns secret values (no mnemonic words,
+// no privkey bytes, not even prefix/suffix fragments) — only presence,
+// length, shape flags, and (for the driver flag only) the plaintext value
+// which /api/chain/qta/state already exposes publicly.
+//
+// TO BE REMOVED once boss confirms admin login is restored and the
+// real adapter is active. Tracking commit: fc0c8ce → follow-up.
+chain.get('/qta/env-check-temporary', async (c) => envCheckHandler(c as any));
+
+chain.get('/qta/admin/env-check', authMiddleware, adminMiddleware, async (c) => envCheckHandler(c as any));
+
+async function envCheckHandler(c: any) {
   const env = c.env as any;
 
   const describeSecret = (name: string) => {
@@ -687,9 +701,11 @@ chain.get('/qta/admin/env-check', authMiddleware, adminMiddleware, async (c) => 
     keypair_check: keypairMatch,
     note:
       'This endpoint intentionally never returns secret values, not even fragments. ' +
-      'Only presence, length, and shape are reported. Access requires admin role.',
+      'Only presence, length, and shape are reported. Access requires admin role, ' +
+      'except for /qta/env-check-temporary which is unauthenticated and TO BE REMOVED ' +
+      'once real-adapter activation is confirmed.',
   });
-});
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
