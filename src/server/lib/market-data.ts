@@ -194,44 +194,27 @@ export async function fetchExternalTicker(base: string): Promise<Ticker | null> 
 }
 
 /**
- * Batch: fetch tickers for many standard coins at once from OKX (one request
- * for the whole spot market), falling back to per-coin lookups is avoided for
- * cost. Returns a map keyed by BASE symbol (e.g. "BTC").
+ * Batch: fetch tickers for many standard coins from OKX.
+ *
+ * We deliberately do NOT use OKX's "whole spot market" endpoint
+ * (/market/tickers?instType=SPOT) — its response is ~1300 rows / hundreds of
+ * KB, which is slow/unreliable to fetch and parse inside a Cloudflare Worker
+ * (subrequest size + CPU). Instead we fetch each wanted symbol individually in
+ * parallel via the same lightweight single-symbol endpoint that /candles
+ * already uses successfully in production. Returns a map keyed by BASE symbol
+ * (e.g. "BTC"). Any symbol that fails is simply omitted so the caller falls
+ * back to our own DB value for it.
  */
 export async function fetchExternalTickersBatch(bases: string[]): Promise<Map<string, Ticker>> {
   const out = new Map<string, Ticker>();
-  const wanted = new Set(
-    bases
-      .map((b) => externalPairFor(b))
-      .filter((p): p is { okx: string; coinbase: string } => !!p)
-      .map((p) => p.okx),
-  );
-  if (!wanted.size) return out;
+  const uniqueBases = Array.from(new Set(bases.map((b) => b.toUpperCase())));
 
-  try {
-    const url = `https://www.okx.com/api/v5/market/tickers?instType=SPOT`;
-    const res = await fetch(url, { headers: { 'User-Agent': UA } });
-    if (res.ok) {
-      const json: any = await res.json();
-      if (json?.code === '0' && Array.isArray(json.data)) {
-        for (const d of json.data) {
-          if (!wanted.has(d.instId)) continue;
-          const base = String(d.instId).split('-')[0];
-          const last = Number(d.last);
-          const open24h = Number(d.open24h) || last;
-          out.set(base, {
-            last,
-            change: open24h ? ((last - open24h) / open24h) * 100 : 0,
-            volume: Number(d.vol24h) || 0,
-            high: Number(d.high24h) || last,
-            low: Number(d.low24h) || last,
-          });
-        }
-      }
-    }
-  } catch {
-    /* leave out empty; caller falls back to DB values */
-  }
+  await Promise.all(
+    uniqueBases.map(async (base) => {
+      const t = await fetchExternalTicker(base);
+      if (t) out.set(base, t);
+    }),
+  );
 
   return out;
 }
