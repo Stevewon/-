@@ -29,10 +29,10 @@
     // processQtaWithdrawals() signs + broadcasts one QTA/QX/QKEY withdrawal
     // per */5 tick. These mirror the Pages app's wrangler.jsonc.
     //
-    // QTA_CHAIN_DRIVER is intentionally NOT pinned here — set it to 'real' in
-    // the Cloudflare dashboard (Worker → Settings → Variables) once the RPC
-    // and mnemonic are configured. Absent/anything-but-'real' = broadcaster
-    // no-ops (safe).
+    // QTA_CHAIN_DRIVER is pinned to 'real' so `wrangler deploy` keeps it set
+    // (a bare deploy would otherwise drop a dashboard-only var). Flip back to
+    // 'mock' here if the broadcaster ever needs to be paused.
+    "QTA_CHAIN_DRIVER": "real",
     "QTA_CHAIN_ID": "60000",
     "QTA_NETWORK": "qta-mainnet",
     "QTA_RPC_URL": "https://rpc.quantarium.io",
