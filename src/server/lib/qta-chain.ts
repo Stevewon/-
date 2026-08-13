@@ -1,32 +1,36 @@
 /**
- * Quantarium chain client — Phase B (stub adapter, real chain confirmed live).
+ * Quantarium chain client — SPHINCS+ real adapter live.
  *
- * On-chain reality (verified 2026-08-10 against scan.quantarium.io / rpc.quantarium.io):
+ * On-chain reality (confirmed 2026-08-13 via cloned go-Quantarium source at
+ * https://github.com/OfficialQTA/go-Quantarium — a go-ethereum v1.13.15
+ * fork with SPHINCS+ integration):
  *   - chain_id: 60000
- *   - Consensus: EVM-compatible Geth fork
- *   - Block signatures: SPHINCS+-SHA2-128s (NIST PQC, hash-based)
- *   - Transaction signatures: standard ECDSA (EIP-1559)
- *   - Addresses: standard 20-byte EVM (0x...), NOT bech32
+ *   - Consensus: EVM-compatible Geth fork (Clique)
+ *   - Block signatures: SPHINCS+-SHA2-128s (SLH-DSA)
+ *   - Transaction signatures: SPHINCS+-SHA2-128s via new typed tx 0x7f
+ *     (NOT standard ECDSA — this was our misunderstanding for a day)
+ *   - Addresses: 20-byte EVM (0x...), computed as keccak256(SPHINCS+ pubkey)[-20:]
  *   - Native coin: QTA (18 decimals)
  *   - Reference tokens: QX (ERC-20), QKEY (ERC-20)
  *   - Explorer: https://scan.quantarium.io (Blockscout v2 API)
  *   - RPC:      https://rpc.quantarium.io
  *
- * Exchange hot wallet (dedicated EOA, separate from Treasury):
+ * Exchange hot wallet (dedicated account derived from HD index 0):
  *   0x496EEaCE6Cf759C95e9eFea5d4C16A35D0524E97
  *
- * Custody model (Scenario C — Hybrid):
- *   Each QuantaEX user maps to a subwallet under @quantarium_bot's master
- *   account; QuantaEX orchestrates subwallets via the bot API. The hot
- *   wallet above is the exchange's sweep destination and withdrawal source.
+ * Custody model (Option 2 — server-held HD mnemonic, no bot dependency):
+ *   Server holds a single 12-word BIP-39 mnemonic (Cloudflare Pages secret
+ *   `QTA_HD_WALLET_MNEMONIC`). Each user gets a deterministic SPHINCS+ keypair
+ *   via HKDF-based derivation (see lib/qta-sphincs.ts for full doc). Index 0
+ *   is the hot wallet — the exchange's withdrawal source and sweep
+ *   destination. Indices 1..N are per-user deposit addresses, allocated
+ *   monotonically in the qta_hd_indexes table (migration 0036).
  *
  * NOTE: The MockQtaChainClient below still uses the OLD placeholder shape
  * (qta1... bech32 addresses, Dilithium3 label) because previous route/DB
  * code was written against it. This is retained ONLY as a compile-time
- * placeholder; the /chain/qta/* routes now hard-guard against issuing
- * mock addresses to real users (see routes/chain.ts). The real adapter
- * will be an EVM adapter (ethers/viem) OR a Telegram bot API adapter
- * depending on final Scenario C bot-API spec — implemented in a follow-up.
+ * placeholder; the /chain/qta/* routes hard-guard against issuing mock
+ * addresses to real users (see routes/chain.ts).
  *
  * Required deposit confirmations (mainnet): 12
  */
@@ -39,12 +43,12 @@ export const QUANTARIUM_CHAIN = {
   name: 'Quantarium',
   rpcUrl: 'https://rpc.quantarium.io',
   explorerUrl: 'https://scan.quantarium.io',
-  blockSignatureScheme: 'SPHINCS+-SHA2-128s',
-  txSignatureScheme: 'ECDSA (EIP-1559)',
+  blockSignatureScheme: 'SPHINCS+-SHA2-128s (SLH-DSA)',
+  txSignatureScheme: 'SPHINCS+-SHA2-128s (typed tx 0x7f)',
   nativeSymbol: 'QTA',
   nativeDecimals: 18,
   requiredConfirmations: 12,
-  // Exchange hot wallet (dedicated EOA — separate from Treasury).
+  // Exchange hot wallet (SPHINCS+ HD account index 0).
   exchangeHotWallet: '0x496EEaCE6Cf759C95e9eFea5d4C16A35D0524E97',
   tokens: {
     QX:   { address: '0xad447d42fB065a5b505772235F0c96d27501e6Fb', decimals: 18 },
@@ -176,49 +180,67 @@ export class MockQtaChainClient implements QtaChainClient {
 }
 
 // ---------------------------------------------------------------------------
-// Real adapter — Quantarium (EVM, chain_id 60000).
+// Real adapter — Quantarium (SPHINCS+ typed tx 0x7f, chain_id 60000).
 //
-// Architecture (per boss's 2026-08-10 decision — Option 2):
-//   - HD wallet seed lives in QTA_HD_WALLET_MNEMONIC (Cloudflare Pages secret).
-//   - Each user gets a stable BIP-44 derived address (path m/44'/60'/0'/0/i).
-//     Index `i` is allocated once per user in qta_hd_indexes and never reused
-//     even after account deletion, so an old address can never re-map to a
-//     different user.
-//   - Hot wallet (0x496EEaCE...4E97) is a separate secret QTA_HOT_WALLET_PRIVATE_KEY
-//     — the signer for outbound withdrawals and the destination for sweeps.
+// Architecture (Option 2, revised per PQ revelation on 2026-08-13):
+//   - Server holds ONE 12-word BIP-39 mnemonic (secret QTA_HD_WALLET_MNEMONIC).
+//   - Custom HKDF-based HD derivation (BIP-32 not applicable to SPHINCS+):
+//     each account_index maps to a deterministic SLH-DSA-SHA2-128s keypair.
+//   - Index 0 = exchange hot wallet (0x496EEaCE...4E97).
+//     Indices 1..N = per-user deposit addresses, allocated monotonically in
+//     qta_hd_indexes and never reused after account deletion.
+//   - Transaction signing uses the SPHINCS+ typed tx envelope 0x7f (NOT the
+//     standard EIP-1559 0x02) with pubkey + 7856-byte signature in the RLP
+//     payload. See lib/qta-sphincs.ts for wire format + performance notes.
+//   - Withdrawal signing is CPU-intensive (~6-10 s per signature). The
+//     signAndBroadcast() method below performs the sign synchronously; on
+//     Cloudflare Pages Workers this MUST run inside a queue consumer or
+//     scheduled task, not a user-facing HTTP handler, because Workers have
+//     a per-request CPU budget (10 ms free, 30 s paid) that a synchronous
+//     sign would blow through and starve concurrent requests.
 //
 // This client is only ever returned by getQtaChainClient() when
-// env.QTA_CHAIN_DRIVER === 'real' AND all required secrets are present.
+// env.QTA_CHAIN_DRIVER === 'real' AND QTA_HD_WALLET_MNEMONIC is present.
 // Otherwise the routes' 503 CHAIN_INTEGRATION_PENDING gate stays engaged.
+//
+// ⚠️ QTA_HOT_WALLET_PRIVATE_KEY is DEPRECATED — SPHINCS+ has no 32-byte
+// ECDSA private key equivalent. The hot wallet's SPHINCS+ secret key (64
+// bytes) is derived from the mnemonic at index 0, not stored separately.
+// The env is still read for backwards compat but no longer required.
 // ---------------------------------------------------------------------------
 import {
-  deriveAddressFromMnemonic,
+  deriveAccountFromMnemonic,
   isValidMnemonic,
   toChecksumAddress,
-} from './qta-hd';
+  signSphincsTx,
+  toHex,
+  verifyMnemonicMatchesHotWallet,
+  type SphincsAccount,
+} from './qta-sphincs';
 import {
   getBlockNumber,
   getNativeBalance,
-  sendNative,
-  verifyHotWalletKeypair,
+  getNonce,
+  suggestFees,
+  encodeErc20Transfer,
+  sendRawTransaction,
   type EvmRpcConfig,
 } from './qta-evm';
-import { parseHexPrivateKey } from './qta-hd';
 
-export interface EvmChainEnvBindings {
+export interface SphincsChainEnvBindings {
   DB?: D1Database;
 }
 
-export class EvmQtaChainClient implements QtaChainClient {
+export class SphincsQtaChainClient implements QtaChainClient {
   network: QtaNetwork;
-  signatureScheme = 'SPHINCS+-SHA2-128s (blocks) / ECDSA (tx)';
+  signatureScheme = 'SPHINCS+-SHA2-128s (SLH-DSA, typed tx 0x7f)';
   blockTimeMs = 2000;
   requiredConfirmations: number;
 
   private readonly cfg: EvmRpcConfig;
   private readonly mnemonic: string;
   private readonly hotWalletAddress: string;
-  private readonly hotWalletPrivKeyHex: string;
+  private readonly hotAccount: SphincsAccount; // cached — 32-byte pubkey + 64-byte secret
   private readonly db?: D1Database;
 
   constructor(params: {
@@ -226,25 +248,28 @@ export class EvmQtaChainClient implements QtaChainClient {
     chainId: number;
     mnemonic: string;
     hotWalletAddress: string;
-    hotWalletPrivKeyHex: string;
     network?: QtaNetwork;
     db?: D1Database;
   }) {
     if (!isValidMnemonic(params.mnemonic)) {
-      throw new Error('EvmQtaChainClient: QTA_HD_WALLET_MNEMONIC missing/invalid');
+      throw new Error('SphincsQtaChainClient: QTA_HD_WALLET_MNEMONIC missing/invalid');
     }
-    // Verify at construct time that the hot wallet privkey matches the address.
-    const check = verifyHotWalletKeypair(params.hotWalletPrivKeyHex, params.hotWalletAddress);
+    // Construct-time keypair verification: index-0 derived from the mnemonic
+    // MUST match the declared exchange hot wallet. If not, the operator has
+    // registered the wrong mnemonic and every withdrawal would fail; fail
+    // FAST at construction so the safety gate stays engaged.
+    const check = verifyMnemonicMatchesHotWallet(params.mnemonic, params.hotWalletAddress);
     if (!check.ok) {
       throw new Error(
-        `EvmQtaChainClient: hot wallet key/address mismatch (derived=${check.derived}, expected=${check.expected})`,
+        `SphincsQtaChainClient: mnemonic index-0 does not match hot wallet ` +
+        `(derived=${check.derived}, expected=${check.expected})`,
       );
     }
 
     this.cfg = { rpcUrl: params.rpcUrl, chainId: params.chainId };
     this.mnemonic = params.mnemonic;
     this.hotWalletAddress = toChecksumAddress(params.hotWalletAddress);
-    this.hotWalletPrivKeyHex = params.hotWalletPrivKeyHex;
+    this.hotAccount = deriveAccountFromMnemonic(params.mnemonic, 0);
     this.db = params.db;
     this.network = params.network || 'qta-mainnet';
     this.requiredConfirmations = this.network === 'qta-mainnet' ? 12 : 6;
@@ -255,20 +280,20 @@ export class EvmQtaChainClient implements QtaChainClient {
     return {
       height,
       timestamp: Math.floor(Date.now() / 1000),
-      validatorsOnline: 0, // Not exposed by standard eth_ RPC; leave 0 for now.
+      validatorsOnline: 0, // Clique validators — not exposed via eth_ RPC.
     };
   }
 
   async generateAddress(userId: string): Promise<QtaAddress> {
     if (!this.db) {
-      throw new Error('EvmQtaChainClient.generateAddress requires DB binding (HD index allocation)');
+      throw new Error('SphincsQtaChainClient.generateAddress requires DB binding (HD index allocation)');
     }
     const index = await allocateHdIndex(this.db, userId);
-    const derived = deriveAddressFromMnemonic(this.mnemonic, index);
+    const acc = deriveAccountFromMnemonic(this.mnemonic, index);
     return {
-      address: derived.address,
-      pubkey: derived.pubkey,
-      derivation: derived.path,
+      address: acc.address,
+      pubkey: '0x' + toHex(acc.publicKey),
+      derivation: `sphincs-hd-wallet-v1/${index}`,
     };
   }
 
@@ -279,11 +304,21 @@ export class EvmQtaChainClient implements QtaChainClient {
 
   async listIncomingTxs(_address: string, _fromBlock: number): Promise<QtaTx[]> {
     // Deposit detection is done by the cron ticker via Blockscout API
-    // (much cheaper than getLogs over a large range on RPC), so this
-    // stays a no-op for now. See cron/qta-tick.ts in the follow-up.
+    // (cheaper than eth_getLogs over long ranges), so this stays a no-op
+    // here. See cron/qta-tick.ts in the follow-up.
     return [];
   }
 
+  /**
+   * Sign a native-QTA withdrawal with the hot wallet's SPHINCS+ key (index 0)
+   * and broadcast to the network. Returns the resulting tx hash.
+   *
+   * ⚠️ SPHINCS+ signing is expensive (~6-10 s per tx). This call MUST NOT be
+   * awaited from a user-facing HTTP handler — always dispatch via a queue
+   * consumer / scheduled worker. The safety gate in /wallet/withdraw already
+   * returns 503 CHAIN_INTEGRATION_PENDING when driver!=real, and once real
+   * mode is enabled the withdraw route should enqueue instead of awaiting.
+   */
   async signAndBroadcast(params: {
     to: string;
     amount: string;
@@ -292,19 +327,74 @@ export class EvmQtaChainClient implements QtaChainClient {
     if (!/^0x[0-9a-fA-F]{40}$/.test(params.to)) {
       throw new Error('to must be a 20-byte 0x-address');
     }
-    // amount is decimal QTA (18 decimals). Convert to wei bigint safely.
     const amountWei = decimalStringToWei(params.amount, 18);
     if (amountWei <= 0n) throw new Error('amount must be > 0');
 
-    const priv = parseHexPrivateKey(this.hotWalletPrivKeyHex);
-    const { txHash } = await sendNative({
-      cfg: this.cfg,
-      fromAddress: this.hotWalletAddress,
-      fromPrivkey: priv,
-      to: params.to,
-      amountWei,
-    });
-    return { hash: txHash, acceptedAt: Math.floor(Date.now() / 1000) };
+    const [nonce, fees] = await Promise.all([
+      getNonce(this.cfg, this.hotWalletAddress),
+      suggestFees(this.cfg),
+    ]);
+
+    const { rawTx } = signSphincsTx(
+      {
+        chainId: this.cfg.chainId,
+        nonce,
+        maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
+        maxFeePerGas: fees.maxFeePerGas,
+        gasLimit: 100_000n, // native transfer with PQ signature — larger tx size, higher gas headroom
+        to: params.to,
+        value: amountWei,
+        data: '0x',
+      },
+      this.hotAccount.publicKey,
+      this.hotAccount.secretKey,
+    );
+
+    const broadcastHash = await sendRawTransaction(this.cfg, rawTx);
+    return { hash: broadcastHash, acceptedAt: Math.floor(Date.now() / 1000) };
+  }
+
+  /**
+   * ERC-20 (QX / QKEY) withdrawal. Same signing constraints as signAndBroadcast
+   * above — expect ~6-10 s per signature. Exposed as a public method so that a
+   * future admin/queue worker can drive token withdrawals directly.
+   */
+  async signAndBroadcastErc20(params: {
+    tokenContract: string;
+    to: string;
+    amountWei: bigint;
+  }): Promise<QtaBroadcastResult> {
+    if (!/^0x[0-9a-fA-F]{40}$/.test(params.tokenContract)) {
+      throw new Error('tokenContract must be a 20-byte 0x-address');
+    }
+    if (!/^0x[0-9a-fA-F]{40}$/.test(params.to)) {
+      throw new Error('to must be a 20-byte 0x-address');
+    }
+    if (params.amountWei <= 0n) throw new Error('amount must be > 0');
+
+    const [nonce, fees] = await Promise.all([
+      getNonce(this.cfg, this.hotWalletAddress),
+      suggestFees(this.cfg),
+    ]);
+
+    const data = encodeErc20Transfer(params.to, params.amountWei);
+    const { rawTx } = signSphincsTx(
+      {
+        chainId: this.cfg.chainId,
+        nonce,
+        maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
+        maxFeePerGas: fees.maxFeePerGas,
+        gasLimit: 200_000n,
+        to: params.tokenContract,
+        value: 0n,
+        data,
+      },
+      this.hotAccount.publicKey,
+      this.hotAccount.secretKey,
+    );
+
+    const broadcastHash = await sendRawTransaction(this.cfg, rawTx);
+    return { hash: broadcastHash, acceptedAt: Math.floor(Date.now() / 1000) };
   }
 }
 
@@ -325,16 +415,19 @@ function decimalStringToWei(s: string, decimals: number): bigint {
 }
 
 /**
- * Allocate a stable BIP-44 HD index for a user. Idempotent per user_id so
+ * Allocate a stable HD index (>= 1) for a user. Idempotent per user_id so
  * repeated calls to /chain/qta/deposit-address always yield the same address.
  *
- * Requires table `qta_hd_indexes` (created by migration 0036 in follow-up):
+ * Index 0 is reserved for the exchange hot wallet — never issued to users.
+ *
+ * Requires table `qta_hd_indexes` (created by migration 0036):
  *   user_id TEXT PRIMARY KEY, address_index INTEGER UNIQUE NOT NULL,
  *   address TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP
  *
- * Falls back to a deterministic hash of user_id if the table is missing so
- * the code doesn't blow up before the migration lands — the address is still
- * stable, just not reserved in a monotonic sequence.
+ * Falls back to a deterministic hash of user_id (shifted into [1, 2^30 + 1))
+ * if the table is missing so the code doesn't blow up before the migration
+ * lands — the address is still stable, just not reserved in a monotonic
+ * sequence.
  */
 async function allocateHdIndex(db: D1Database, userId: string): Promise<number> {
   try {
@@ -345,12 +438,14 @@ async function allocateHdIndex(db: D1Database, userId: string): Promise<number> 
     if (existing && Number.isInteger(existing.address_index)) {
       return existing.address_index;
     }
+    // Start at 1 (index 0 reserved for the hot wallet). If no rows yet,
+    // COALESCE(MAX, 0) + 1 = 1; otherwise the next monotonic slot.
     const row = await db
       .prepare(
-        'SELECT COALESCE(MAX(address_index), -1) + 1 AS next_ix FROM qta_hd_indexes',
+        'SELECT COALESCE(MAX(address_index), 0) + 1 AS next_ix FROM qta_hd_indexes',
       )
       .first<{ next_ix: number }>();
-    const nextIx = Number(row?.next_ix ?? 0);
+    const nextIx = Math.max(1, Number(row?.next_ix ?? 1));
     await db
       .prepare(
         `INSERT INTO qta_hd_indexes (user_id, address_index, created_at)
@@ -366,13 +461,14 @@ async function allocateHdIndex(db: D1Database, userId: string): Promise<number> 
       .first<{ address_index: number }>();
     return Number(finalRow?.address_index ?? nextIx);
   } catch (_e) {
-    // Table missing: fall back to a stable hash-based index in [0, 2^30).
+    // Table missing: fall back to a stable hash-based index in [1, 2^30 + 1).
     // Runtime code will still work; the follow-up migration replaces this path.
+    // Never returns 0 — that slot belongs to the hot wallet.
     let h = 2166136261;
     for (let i = 0; i < userId.length; i++) {
       h = (h ^ userId.charCodeAt(i)) * 16777619;
     }
-    return Math.abs(h) % (1 << 30);
+    return (Math.abs(h) % (1 << 30)) + 1;
   }
 }
 
@@ -386,8 +482,14 @@ export interface QtaChainEnv {
   QTA_CHAIN_ID?: string;
   QTA_RPC_URL?: string;
   QTA_HOT_WALLET_ADDRESS?: string;
-  QTA_HOT_WALLET_PRIVATE_KEY?: string;
   QTA_HD_WALLET_MNEMONIC?: string;
+  /**
+   * @deprecated SPHINCS+ has no 32-byte ECDSA private key equivalent. Hot
+   * wallet secret key (64 bytes) is derived from the mnemonic at index 0.
+   * Kept in the type for backwards-compat with the diagnostic env-check
+   * endpoint but no longer required by the real adapter.
+   */
+  QTA_HOT_WALLET_PRIVATE_KEY?: string;
   DB?: D1Database;
 }
 
@@ -396,19 +498,20 @@ export function getQtaChainClient(env: QtaChainEnv): QtaChainClient {
   const network: QtaNetwork =
     (env.QTA_NETWORK as QtaNetwork) === 'qta-testnet' ? 'qta-testnet' : 'qta-mainnet';
 
+  // Real adapter activates only when driver=real AND all required secrets
+  // are present. Note: QTA_HOT_WALLET_PRIVATE_KEY is no longer required — the
+  // hot wallet key is derived from the mnemonic at index 0.
   if (
     driver === 'real' &&
     env.QTA_RPC_URL &&
     env.QTA_HOT_WALLET_ADDRESS &&
-    env.QTA_HOT_WALLET_PRIVATE_KEY &&
     env.QTA_HD_WALLET_MNEMONIC
   ) {
-    return new EvmQtaChainClient({
+    return new SphincsQtaChainClient({
       rpcUrl: env.QTA_RPC_URL,
       chainId: Number(env.QTA_CHAIN_ID || '60000'),
       mnemonic: env.QTA_HD_WALLET_MNEMONIC,
       hotWalletAddress: env.QTA_HOT_WALLET_ADDRESS,
-      hotWalletPrivKeyHex: env.QTA_HOT_WALLET_PRIVATE_KEY,
       network,
       db: env.DB,
     });

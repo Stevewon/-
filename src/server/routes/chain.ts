@@ -608,52 +608,67 @@ async function envCheckHandler(c: any) {
     };
   }
 
-  // Private key shape check (hex length) — never echo content.
+  // Legacy: private-key shape check (still parsed for backwards compat with
+  // any secret operators may have registered before the PQ revelation, but
+  // NO LONGER REQUIRED — SPHINCS+ has no 32-byte ECDSA private key).
   const pkRaw = env.QTA_HOT_WALLET_PRIVATE_KEY;
-  let pkInfo: Record<string, unknown> = { present: false, reason: 'MISSING' };
+  let pkInfo: Record<string, unknown> = {
+    present: false,
+    reason: 'MISSING (no longer required — SPHINCS+ has no ECDSA privkey)',
+  };
   if (typeof pkRaw === 'string' && pkRaw.trim()) {
     const trimmed = pkRaw.trim();
-    const cleaned = trimmed.replace(/^0x/i, '');
     pkInfo = {
       present: true,
       char_length: pkRaw.length,
       trimmed_char_length: trimmed.length,
-      has_0x_prefix: /^0x/i.test(trimmed),
-      hex_char_length: cleaned.length,
-      has_whitespace_edges: trimmed !== pkRaw,
-      shape_ok: /^[0-9a-fA-F]{64}$/.test(cleaned),
-      shape_reason: /^[0-9a-fA-F]{64}$/.test(cleaned)
-        ? 'valid 32-byte hex'
-        : `expected 64 hex chars, got ${cleaned.length} (with non-hex chars? ${/[^0-9a-fA-F]/.test(cleaned)})`,
+      status: 'DEPRECATED — SPHINCS+ mode ignores this. Safe to delete from Cloudflare dashboard.',
     };
   }
 
-  // Hot wallet key <-> address match check.
-  let keypairMatch: Record<string, unknown> = { checked: false, reason: 'skipped' };
+  // Mnemonic <-> hot wallet address match check (SPHINCS+ HD index 0).
+  // This is the critical safety check: if the mnemonic's index-0 SPHINCS+
+  // derivation does not match the declared exchange hot wallet, every
+  // withdrawal signed by the server would come from the wrong address and
+  // fail on-chain. Verifying now blocks activation before that ever happens.
+  let mnemonicMatch: Record<string, unknown> = { checked: false, reason: 'skipped' };
   const hotAddrRaw = env.QTA_HOT_WALLET_ADDRESS;
   if (
-    typeof pkRaw === 'string' && pkRaw.trim() && (pkInfo as any).shape_ok &&
+    typeof mnemonicRaw === 'string' && mnemonicRaw.trim() &&
+    (mnemonicInfo as any).shape_ok &&
     typeof hotAddrRaw === 'string' && hotAddrRaw.trim()
   ) {
     try {
-      const { verifyHotWalletKeypair } = await import('../lib/qta-evm');
-      const check = verifyHotWalletKeypair(pkRaw.trim(), hotAddrRaw.trim());
-      if (check.ok) {
-        keypairMatch = { checked: true, ok: true };
-      } else {
-        keypairMatch = {
+      const { verifyMnemonicMatchesHotWallet, isValidMnemonic } =
+        await import('../lib/qta-sphincs');
+      const trimmedMnem = mnemonicRaw.trim();
+      if (!isValidMnemonic(trimmedMnem)) {
+        mnemonicMatch = {
           checked: true,
           ok: false,
-          derived_address: check.derived,
-          expected_address: check.expected,
-          reason: 'private key does not derive the expected hot wallet address',
+          reason: 'mnemonic fails BIP-39 English wordlist validation (word not in list or bad checksum)',
         };
+      } else {
+        // NOTE: SPHINCS+ keygen is CPU-intensive (few seconds). This endpoint
+        // may take 5-10 s to respond when a mnemonic is present — expected.
+        const check = verifyMnemonicMatchesHotWallet(trimmedMnem, hotAddrRaw.trim());
+        if (check.ok) {
+          mnemonicMatch = { checked: true, ok: true };
+        } else {
+          mnemonicMatch = {
+            checked: true,
+            ok: false,
+            derived_address: check.derived,
+            expected_address: check.expected,
+            reason: 'mnemonic index-0 does NOT derive the expected hot wallet address',
+          };
+        }
       }
     } catch (e: any) {
-      keypairMatch = { checked: true, ok: false, error: String(e?.message || e) };
+      mnemonicMatch = { checked: true, ok: false, error: String(e?.message || e) };
     }
-  } else if (!(pkInfo as any).shape_ok) {
-    keypairMatch = { checked: false, reason: 'private key shape invalid — cannot verify' };
+  } else if ((mnemonicInfo as any).present && !(mnemonicInfo as any).shape_ok) {
+    mnemonicMatch = { checked: false, reason: 'mnemonic shape invalid — cannot verify' };
   }
 
   // Diagnose why integration_status is still 'pending'.
@@ -663,27 +678,31 @@ async function envCheckHandler(c: any) {
   }
   if (!(env.QTA_RPC_URL)) reasons.push('QTA_RPC_URL missing');
   if (!(env.QTA_HOT_WALLET_ADDRESS)) reasons.push('QTA_HOT_WALLET_ADDRESS missing');
-  if (!(mnemonicInfo as any).present) reasons.push('QTA_HD_WALLET_MNEMONIC missing');
-  else if (!(mnemonicInfo as any).shape_ok) reasons.push(`QTA_HD_WALLET_MNEMONIC shape: ${(mnemonicInfo as any).shape_reason}`);
-  if (!(pkInfo as any).present) reasons.push('QTA_HOT_WALLET_PRIVATE_KEY missing');
-  else if (!(pkInfo as any).shape_ok) reasons.push(`QTA_HOT_WALLET_PRIVATE_KEY shape: ${(pkInfo as any).shape_reason}`);
-  if ((keypairMatch as any).checked && (keypairMatch as any).ok === false) {
-    reasons.push(`hot wallet key/address mismatch: derived=${(keypairMatch as any).derived_address}, expected=${(keypairMatch as any).expected_address}`);
+  if (!(mnemonicInfo as any).present) {
+    reasons.push('QTA_HD_WALLET_MNEMONIC missing');
+  } else if (!(mnemonicInfo as any).shape_ok) {
+    reasons.push(`QTA_HD_WALLET_MNEMONIC shape: ${(mnemonicInfo as any).shape_reason}`);
+  }
+  if ((mnemonicMatch as any).checked && (mnemonicMatch as any).ok === false) {
+    const detail = (mnemonicMatch as any).derived_address
+      ? ` (derived=${(mnemonicMatch as any).derived_address}, expected=${(mnemonicMatch as any).expected_address})`
+      : ` (${(mnemonicMatch as any).reason || (mnemonicMatch as any).error})`;
+    reasons.push(`mnemonic does not match hot wallet${detail}`);
   }
 
   const willRouteToRealAdapter =
     driverInfo.effective === 'real' &&
     !!env.QTA_RPC_URL &&
     !!env.QTA_HOT_WALLET_ADDRESS &&
-    (pkInfo as any).shape_ok === true &&
     (mnemonicInfo as any).shape_ok === true &&
-    ((keypairMatch as any).ok === true);
+    ((mnemonicMatch as any).ok === true);
 
   return c.json({
     ok: true,
+    signature_scheme: 'SPHINCS+-SHA2-128s (SLH-DSA, typed tx 0x7f)',
     integration_status: willRouteToRealAdapter ? 'live' : 'pending',
     verdict: reasons.length === 0
-      ? 'All required env vars are set and shapes look correct. Real adapter should route on next request.'
+      ? 'All required env vars are set, mnemonic shape is valid, and mnemonic index-0 matches the declared hot wallet. Real SPHINCS+ adapter should route on next request.'
       : `Real adapter is NOT active because: ${reasons.join(' | ')}`,
     reasons_pending: reasons,
     env: {
@@ -693,17 +712,18 @@ async function envCheckHandler(c: any) {
       QTA_RPC_URL: describeSecret('QTA_RPC_URL'),
       QTA_EXPLORER_URL: describeSecret('QTA_EXPLORER_URL'),
       QTA_HOT_WALLET_ADDRESS: describeSecret('QTA_HOT_WALLET_ADDRESS'),
-      QTA_HOT_WALLET_PRIVATE_KEY: pkInfo,
       QTA_HD_WALLET_MNEMONIC: mnemonicInfo,
+      QTA_HOT_WALLET_PRIVATE_KEY: pkInfo,
       QTA_TOKEN_QX_ADDRESS: describeSecret('QTA_TOKEN_QX_ADDRESS'),
       QTA_TOKEN_QKEY_ADDRESS: describeSecret('QTA_TOKEN_QKEY_ADDRESS'),
     },
-    keypair_check: keypairMatch,
+    mnemonic_check: mnemonicMatch,
     note:
       'This endpoint intentionally never returns secret values, not even fragments. ' +
       'Only presence, length, and shape are reported. Access requires admin role, ' +
       'except for /qta/env-check-temporary which is unauthenticated and TO BE REMOVED ' +
-      'once real-adapter activation is confirmed.',
+      'once real-adapter activation is confirmed. Mnemonic verification triggers a ' +
+      'SPHINCS+ keygen which takes 5-10 seconds — response latency is expected.',
   });
 }
 
