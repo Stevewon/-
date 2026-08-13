@@ -16,7 +16,9 @@
  *   - RPC:      https://rpc.quantarium.io
  *
  * Exchange hot wallet (dedicated account derived from HD index 0):
- *   0x496EEaCE6Cf759C95e9eFea5d4C16A35D0524E97
+ *   0x4B35C55652E9831b9D3b5f3456d276E553B938Cb
+ *   (rotated 2026-08-13 — replaces the legacy Telegram-bot-derived
+ *    0x496EEaCE…4E97; QuantaEX now controls the mnemonic end-to-end)
  *
  * Custody model (Option 2 — server-held HD mnemonic, no bot dependency):
  *   Server holds a single 12-word BIP-39 mnemonic (Cloudflare Pages secret
@@ -49,7 +51,7 @@ export const QUANTARIUM_CHAIN = {
   nativeDecimals: 18,
   requiredConfirmations: 12,
   // Exchange hot wallet (SPHINCS+ HD account index 0).
-  exchangeHotWallet: '0x496EEaCE6Cf759C95e9eFea5d4C16A35D0524E97',
+  exchangeHotWallet: '0x4B35C55652E9831b9D3b5f3456d276E553B938Cb',
   tokens: {
     QX:   { address: '0xad447d42fB065a5b505772235F0c96d27501e6Fb', decimals: 18 },
     QKEY: { address: '0x216621D3b3dB600F35DBf6c5709486dDC8882a16', decimals: 18 },
@@ -186,7 +188,7 @@ export class MockQtaChainClient implements QtaChainClient {
 //   - Server holds ONE 12-word BIP-39 mnemonic (secret QTA_HD_WALLET_MNEMONIC).
 //   - Custom HKDF-based HD derivation (BIP-32 not applicable to SPHINCS+):
 //     each account_index maps to a deterministic SLH-DSA-SHA2-128s keypair.
-//   - Index 0 = exchange hot wallet (0x496EEaCE...4E97).
+//   - Index 0 = exchange hot wallet (0x4B35C556...938Cb).
 //     Indices 1..N = per-user deposit addresses, allocated monotonically in
 //     qta_hd_indexes and never reused after account deletion.
 //   - Transaction signing uses the SPHINCS+ typed tx envelope 0x7f (NOT the

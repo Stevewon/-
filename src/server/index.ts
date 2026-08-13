@@ -36,7 +36,7 @@ export type Env = {
   QTA_CHAIN_NAME?: string;          // 'Quantarium'
   QTA_RPC_URL?: string;             // https://rpc.quantarium.io
   QTA_EXPLORER_URL?: string;        // https://scan.quantarium.io
-  QTA_HOT_WALLET_ADDRESS?: string;  // 0x496EEaCE6Cf759C95e9eFea5d4C16A35D0524E97
+  QTA_HOT_WALLET_ADDRESS?: string;  // 0x4B35C55652E9831b9D3b5f3456d276E553B938Cb
   QTA_HOT_WALLET_PRIVATE_KEY?: string; // 32-byte hex, secret via `wrangler pages secret put`
   QTA_HD_WALLET_MNEMONIC?: string;  // 12/24-word BIP-39 mnemonic, secret via `wrangler pages secret put`
   QTA_TOKEN_QX_ADDRESS?: string;
@@ -1130,8 +1130,12 @@ app.use('/api/*', async (c, next) => {
       ctx.waitUntil(
         (async () => {
           try {
+            // Marker bumped 2026-08-13 so the hot-wallet rotation below
+            // (0x496EEaCE…4E97 → 0x4B35C556…938Cb) re-runs once in
+            // production even though the original 0035 correction marker
+            // was already set.
             const marker = await c.env.DB.prepare(
-              "SELECT value FROM system_state WHERE key = 'qta_chain_correction_2026_08_10'"
+              "SELECT value FROM system_state WHERE key = 'qta_chain_correction_2026_08_13_rotate'"
             ).first<{ value: string }>().catch(() => null);
             if (marker && marker.value === 'migrated_v1') {
               qtaChainCorrectionBootstrapDone = true;
@@ -1151,15 +1155,18 @@ app.use('/api/*', async (c, next) => {
             } catch (_e) { /* table may not exist yet; safe to ignore */ }
 
             // 2) Adopt the dedicated exchange hot wallet as the canonical
-            //    hot_wallet_addr wherever it hasn't been set or was still
-            //    holding a legacy qta1... mock value.
+            //    hot_wallet_addr wherever it hasn't been set, was still
+            //    holding a legacy qta1... mock value, or held the rotated-out
+            //    legacy Telegram-bot wallet (0x496EEaCE…4E97, retired
+            //    2026-08-13 in favor of the QuantaEX-controlled account).
             try {
               await c.env.DB.prepare(
                 `UPDATE qta_chain_state
-                    SET hot_wallet_addr = '0x496EEaCE6Cf759C95e9eFea5d4C16A35D0524E97'
+                    SET hot_wallet_addr = '0x4B35C55652E9831b9D3b5f3456d276E553B938Cb'
                   WHERE hot_wallet_addr IS NULL
                      OR hot_wallet_addr = ''
-                     OR hot_wallet_addr LIKE 'qta1%'`
+                     OR hot_wallet_addr LIKE 'qta1%'
+                     OR hot_wallet_addr = '0x496EEaCE6Cf759C95e9eFea5d4C16A35D0524E97'`
               ).run();
             } catch (_e) { /* ignore */ }
 
@@ -1168,15 +1175,16 @@ app.use('/api/*', async (c, next) => {
               `INSERT OR REPLACE INTO system_state (key, value, updated_at)
                VALUES (
                  'qta_exchange_hot_wallet',
-                 '{"address":"0x496EEaCE6Cf759C95e9eFea5d4C16A35D0524E97",'
+                 '{"address":"0x4B35C55652E9831b9D3b5f3456d276E553B938Cb",'
                    || '"chain_id":60000,'
                    || '"chain_name":"Quantarium",'
                    || '"kind":"EOA",'
                    || '"role":"exchange_hot_wallet",'
-                   || '"issued_at":"2026-08-10",'
+                   || '"issued_at":"2026-08-13",'
+                   || '"rotated_from":"0x496EEaCE6Cf759C95e9eFea5d4C16A35D0524E97",'
                    || '"verified":{"nonce":0,"balance_qta":"0","is_contract":false},'
-                   || '"custody_model":"scenario_c_hybrid",'
-                   || '"bot_wallet":"@quantarium_bot"}',
+                   || '"custody_model":"server_held_hd_mnemonic",'
+                   || '"bot_wallet":null}',
                  CURRENT_TIMESTAMP
                )`
             ).run();
@@ -1184,7 +1192,7 @@ app.use('/api/*', async (c, next) => {
             // 4) Marker.
             await c.env.DB.prepare(
               `INSERT OR REPLACE INTO system_state (key, value, updated_at)
-               VALUES ('qta_chain_correction_2026_08_10', 'migrated_v1', CURRENT_TIMESTAMP)`
+               VALUES ('qta_chain_correction_2026_08_13_rotate', 'migrated_v1', CURRENT_TIMESTAMP)`
             ).run();
 
             qtaChainCorrectionBootstrapDone = true;
