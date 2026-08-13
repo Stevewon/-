@@ -8,7 +8,30 @@
  * This Worker binds directly to the same D1 database as the Pages app
  * so it can read price_alerts / coins and insert into notifications
  * without going through the HTTP API.
+ *
+ * It also owns the CPU-heavy half of the QTA withdrawal pipeline: the Pages
+ * app's admin-approve endpoint only moves a qta_withdrawals row to
+ * 'broadcasting' (a queue state), because SPHINCS+ signing takes ~6-10 s and
+ * must not run inside a user-facing request. processQtaWithdrawals() below
+ * picks up those rows on the *\/5 tick, signs + broadcasts ONE per tick, and
+ * advances it to 'confirmed' (real tx_hash) or 'failed'.
  */
+
+import {
+  deriveAccountFromMnemonic,
+  isValidMnemonic,
+  toChecksumAddress,
+  signSphincsTx,
+  verifyMnemonicMatchesHotWallet,
+  type SphincsAccount,
+} from './lib/qta-sphincs';
+import {
+  getNonce,
+  suggestFees,
+  encodeErc20Transfer,
+  sendRawTransaction,
+  type EvmRpcConfig,
+} from './lib/qta-evm';
 
 export interface Env {
   DB: D1Database;
@@ -21,6 +44,14 @@ export interface Env {
   QTA_NETWORK?: string;
   QTA_RPC_URL?: string;
   QTA_HOT_WALLET_PRIVATE_KEY?: string;
+  // Real-adapter secrets (needed for async withdrawal sign+broadcast).
+  QTA_CHAIN_ID?: string;
+  QTA_HOT_WALLET_ADDRESS?: string;
+  QTA_HD_WALLET_MNEMONIC?: string;
+  QTA_TOKEN_QX_ADDRESS?: string;
+  QTA_TOKEN_QX_DECIMALS?: string;
+  QTA_TOKEN_QKEY_ADDRESS?: string;
+  QTA_TOKEN_QKEY_DECIMALS?: string;
 }
 
 interface PriceAlert {
@@ -290,11 +321,17 @@ export default {
         headers: { 'content-type': 'application/json' },
       });
     }
+    if (url.pathname === '/qta/withdrawals') {
+      const result = await processQtaWithdrawals(env);
+      return new Response(JSON.stringify(result), {
+        headers: { 'content-type': 'application/json' },
+      });
+    }
     return new Response(
       JSON.stringify({
         service: 'quantaex-cron',
         schedules: ['*/5 * * * * (price-alert tick)', '0 3 * * * (daily D1 backup)'],
-        endpoints: ['/run', '/backup', '/backup/prune'],
+        endpoints: ['/run', '/backup', '/backup/prune', '/qta/withdrawals'],
       }),
       { headers: { 'content-type': 'application/json' } }
     );
@@ -331,6 +368,14 @@ export default {
       qtaChainTick(env)
         .then((r) => console.log('[cron] qta chain tick:', r))
         .catch((e) => console.error('[cron] qta chain tick failed:', e))
+    );
+    // Coin-family withdrawal broadcaster: sign + broadcast ONE Quantarium
+    // withdrawal (QTA / QX / QKEY) per tick. SPHINCS+ signing is CPU-heavy so
+    // this deliberately runs here (cron) and not in a request handler.
+    ctx.waitUntil(
+      processQtaWithdrawals(env)
+        .then((r) => console.log('[cron] qta withdrawal broadcast:', r))
+        .catch((e) => console.error('[cron] qta withdrawal broadcast failed:', e))
     );
   },
 };
@@ -443,4 +488,222 @@ async function qtaChainTick(env: Env): Promise<{
     credited,
     ok: true,
   };
+}
+
+// ============================================================================
+// Coin-family withdrawal broadcaster — Quantarium-native assets only.
+// ----------------------------------------------------------------------------
+// The Pages app's /wallet/withdraw and /chain/qta admin approve endpoints only
+// ENQUEUE a qta_withdrawals row and move it to 'broadcasting'. They must NOT
+// sign, because SPHINCS+ (SLH-DSA-SHA2-128s) signing costs ~6-10 s of CPU per
+// signature — far beyond a Cloudflare request's CPU budget.
+//
+// This function is the CPU-heavy half. Each */5 tick it picks ONE
+// 'broadcasting' row, derives the exchange hot wallet (HD index 0) from the
+// mnemonic, builds the right transaction for the asset family:
+//     • QTA  → native value transfer (to = user, value = amountWei, data 0x)
+//     • QX / QKEY → ERC-20 transfer() calldata to the token contract
+// signs it (0x7f typed tx), broadcasts via eth_sendRawTransaction, and moves
+// the row to 'confirmed' (real tx_hash) or 'failed'. On confirm it finalizes
+// the user's locked balance (locked was set at enqueue time); on failure it
+// refunds locked → available.
+//
+// ONE row per tick keeps the worker well within CPU limits and makes nonce
+// management trivially serial for the single hot wallet.
+// ============================================================================
+
+const QTA_DECIMALS = 18;
+const TOKEN_DECIMALS: Record<string, number> = { QX: 18, QKEY: 18 };
+
+function decimalStringToWei(s: string, decimals: number): bigint {
+  if (typeof s !== 'string') throw new Error('amount must be string');
+  const trimmed = s.trim();
+  if (!/^\d+(\.\d+)?$/.test(trimmed)) throw new Error(`invalid amount: ${s}`);
+  const [intPart, fracRaw = ''] = trimmed.split('.');
+  if (fracRaw.length > decimals) throw new Error(`amount has more than ${decimals} decimals`);
+  const frac = (fracRaw + '0'.repeat(decimals)).slice(0, decimals);
+  return BigInt(intPart) * 10n ** BigInt(decimals) + BigInt(frac || '0');
+}
+
+interface QtaWithdrawalRow {
+  id: string;
+  user_id: string;
+  to_address: string;
+  amount: string;
+  fee: string;
+  asset: string | null;
+  status: string;
+}
+
+async function processQtaWithdrawals(env: Env): Promise<{
+  ok: boolean;
+  picked: number;
+  status?: string;
+  id?: string;
+  tx_hash?: string | null;
+  reason?: string;
+}> {
+  const driver = (env.QTA_CHAIN_DRIVER || 'mock').toLowerCase();
+  if (driver !== 'real') {
+    return { ok: true, picked: 0, reason: 'driver_not_real' };
+  }
+
+  const rpcUrl = env.QTA_RPC_URL;
+  const mnemonic = env.QTA_HD_WALLET_MNEMONIC;
+  const hotWallet = env.QTA_HOT_WALLET_ADDRESS;
+  if (!rpcUrl || !mnemonic || !hotWallet) {
+    return { ok: false, picked: 0, reason: 'missing_env' };
+  }
+  if (!isValidMnemonic(mnemonic)) {
+    return { ok: false, picked: 0, reason: 'invalid_mnemonic' };
+  }
+
+  // Pick exactly ONE broadcasting row (oldest first).
+  const row = await env.DB.prepare(
+    `SELECT id, user_id, to_address, amount, fee, asset, status
+     FROM qta_withdrawals
+     WHERE status = 'broadcasting'
+     ORDER BY created_at ASC
+     LIMIT 1`
+  ).first<QtaWithdrawalRow>();
+  if (!row) return { ok: true, picked: 0 };
+
+  const asset = String(row.asset || 'QTA').toUpperCase();
+  const nowIso = new Date().toISOString();
+
+  // Guard: hot wallet must match the mnemonic's index-0 address, else abort
+  // to avoid signing with the wrong key (nonce/funds mismatch).
+  if (!verifyMnemonicMatchesHotWallet(mnemonic, hotWallet)) {
+    await env.DB.prepare(
+      `UPDATE qta_withdrawals
+       SET status = 'failed', rejected_reason = 'hot_wallet_mnemonic_mismatch', updated_at = ?
+       WHERE id = ? AND status = 'broadcasting'`
+    ).bind(nowIso, row.id).run();
+    // Refund the locked balance back to available (see finalize helper below).
+    await refundQtaWithdrawal(env, row, asset);
+    return { ok: false, picked: 1, id: row.id, status: 'failed', reason: 'hot_wallet_mnemonic_mismatch' };
+  }
+
+  const chainId = Number(env.QTA_CHAIN_ID || '60000') || 60000;
+  const cfg: EvmRpcConfig = { rpcUrl, chainId };
+
+  let hot: SphincsAccount;
+  try {
+    hot = deriveAccountFromMnemonic(mnemonic, 0);
+  } catch (e) {
+    console.error('[qta-withdraw] derive hot account failed:', e);
+    return { ok: false, picked: 1, id: row.id, reason: 'derive_failed' };
+  }
+
+  try {
+    const [nonce, fees] = await Promise.all([getNonce(cfg, hotWallet), suggestFees(cfg)]);
+
+    let txHash: string;
+    if (asset === 'QTA') {
+      // Native QTA value transfer.
+      const amountWei = decimalStringToWei(row.amount, QTA_DECIMALS);
+      if (amountWei <= 0n) throw new Error('amount must be > 0');
+      const { rawTx } = signSphincsTx(
+        {
+          chainId, nonce,
+          maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
+          maxFeePerGas: fees.maxFeePerGas,
+          gasLimit: 100_000n,
+          to: toChecksumAddress(row.to_address),
+          value: amountWei,
+          data: '0x',
+        },
+        hot.publicKey, hot.secretKey,
+      );
+      txHash = await sendRawTransaction(cfg, rawTx);
+    } else if (asset === 'QX' || asset === 'QKEY') {
+      // ERC-20 transfer() to the token contract.
+      const tokenAddr = asset === 'QX' ? env.QTA_TOKEN_QX_ADDRESS : env.QTA_TOKEN_QKEY_ADDRESS;
+      const decimals = Number(
+        (asset === 'QX' ? env.QTA_TOKEN_QX_DECIMALS : env.QTA_TOKEN_QKEY_DECIMALS) || TOKEN_DECIMALS[asset],
+      ) || TOKEN_DECIMALS[asset];
+      if (!tokenAddr || !/^0x[0-9a-fA-F]{40}$/.test(tokenAddr)) {
+        throw new Error(`${asset} token contract address not configured`);
+      }
+      const amountWei = decimalStringToWei(row.amount, decimals);
+      if (amountWei <= 0n) throw new Error('amount must be > 0');
+      const data = encodeErc20Transfer(toChecksumAddress(row.to_address), amountWei);
+      const { rawTx } = signSphincsTx(
+        {
+          chainId, nonce,
+          maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
+          maxFeePerGas: fees.maxFeePerGas,
+          gasLimit: 200_000n,
+          to: toChecksumAddress(tokenAddr),
+          value: 0n,
+          data,
+        },
+        hot.publicKey, hot.secretKey,
+      );
+      txHash = await sendRawTransaction(cfg, rawTx);
+    } else {
+      throw new Error(`unsupported asset for Quantarium wallet: ${asset}`);
+    }
+
+    // Success: record tx_hash + confirmed and finalize the locked balance
+    // (funds have left the exchange, so drop them out of `locked`).
+    await env.DB.prepare(
+      `UPDATE qta_withdrawals
+       SET status = 'confirmed', tx_hash = ?, broadcast_at = ?, confirmed_at = ?, updated_at = ?
+       WHERE id = ? AND status = 'broadcasting'`
+    ).bind(txHash, nowIso, nowIso, nowIso, row.id).run();
+    await finalizeQtaWithdrawal(env, row, asset);
+
+    console.log(`[qta-withdraw] broadcast ok id=${row.id} asset=${asset} tx=${txHash}`);
+    return { ok: true, picked: 1, id: row.id, status: 'confirmed', tx_hash: txHash };
+  } catch (e: any) {
+    const reason = String(e?.message || e).slice(0, 200);
+    console.error(`[qta-withdraw] broadcast failed id=${row.id}:`, reason);
+    await env.DB.prepare(
+      `UPDATE qta_withdrawals
+       SET status = 'failed', rejected_reason = ?, updated_at = ?
+       WHERE id = ? AND status = 'broadcasting'`
+    ).bind(reason, nowIso, row.id).run();
+    await refundQtaWithdrawal(env, row, asset);
+    return { ok: false, picked: 1, id: row.id, status: 'failed', reason };
+  }
+}
+
+/**
+ * Finalize a confirmed withdrawal: the amount+fee was moved to `locked` at
+ * enqueue time. The net amount left the exchange, so remove it from `locked`.
+ * `row.amount` is the net (post-fee) amount; `row.fee` the fee — both were
+ * locked. We simply clear the full locked-out amount (net + fee).
+ */
+async function finalizeQtaWithdrawal(env: Env, row: QtaWithdrawalRow, asset: string): Promise<void> {
+  const net = Number(row.amount || '0');
+  const fee = Number(row.fee || '0');
+  const total = net + fee;
+  if (!(total > 0)) return;
+  try {
+    await env.DB.prepare(
+      `UPDATE wallets SET locked = MAX(0, locked - ?) WHERE user_id = ? AND coin_symbol = ?`
+    ).bind(total, row.user_id, asset).run();
+  } catch (e) {
+    console.error('[qta-withdraw] finalize balance update failed:', e);
+  }
+}
+
+/**
+ * Refund a failed withdrawal: return the locked amount (net + fee) to
+ * `available` so the user isn't left short.
+ */
+async function refundQtaWithdrawal(env: Env, row: QtaWithdrawalRow, asset: string): Promise<void> {
+  const net = Number(row.amount || '0');
+  const fee = Number(row.fee || '0');
+  const total = net + fee;
+  if (!(total > 0)) return;
+  try {
+    await env.DB.prepare(
+      `UPDATE wallets SET locked = MAX(0, locked - ?), available = available + ?
+       WHERE user_id = ? AND coin_symbol = ?`
+    ).bind(total, total, row.user_id, asset).run();
+  } catch (e) {
+    console.error('[qta-withdraw] refund balance update failed:', e);
+  }
 }

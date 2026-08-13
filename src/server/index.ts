@@ -181,6 +181,13 @@ let qtaChainCorrectionBootstrapDone = false;
 //   once QTA_CHAIN_DRIVER='real' is flipped.
 let qtaHdIndexesBootstrapDone = false;
 
+// Sprint 6 · 2026-08-13 · migration 0037 self-bootstrap:
+//   qta_withdrawals.asset column — under coin-family wallet routing every
+//   Quantarium-native asset (QTA coin + QX / QKEY tokens) is queued here, so
+//   the cron broadcaster needs to know native-vs-ERC20 per row. Existing rows
+//   default to 'QTA'.
+let qtaWithdrawalsAssetBootstrapDone = false;
+
 app.use('/api/*', async (c, next) => {
   // Fast path: skip the DB lookup on every request by using an in-memory
   // throttle first (60s). Multiple isolates may race; the DB check is the
@@ -1253,6 +1260,53 @@ app.use('/api/*', async (c, next) => {
             console.log('[bootstrap] qta_hd_indexes (0036) applied to production D1');
           } catch (e) {
             captureError(c as any, e, { where: 'qta-hd-indexes-bootstrap' });
+          }
+        })()
+      );
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Sprint 6 · 2026-08-13 · migration 0037 self-bootstrap:
+  //   Add qta_withdrawals.asset so Quantarium-native token withdrawals
+  //   (QX / QKEY) can share the QTA queue. ALTER TABLE … ADD COLUMN is
+  //   wrapped in try/catch because it throws if the column already exists.
+  // ------------------------------------------------------------------
+  if (!qtaWithdrawalsAssetBootstrapDone) {
+    const ctx = c.executionCtx as any;
+    if (ctx && typeof ctx.waitUntil === 'function') {
+      ctx.waitUntil(
+        (async () => {
+          try {
+            const marker = await c.env.DB.prepare(
+              "SELECT value FROM system_state WHERE key = 'qta_withdrawals_asset_2026_08_13'"
+            ).first<{ value: string }>().catch(() => null);
+            if (marker && marker.value === 'migrated_v1') {
+              qtaWithdrawalsAssetBootstrapDone = true;
+              return;
+            }
+
+            try {
+              await c.env.DB.prepare(
+                `ALTER TABLE qta_withdrawals ADD COLUMN asset TEXT NOT NULL DEFAULT 'QTA'`
+              ).run();
+            } catch (_e) { /* column already exists — ignore */ }
+
+            try {
+              await c.env.DB.prepare(
+                `CREATE INDEX IF NOT EXISTS idx_qta_withdrawals_asset ON qta_withdrawals(asset, status)`
+              ).run();
+            } catch (_e) { /* ignore */ }
+
+            await c.env.DB.prepare(
+              `INSERT OR REPLACE INTO system_state (key, value, updated_at)
+               VALUES ('qta_withdrawals_asset_2026_08_13', 'migrated_v1', CURRENT_TIMESTAMP)`
+            ).run();
+
+            qtaWithdrawalsAssetBootstrapDone = true;
+            console.log('[bootstrap] qta_withdrawals.asset (0037) applied to production D1');
+          } catch (e) {
+            captureError(c as any, e, { where: 'qta-withdrawals-asset-bootstrap' });
           }
         })()
       );

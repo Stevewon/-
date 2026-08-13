@@ -260,6 +260,20 @@ chain.post('/qta/admin/withdrawals/:id/approve', authMiddleware, adminMiddleware
     return c.json({ ok: false, error: 'invalid_status', status: row.status }, 409);
   }
 
+  // ⚠️ DO NOT sign+broadcast in this HTTP handler.
+  //
+  // SPHINCS+ (SLH-DSA-SHA2-128s) signing takes ~6-10 s of pure CPU and
+  // produces a 7856-byte signature. Cloudflare Pages Functions have a
+  // per-request CPU budget; a synchronous sign here would blow through it,
+  // starve concurrent requests, and (worse) risk the request being killed
+  // mid-broadcast leaving the row stuck in an ambiguous state.
+  //
+  // Instead we ONLY move the row to 'broadcasting' (an approved-but-not-yet-
+  // signed queue state) and return immediately. The quantaex-cron Worker
+  // picks up 'broadcasting' rows on its */5 tick, signs + broadcasts one at
+  // a time (its own CPU budget), then advances the row to 'confirmed' (with
+  // the real tx_hash) or back to 'failed'. See cron-worker/src/index.ts →
+  // processQtaWithdrawals().
   const now = new Date().toISOString();
   await c.env.DB.prepare(
     `UPDATE qta_withdrawals
@@ -267,39 +281,27 @@ chain.post('/qta/admin/withdrawals/:id/approve', authMiddleware, adminMiddleware
      WHERE id = ?`
   ).bind(admin.id, now, now, id).run();
 
-  const client = getQtaChainClient(c.env as any);
-  let result;
-  try {
-    result = await client.signAndBroadcast({ to: row.to_address, amount: row.amount });
-  } catch (e: any) {
-    await c.env.DB.prepare(
-      `UPDATE qta_withdrawals
-       SET status = 'failed', rejected_reason = ?, updated_at = ?
-       WHERE id = ?`
-    ).bind(String(e?.message || e), new Date().toISOString(), id).run();
-    return c.json({ ok: false, error: 'broadcast_failed', detail: String(e?.message || e) }, 502);
-  }
-
-  const broadcastAt = new Date().toISOString();
-  await c.env.DB.prepare(
-    `UPDATE qta_withdrawals
-     SET tx_hash = ?, broadcast_at = ?, updated_at = ?
-     WHERE id = ?`
-  ).bind(result.hash, broadcastAt, broadcastAt, id).run();
-
   await logAdminAction(c, {
     action: 'qta.withdraw.approve',
     targetType: 'withdrawal',
     targetId: id,
     payload: {
-      tx_hash: result.hash,
       amount: row.amount,
       to: row.to_address,
       network: row.network,
+      note: 'queued for async sign+broadcast by cron worker',
     },
   });
 
-  return c.json({ ok: true, id, tx_hash: result.hash, status: 'broadcasting' });
+  // status 'broadcasting' == "approved, awaiting on-chain broadcast".
+  // tx_hash is intentionally still null until the cron worker signs it.
+  return c.json({
+    ok: true,
+    id,
+    status: 'broadcasting',
+    tx_hash: null,
+    note: 'Approved and queued. The cron worker will sign and broadcast this withdrawal within ~5 minutes; tx_hash will populate once broadcast.',
+  });
 });
 
 chain.post('/qta/admin/withdrawals/:id/reject', authMiddleware, adminMiddleware, async (c) => {

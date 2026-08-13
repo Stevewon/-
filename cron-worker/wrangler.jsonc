@@ -23,6 +23,29 @@
     }
   ],
   "vars": {
-    "BACKUP_RETENTION_DAYS": "30"
+    "BACKUP_RETENTION_DAYS": "30",
+
+    // ── Quantarium chain (coin-family withdrawal broadcaster) ──────────────
+    // processQtaWithdrawals() signs + broadcasts one QTA/QX/QKEY withdrawal
+    // per */5 tick. These mirror the Pages app's wrangler.jsonc.
+    //
+    // QTA_CHAIN_DRIVER is intentionally NOT pinned here — set it to 'real' in
+    // the Cloudflare dashboard (Worker → Settings → Variables) once the RPC
+    // and mnemonic are configured. Absent/anything-but-'real' = broadcaster
+    // no-ops (safe).
+    "QTA_CHAIN_ID": "60000",
+    "QTA_NETWORK": "qta-mainnet",
+    "QTA_RPC_URL": "https://rpc.quantarium.io",
+    "QTA_HOT_WALLET_ADDRESS": "0x4B35C55652E9831b9D3b5f3456d276E553B938Cb",
+    "QTA_TOKEN_QX_ADDRESS": "0xad447d42fB065a5b505772235F0c96d27501e6Fb",
+    "QTA_TOKEN_QX_DECIMALS": "18",
+    "QTA_TOKEN_QKEY_ADDRESS": "0x216621D3b3dB600F35DBf6c5709486dDC8882a16",
+    "QTA_TOKEN_QKEY_DECIMALS": "18"
+
+    // SECRET (do NOT put in this file — set via `wrangler secret put` or the
+    // dashboard on the quantaex-cron Worker):
+    //   QTA_HD_WALLET_MNEMONIC  — 12-word BIP-39 mnemonic; index 0 must derive
+    //                             to QTA_HOT_WALLET_ADDRESS above.
+    //   QTA_CHAIN_DRIVER=real   — flip on when ready to broadcast.
   }
 }

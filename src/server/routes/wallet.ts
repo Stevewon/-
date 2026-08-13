@@ -6,6 +6,7 @@ import { rateLimit } from '../middleware/rateLimit';
 import { verifyTotp } from '../utils/totp';
 import { tmplWithdrawSubmitted, fireAndForgetMail, metaFromReq } from '../utils/mailer';
 import { getRiskState } from '../lib/risk';
+import { isQuantariumAsset } from '../lib/asset-routing';
 
 const app = new Hono<AppEnv>();
 
@@ -213,14 +214,25 @@ app.post('/withdraw', authMiddleware, rlWithdraw, requireKyc('approved'), async 
     return c.json({ error: 'Invalid request' }, 400);
   }
 
-  // ─── HARD SAFETY GATE (Quantarium native + ERC-20 tokens) ──────────────
-  // QTA / QX / QKEY live on the Quantarium chain (chain_id 60000).
-  // The real chain adapter (bot API or EVM RPC) is not wired yet, so
-  // external on-chain withdrawal is blocked to prevent asset loss.
-  // Internal balances and trading are unaffected.
-  const QUANTARIUM_SYMBOLS = new Set(['QTA', 'QX', 'QKEY']);
+  // ─── COIN-FAMILY WALLET ROUTING (boss's 2026-08-13 default) ────────────
+  // QuantaEX bridges two worlds:
+  //   • Quantarium-native assets (QTA coin + QX / QKEY tokens we issued on
+  //     chain_id 60000) are sent through OUR OWN Quantarium SPHINCS+ HD
+  //     wallet. Those withdrawals go into the `qta_withdrawals` queue and are
+  //     signed + broadcast asynchronously by the cron worker (SPHINCS+ signing
+  //     is 6-10s CPU — far too heavy for a request handler).
+  //   • Everything else (BTC, ETH, USDT, …) is a standard, externally-issued
+  //     coin handled by its own compatible wallet via the legacy `withdrawals`
+  //     table + admin approval.
+  // isQuantariumAsset() is the single source of truth for this split.
+  const routeQuantarium = isQuantariumAsset(coin_symbol);
   const driver = String((c.env as any).QTA_CHAIN_DRIVER || 'mock').toLowerCase();
-  if (QUANTARIUM_SYMBOLS.has(String(coin_symbol).toUpperCase()) && driver !== 'real') {
+
+  // Quantarium on-chain withdrawal requires the real chain adapter (RPC + HD
+  // mnemonic + hot wallet) to be configured. Until then, block external
+  // withdrawal to avoid asset loss — internal balances and trading are
+  // unaffected.
+  if (routeQuantarium && driver !== 'real') {
     return c.json({
       error: 'CHAIN_INTEGRATION_PENDING',
       message:
@@ -326,18 +338,39 @@ app.post('/withdraw', authMiddleware, rlWithdraw, requireKyc('approved'), async 
 
   const fee = amount * 0.001;
   const withdrawalId = uuid();
+  const assetSymbol = String(coin_symbol).toUpperCase();
 
   // Move to `locked` (NOT subtracted) so admin reject cleanly refunds without
-  // a race window. Admin approve will do the final deduction.
-  await c.env.DB.batch([
-    c.env.DB.prepare(
-      'UPDATE wallets SET available = available - ?, locked = locked + ? WHERE id = ?'
-    ).bind(amount, amount, wallet.id),
-    c.env.DB.prepare(
-      `INSERT INTO withdrawals (id, user_id, coin_symbol, amount, fee, address, network, memo, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')`
-    ).bind(withdrawalId, user.id, coin_symbol, amount - fee, fee, address, network || null, memo || null),
-  ]);
+  // a race window. Admin/cron approve will do the final deduction.
+  //
+  // Coin-family routing decides the destination queue:
+  //   • Quantarium-native assets → `qta_withdrawals` (cron SPHINCS+ signer).
+  //     The destination must be a 0x EVM address on the Quantarium chain.
+  //   • Standard coins → legacy `withdrawals` table (admin approval).
+  if (routeQuantarium) {
+    if (!/^0x[0-9a-fA-F]{40}$/.test(String(address))) {
+      return c.json({ error: 'Invalid Quantarium address (expected 0x + 40 hex)' }, 400);
+    }
+    await c.env.DB.batch([
+      c.env.DB.prepare(
+        'UPDATE wallets SET available = available - ?, locked = locked + ? WHERE id = ?'
+      ).bind(amount, amount, wallet.id),
+      c.env.DB.prepare(
+        `INSERT INTO qta_withdrawals (id, user_id, to_address, amount, fee, asset, status, network)
+         VALUES (?, ?, ?, ?, ?, ?, 'pending', 'qta-mainnet')`
+      ).bind(withdrawalId, user.id, String(address), String(amount - fee), String(fee), assetSymbol),
+    ]);
+  } else {
+    await c.env.DB.batch([
+      c.env.DB.prepare(
+        'UPDATE wallets SET available = available - ?, locked = locked + ? WHERE id = ?'
+      ).bind(amount, amount, wallet.id),
+      c.env.DB.prepare(
+        `INSERT INTO withdrawals (id, user_id, coin_symbol, amount, fee, address, network, memo, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')`
+      ).bind(withdrawalId, user.id, coin_symbol, amount - fee, fee, address, network || null, memo || null),
+    ]);
+  }
 
   // S3-6: withdrawal-submitted confirmation email
   try {

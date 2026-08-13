@@ -19,6 +19,24 @@ export interface NetworkInfo {
   estimateMin: number;      // estimated confirmation time (minutes)
 }
 
+/**
+ * Quantarium-native assets — the QTA coin plus every token QuantaEX issued on
+ * the Quantarium chain (QX, QKEY, ...). These are sent/received through OUR
+ * OWN Quantarium wallet (SPHINCS+ HD wallet, chain_id 60000): real per-user
+ * deposit addresses come from the backend `/api/chain/qta/deposit-address`
+ * endpoint and withdrawals are queued to the cron SPHINCS+ signer.
+ *
+ * Everything else is a standard, externally-issued coin handled by its own
+ * compatible wallet. Client mirror of src/server/lib/asset-routing.ts —
+ * keep the symbol list in sync.
+ */
+export const QUANTARIUM_ASSETS = ['QTA', 'QX', 'QKEY'] as const;
+
+export function isQuantariumAsset(symbol: string | null | undefined): boolean {
+  if (!symbol) return false;
+  return (QUANTARIUM_ASSETS as readonly string[]).includes(symbol.toUpperCase());
+}
+
 export const NETWORKS: Record<string, NetworkInfo[]> = {
   BTC: [
     {
@@ -213,6 +231,38 @@ export const NETWORKS: Record<string, NetworkInfo[]> = {
     },
   ],
   QTA: [
+    {
+      id: 'QTA',
+      name: 'Quantarium Mainnet',
+      shortName: 'QTA',
+      addressRegex: /^0x[a-fA-F0-9]{40}$/,
+      addressExample: '0x...',
+      withdrawFee: 0.1,
+      minWithdraw: 1,
+      minDeposit: 0.1,
+      confirmations: 6,
+      estimateMin: 1,
+    },
+  ],
+  // QX / QKEY are QuantaEX-issued ERC-20 tokens that live ON the Quantarium
+  // chain (chain_id 60000), so they are sent/received through the same
+  // Quantarium wallet as the native QTA coin — NOT through Ethereum/BSC.
+  // Their only network is Quantarium Mainnet (20-byte 0x EVM addresses).
+  QX: [
+    {
+      id: 'QTA',
+      name: 'Quantarium Mainnet',
+      shortName: 'QTA',
+      addressRegex: /^0x[a-fA-F0-9]{40}$/,
+      addressExample: '0x...',
+      withdrawFee: 0.1,
+      minWithdraw: 1,
+      minDeposit: 0.1,
+      confirmations: 6,
+      estimateMin: 1,
+    },
+  ],
+  QKEY: [
     {
       id: 'QTA',
       name: 'Quantarium Mainnet',

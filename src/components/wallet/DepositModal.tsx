@@ -4,7 +4,7 @@ import {
   Clock, ChevronDown, ChevronUp, Shield,
 } from 'lucide-react';
 import { useI18n } from '../../i18n';
-import { getNetworks, generateDepositAddress, generateMemo } from '../../utils/networks';
+import { getNetworks, generateDepositAddress, generateMemo, isQuantariumAsset } from '../../utils/networks';
 import CoinIcon from '../common/CoinIcon';
 import QRCode from '../common/QRCode';
 import { showToast } from '../common/Toast';
@@ -45,10 +45,44 @@ export default function DepositModal({ open, onClose, initialCoin = 'USDT' }: Pr
     setNetworkId(networks[0]?.id || '');
   }, [coin]); // eslint-disable-line
 
+  // Quantarium-native assets (QTA / QX / QKEY) share ONE real on-chain deposit
+  // address per user, derived server-side from the Quantarium SPHINCS+ HD
+  // wallet. Standard coins keep the deterministic client-side simulation.
+  const quantarium = isQuantariumAsset(coin);
+  const [chainAddress, setChainAddress] = useState('');
+  const [chainAddressError, setChainAddressError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    setChainAddress('');
+    setChainAddressError('');
+    if (!open || !user || !quantarium) return;
+    (async () => {
+      try {
+        const res = await api.post('/chain/qta/deposit-address', {});
+        const addr = res?.data?.address?.address || '';
+        if (!cancelled) {
+          if (addr) setChainAddress(addr);
+          else setChainAddressError(res?.data?.message || 'Deposit address unavailable');
+        }
+      } catch (err: any) {
+        if (!cancelled) {
+          setChainAddressError(
+            err?.response?.data?.message || err?.response?.data?.error || 'Deposit address unavailable',
+          );
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [open, user, quantarium, coin]);
+
   const address = useMemo(() => {
     if (!user || !network) return '';
+    // Quantarium assets → real HD address fetched from backend (may be empty
+    // while loading or when the chain adapter isn't configured yet).
+    if (quantarium) return chainAddress;
     return generateDepositAddress(user.id, coin, network.id);
-  }, [user, coin, network]);
+  }, [user, coin, network, quantarium, chainAddress]);
 
   const memo = useMemo(() => {
     if (!user || !network?.memoRequired) return '';
@@ -387,7 +421,33 @@ export default function DepositModal({ open, onClose, initialCoin = 'USDT' }: Pr
 
           {/* ===== RIGHT PANEL ===== */}
           <div className="flex flex-col">
-            {/* QR CARD */}
+            {/* Quantarium assets: pending / error banner when the real HD
+                deposit address isn't available yet (chain adapter not wired
+                or still loading). Prevents rendering an empty/blank QR. */}
+            {quantarium && !address && (
+              <div
+                className="bg-[#151c25] border border-exchange-yellow/30 text-exchange-text-secondary flex items-start"
+                style={{
+                  gap: '8px',
+                  padding: '14px',
+                  borderRadius: '12px',
+                  marginBottom: '16px',
+                  fontSize: '13px',
+                  lineHeight: 1.5,
+                }}
+              >
+                <Info size={16} className="text-exchange-yellow shrink-0" style={{ marginTop: '1px' }} />
+                <span>
+                  {chainAddressError
+                    ? chainAddressError
+                    : `Generating your Quantarium (${coin}) deposit address…`}
+                </span>
+              </div>
+            )}
+
+            {/* QR CARD + address box (only when we have a real address) */}
+            {address && (
+            <>
             <div
               className="bg-[#151c25] border border-white/[0.08] flex flex-col items-center justify-center"
               style={{
@@ -476,9 +536,11 @@ export default function DepositModal({ open, onClose, initialCoin = 'USDT' }: Pr
                 )}
               </button>
             </div>
+            </>
+            )}
 
             {/* MEMO (conditional) */}
-            {network?.memoRequired && (
+            {address && network?.memoRequired && (
               <div style={{ marginTop: '16px' }}>
                 <label
                   className="flex items-center text-exchange-yellow uppercase font-semibold"
