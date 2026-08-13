@@ -1,5 +1,11 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../index';
+import { isQuantariumAsset } from '../lib/asset-routing';
+import {
+  fetchExternalCandles,
+  fetchExternalTicker,
+  fetchExternalTickersBatch,
+} from '../lib/market-data';
 
 const app = new Hono<AppEnv>();
 
@@ -68,13 +74,33 @@ app.get('/trades/:symbol', async (c) => {
 });
 
 // Candles
+//
+// Coin-family split (same rule as the wallet router — isQuantariumAsset):
+//   • Standard global coins (BTC, ETH, BNB, ...) → REAL candles proxied from a
+//     public spot exchange (OKX, Coinbase fallback) so the chart moves exactly
+//     like every other global exchange.
+//   • Quantarium-native assets (QTA, QX, QKEY) → OUR OWN candles from D1, built
+//     by our matching engine. We handle these ourselves.
 app.get('/candles/:symbol', async (c) => {
   const [base, quote] = c.req.param('symbol').split('-');
-  const market = await c.env.DB.prepare('SELECT id FROM markets WHERE base_coin = ? AND quote_coin = ?').bind(base, quote).first() as any;
-  if (!market) return c.json({ error: 'Market not found' }, 404);
-
   const interval = c.req.query('interval') || '1h';
   const limit = parseInt(c.req.query('limit') || '200');
+
+  // ---- Standard coins: real market data ----
+  if (!isQuantariumAsset(base)) {
+    const external = await fetchExternalCandles(base, interval, limit);
+    if (external.length) {
+      // Short edge cache — real data changes every few seconds; the client
+      // also polls the latest candle so staleness stays sub-10s.
+      c.header('Cache-Control', 'public, max-age=5, s-maxage=10');
+      return c.json(external);
+    }
+    // If the external provider is unreachable, fall through to whatever we have
+    // cached in D1 rather than returning an empty chart.
+  }
+
+  const market = await c.env.DB.prepare('SELECT id FROM markets WHERE base_coin = ? AND quote_coin = ?').bind(base, quote).first() as any;
+  if (!market) return c.json({ error: 'Market not found' }, 404);
 
   const { results } = await c.env.DB.prepare(
     'SELECT open_time as time, open, high, low, close, volume FROM candles WHERE market_id = ? AND interval = ? ORDER BY open_time DESC LIMIT ?'
@@ -112,23 +138,46 @@ app.get('/tickers', async (c) => {
   const closeByMarket = new Map<string, number>();
   for (const r of (candlesRes.results || []) as any[]) closeByMarket.set(r.market_id, r.close);
 
+  // Coin-family split: standard coins get REAL 24h tickers from the public
+  // spot exchange (one batched request for all of them); Quantarium-native
+  // assets (QTA/QX/QKEY) keep using our own D1 data.
+  const standardBases = Array.from(
+    new Set(markets.map((m) => m.base_coin).filter((b: string) => !isQuantariumAsset(b))),
+  ) as string[];
+  const externalTickers = await fetchExternalTickersBatch(standardBases);
+
   const tickers: Record<string, any> = {};
   for (const m of markets) {
     const sym = `${m.base_coin}-${m.quote_coin}`;
     const coin = coinsBySymbol.get(m.base_coin);
+
+    // Standard coin with a live external ticker → use the real market.
+    const ext = !isQuantariumAsset(m.base_coin) ? externalTickers.get(m.base_coin) : undefined;
+    if (ext) {
+      tickers[sym] = {
+        last: ext.last,
+        change: ext.change,
+        volume: ext.volume,
+        high: ext.high,
+        low: ext.low,
+      };
+      continue;
+    }
+
+    // Quantarium asset, stablecoin, or external provider miss → our own data.
     // QuantaEX is USD-denominated; USDT and USDC both peg to ~$1 so the
     // base coin's USD price applies directly without conversion.
     const price = closeByMarket.get(m.id) ?? (coin?.price_usd ?? 0);
     tickers[sym] = {
       last: price,
-      change: coin?.change_24h || (Math.random() - 0.5) * 10,
-      volume: coin?.volume_24h || Math.random() * 1000000,
-      high: coin?.high_24h || price * 1.02,
-      low: coin?.low_24h || price * 0.98,
+      change: coin?.change_24h ?? 0,
+      volume: coin?.volume_24h ?? 0,
+      high: coin?.high_24h || price,
+      low: coin?.low_24h || price,
     };
   }
 
-  c.header('Cache-Control', 'public, max-age=2, s-maxage=5');
+  c.header('Cache-Control', 'public, max-age=5, s-maxage=10');
   return c.json(tickers);
 });
 

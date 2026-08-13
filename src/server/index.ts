@@ -17,6 +17,8 @@ import marginRoutes from './routes/margin';
 import v1Routes from './routes/v1';
 import { installObservability, captureError } from './utils/observability';
 import { geoBlock, geoStatusHandler } from './middleware/geo-block';
+import { isQuantariumAsset } from './lib/asset-routing';
+import { fetchExternalTickersBatch, type Ticker as ExtTicker } from './lib/market-data';
 
 export type Env = {
   DB: D1Database;
@@ -1597,11 +1599,42 @@ app.get('/api/stream/ticker', async (c) => {
     return `event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`;
   };
 
+  // REAL market data overlay for standard coins (BTC, ETH, ...).
+  //
+  // Coin-family split (same rule as the wallet router — isQuantariumAsset):
+  //   • Standard global coins → their ticker is taken from a public spot
+  //     exchange (OKX) so the number matches every other exchange in the world.
+  //   • Quantarium-native assets (QTA/QX/QKEY) → keep our own simulated/DB
+  //     price state; WE handle those ourselves.
+  // We refresh the external snapshot at stream start and every ~6 ticks
+  // (~9 s) to respect the provider rate limit while staying fresh.
+  const realTickers = new Map<string, ExtTicker>();
+  const standardBases = Object.keys(COIN_PRICES).filter((s) => !isQuantariumAsset(s));
+  const refreshRealTickers = async () => {
+    try {
+      const batch = await fetchExternalTickersBatch(standardBases);
+      for (const [base, t] of batch) realTickers.set(base, t);
+    } catch { /* keep last snapshot */ }
+  };
+
   const buildTickers = () => {
     const tickers: Record<string, any> = {};
     for (const [symbol] of Object.entries(COIN_PRICES)) {
+      const real = !isQuantariumAsset(symbol) ? realTickers.get(symbol) : undefined;
       for (const quote of ['USDT', 'USDC']) {
         const key = `${symbol}-${quote}`;
+        if (real) {
+          // Real market — USDT/USDC both peg ~$1 so the USDT price applies.
+          tickers[key] = {
+            last: +real.last.toPrecision(8),
+            change: +real.change.toFixed(2),
+            volume: +real.volume.toFixed(2),
+            high: +real.high.toPrecision(8),
+            low: +real.low.toPrecision(8),
+          };
+          continue;
+        }
+        // Our own coin (or provider miss) → keep the internal price state.
         tickPrice(key);
         const s = priceState[key];
         tickers[key] = {
@@ -1649,6 +1682,17 @@ app.get('/api/stream/ticker', async (c) => {
 
   const stream = new ReadableStream({
     start(controller) {
+      // Prime the real-market snapshot, then send the first ticker frame with
+      // real prices already blended in. Non-blocking so the stream still opens
+      // instantly even if the external provider is slow/unreachable.
+      refreshRealTickers()
+        .then(() => {
+          try {
+            controller.enqueue(encoder.encode(formatEvent('tickers', buildTickers())));
+          } catch { /* stream may have closed */ }
+        })
+        .catch(() => {});
+
       // Send initial ticker data
       const tickers = buildTickers();
       controller.enqueue(encoder.encode(formatEvent('tickers', tickers)));
@@ -1687,6 +1731,9 @@ app.get('/api/stream/ticker', async (c) => {
         }
 
         try {
+          // Refresh the real-market snapshot every ~6 ticks (~9 s).
+          if (tickCount % 6 === 0) { refreshRealTickers().catch(() => {}); }
+
           const tickers = buildTickers();
           controller.enqueue(encoder.encode(formatEvent('tickers', tickers)));
 
