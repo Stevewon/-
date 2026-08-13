@@ -1045,11 +1045,7 @@ const ko = {
   'auth.invalidEmail': '올바른 이메일 주소를 입력해 주세요',
   'auth.invalidNickname': '닉네임은 2~20자여야 합니다',
   'auth.nicknameRule': '닉네임은 2~20자여야 합니다',
-  // Age gate (18+) — boss-ordered 2026-06-22.
-  'auth.dateOfBirth': '생년월일',
-  'auth.dobHint': '만 18세 이상만 가입 가능합니다',
-  'auth.dobMustBe18': '만 18세 이상이어야 가입할 수 있습니다',
-  'auth.dobInvalid': '올바른 생년월일을 입력해 주세요 (YYYY-MM-DD)',
+  // 생년월일 / 만 18세 게이트 관련 키는 2026-08-13 사장님 지시로 제거됨.
   'auth.passwordPlaceholderNew': '안전한 비밀번호를 입력하세요',
   'auth.passwordRulesFail': '비밀번호 조건을 모두 만족해야 합니다',
   'auth.pwRule8': '8자 이상',

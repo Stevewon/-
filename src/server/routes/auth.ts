@@ -244,11 +244,10 @@ app.post('/register', rlRegister, turnstile, async (c) => {
   const password = (body.password || '').toString();
   const nickname = (body.nickname || '').toString().trim();
   const refCode = body.ref_code ? String(body.ref_code).trim().toUpperCase() : null;
-  // 2026-06-22: Age gate (18+). Frontend sends date_of_birth as ISO
-  // YYYY-MM-DD. Required for new accounts; this is the legal floor per
-  // the Terms of Service Article 4 (18+ to register on QuantaEX Holdings
-  // Ltd., a Seychelles IBC).
-  const dateOfBirth = body.date_of_birth ? String(body.date_of_birth).trim() : null;
+  // Date-of-birth / 18+ age gate REMOVED 2026-08-13 by boss directive.
+  // The users.date_of_birth column is kept for historical rows so migrations
+  // still work, but new signups leave it NULL. If date_of_birth is submitted
+  // by an older client (backward compat), we simply ignore it.
   // Consent flags — persisted to user_consents table below as GDPR / Seychelles
   // DPA evidence. The client already blocks submit when agree_terms is false,
   // but we double-check here so an API caller can't bypass it.
@@ -264,35 +263,9 @@ app.post('/register', rlRegister, turnstile, async (c) => {
     return c.json({ error: 'Password must contain both letters and numbers' }, 400);
   }
 
-  // ---- Age gate (18+) ----
-  // Strict ISO date validation + age calculation. We compute age based on
-  // calendar logic, not a 365.25-day approximation, so leap-year babies
-  // born exactly 18 years ago today qualify.
-  if (!dateOfBirth) {
-    return c.json({ error: 'Date of birth is required', code: 'DOB_REQUIRED' }, 400);
-  }
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateOfBirth)) {
-    return c.json({ error: 'Invalid date of birth format (use YYYY-MM-DD)', code: 'DOB_INVALID_FORMAT' }, 400);
-  }
-  const dob = new Date(dateOfBirth + 'T00:00:00Z');
-  if (isNaN(dob.getTime())) {
-    return c.json({ error: 'Invalid date of birth', code: 'DOB_INVALID' }, 400);
-  }
-  const now = new Date();
-  // Reject obviously bogus dates (future or before 1900).
-  if (dob.getTime() > now.getTime()) {
-    return c.json({ error: 'Date of birth cannot be in the future', code: 'DOB_FUTURE' }, 400);
-  }
-  if (dob.getUTCFullYear() < 1900) {
-    return c.json({ error: 'Invalid date of birth', code: 'DOB_INVALID' }, 400);
-  }
-  // Compute age in completed years (UTC, calendar-based).
-  let age = now.getUTCFullYear() - dob.getUTCFullYear();
-  const m = now.getUTCMonth() - dob.getUTCMonth();
-  if (m < 0 || (m === 0 && now.getUTCDate() < dob.getUTCDate())) age--;
-  if (age < 18) {
-    return c.json({ error: 'You must be at least 18 years old to register', code: 'AGE_UNDER_18' }, 403);
-  }
+  // Age-gate (18+) block REMOVED 2026-08-13 by boss directive. No date-of-birth
+  // check is performed on registration. The users.date_of_birth column remains
+  // in the schema for historical rows; new rows will have it NULL.
 
   // Terms and Privacy consent is mandatory. Frontend gates this, but we
   // enforce server-side so API callers cannot bypass. See user_consents table
@@ -326,8 +299,9 @@ app.post('/register', rlRegister, turnstile, async (c) => {
   const id = uuid();
   const hashedPw = bcrypt.hashSync(password, 10);
 
-  await c.env.DB.prepare('INSERT INTO users (id, email, password, nickname, date_of_birth) VALUES (?,?,?,?,?)')
-    .bind(id, email, hashedPw, nickname, dateOfBirth).run();
+  // date_of_birth column is left NULL for all new accounts (age gate removed).
+  await c.env.DB.prepare('INSERT INTO users (id, email, password, nickname) VALUES (?,?,?,?)')
+    .bind(id, email, hashedPw, nickname).run();
 
   // Allocate a unique referral code for the new user (so they can refer
   // others immediately).
@@ -389,10 +363,11 @@ app.post('/register', rlRegister, turnstile, async (c) => {
     const PRIVACY_VERSION = '1.0';
     const EFFECTIVE_DATE = '2026-06-22';
 
+    // age_gate consent removed 2026-08-13 (boss directive): the 18+ age gate
+    // was dropped, so we no longer record an age_gate consent on signup.
     const consentRows = [
       { kind: 'terms',     version: TERMS_VERSION,   agreed: 1 },
       { kind: 'privacy',   version: PRIVACY_VERSION, agreed: 1 },
-      { kind: 'age_gate',  version: '1.0',           agreed: 1 },
       { kind: 'marketing', version: '1.0',           agreed: agreeMarketing ? 1 : 0 },
     ];
     const consentBatch = consentRows.map(r =>

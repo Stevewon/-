@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { Eye, EyeOff, Check, X, Mail, User as UserIcon, Gift, AlertCircle, Calendar } from 'lucide-react';
+import { Eye, EyeOff, Check, X, Mail, User as UserIcon, Gift, AlertCircle } from 'lucide-react';
 import useStore from '../store/useStore';
 import { useI18n } from '../i18n';
 import api from '../utils/api';
@@ -126,7 +126,6 @@ export default function RegisterPage() {
   const [nickname, setNickname] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPw, setConfirmPw] = useState('');
-  const [dateOfBirth, setDateOfBirth] = useState('');
   const [refCode, setRefCode] = useState('');
   const [showRef, setShowRef] = useState(false);
   const [refCheck, setRefCheck] = useState<{
@@ -333,24 +332,12 @@ export default function RegisterPage() {
 
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
   const nickValid = nickname.length >= 2 && nickname.length <= 20;
-  // ---- Age gate (18+) — date_of_birth must be ISO YYYY-MM-DD and yield age >= 18.
-  // Calendar-based, UTC, no leap-year approximations. Matches the server check.
-  const dobValid = (() => {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateOfBirth)) return false;
-    const dob = new Date(dateOfBirth + 'T00:00:00Z');
-    if (isNaN(dob.getTime())) return false;
-    const now = new Date();
-    if (dob.getTime() > now.getTime()) return false;
-    if (dob.getUTCFullYear() < 1900) return false;
-    let age = now.getUTCFullYear() - dob.getUTCFullYear();
-    const m = now.getUTCMonth() - dob.getUTCMonth();
-    if (m < 0 || (m === 0 && now.getUTCDate() < dob.getUTCDate())) age--;
-    return age >= 18;
-  })();
+  // Date-of-birth / age-gate field removed per boss directive (2026-08-13).
+  // The server no longer requires date_of_birth on /auth/register. Existing
+  // rows keep their historical values; new rows will be NULL.
   const allValid =
     emailValid &&
     nickValid &&
-    dobValid &&
     rules.length &&
     rules.letter &&
     rules.number &&
@@ -363,7 +350,6 @@ export default function RegisterPage() {
     if (mode === 'phone') return setError(t('auth.phoneComingSoon'));
     if (!emailValid) return setError(t('auth.invalidEmail'));
     if (!nickValid) return setError(t('auth.invalidNickname'));
-    if (!dobValid) return setError(t('auth.dobInvalid'));
     if (!rules.length || !rules.letter || !rules.number)
       return setError(t('auth.passwordRulesFail'));
     if (!rules.match) return setError(t('auth.passwordMismatch'));
@@ -379,7 +365,6 @@ export default function RegisterPage() {
         email,
         password,
         nickname,
-        date_of_birth: dateOfBirth,
         ref_code: refCode || undefined,
         agree_marketing: agreeMarketing,
         agree_terms: agreeTerms,
@@ -516,30 +501,7 @@ export default function RegisterPage() {
           </div>
         </FieldWrap>
 
-        {/* Date of birth (18+ age gate) */}
-        <FieldWrap
-          label={t('auth.dateOfBirth')}
-          valid={dateOfBirth.length > 0 ? dobValid : null}
-          hint={dateOfBirth.length > 0 && !dobValid ? t('auth.dobMustBe18') : t('auth.dobHint')}
-          focused={focused === 'dob'}
-        >
-          <div className="auth-field">
-            <span className="auth-icon">
-              <Calendar size={18} />
-            </span>
-            <input
-              type="date"
-              value={dateOfBirth}
-              onChange={(e) => setDateOfBirth(e.target.value)}
-              onFocus={() => setFocused('dob')}
-              onBlur={() => setFocused('')}
-              required
-              max={new Date().toISOString().slice(0, 10)}
-              min="1900-01-01"
-              autoComplete="bday"
-            />
-          </div>
-        </FieldWrap>
+        {/* Date-of-birth field removed 2026-08-13 (boss directive). */}
 
         {/* Password */}
         <FieldWrap label={t('auth.password')} focused={focused === 'pw'}>

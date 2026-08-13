@@ -9,7 +9,7 @@ interface FAQ {
 }
 
 const FAQS_KO: FAQ[] = [
-  { category: 'account', question: '회원가입은 어떻게 하나요?', answer: '상단 "회원가입" 버튼을 클릭하고, 이메일, 닉네임, 비밀번호, 생년월일(만 18세 이상)을 입력하면 바로 가입할 수 있습니다. 가입 후 이메일 인증을 완료하면 100 QX 웰컴 보너스가 지급됩니다. QX는 회사가 지급하는 프로모션 자산으로 거래 및 수수료 할인에 사용할 수 있으며 외부 출금은 제한됩니다.' },
+  { category: 'account', question: '회원가입은 어떻게 하나요?', answer: '상단 "회원가입" 버튼을 클릭하고, 이메일, 닉네임, 비밀번호를 입력하면 바로 가입할 수 있습니다. 가입 후 이메일 인증을 완료하면 100 QX 웰컴 보너스가 지급됩니다. QX는 회사가 지급하는 프로모션 자산으로 거래 및 수수료 할인에 사용할 수 있으며 외부 출금은 제한됩니다.' },
   { category: 'account', question: 'KYC 인증은 어떻게 하나요?', answer: '로그인 후 마이페이지(지갑) > KYC 인증 메뉴에서 성명, 연락처, 신분증 번호를 입력하여 신청할 수 있습니다. 인증 처리는 최대 24시간 이내에 완료됩니다.' },
   { category: 'account', question: '비밀번호를 분실했어요. 어떻게 하나요?', answer: '로그인 페이지에서 "비밀번호 찾기"를 클릭하고, 가입 시 사용한 이메일을 입력하면 비밀번호 재설정 링크가 전송됩니다. 링크는 발송 후 1시간 동안 유효합니다.' },
   { category: 'account', question: '2단계 인증(2FA)은 어떻게 설정하나요?', answer: 'Google Authenticator, Authy 등 TOTP 호환 앱을 설치한 후, 마이페이지 > 보안 설정에서 QR 코드를 스캔하여 2FA를 활성화할 수 있습니다. 2FA 활성화 후에는 출금 및 화이트리스트 등록 시 6자리 인증 코드가 필수입니다.' },
@@ -26,7 +26,7 @@ const FAQS_KO: FAQ[] = [
 ];
 
 const FAQS_EN: FAQ[] = [
-  { category: 'account', question: 'How do I sign up?', answer: 'Click the "Register" button at the top and enter your email, nickname, password, and date of birth (must be 18+). After verifying your email you receive a 100 QX welcome bonus. QX is a promotional asset issued by the Company usable for trading and fee discounts inside the exchange, but restricted from external withdrawals.' },
+  { category: 'account', question: 'How do I sign up?', answer: 'Click the "Register" button at the top and enter your email, nickname, and password. After verifying your email you receive a 100 QX welcome bonus. QX is a promotional asset issued by the Company usable for trading and fee discounts inside the exchange, but restricted from external withdrawals.' },
   { category: 'account', question: 'How do I complete KYC verification?', answer: 'After logging in, go to My Page > KYC Verification and submit your full name, phone number, and ID number. Verification is typically completed within 24 hours.' },
   { category: 'account', question: 'I forgot my password. What should I do?', answer: 'On the login page click "Forgot Password" and enter the email you used to register. A password reset link will be sent to your inbox and remains valid for 1 hour.' },
   { category: 'account', question: 'How do I set up 2FA?', answer: 'Install a TOTP-compatible app such as Google Authenticator or Authy, then go to My Page > Security Settings and scan the QR code to enable 2FA. Once enabled, a 6-digit code is required for withdrawals and whitelist additions.' },
