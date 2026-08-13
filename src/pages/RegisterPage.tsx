@@ -142,6 +142,16 @@ export default function RegisterPage() {
   const [agreeMarketing, setAgreeMarketing] = useState(false);
   const [focused, setFocused] = useState<string>('');
 
+  // Cloudflare Turnstile bot-protection token. The <Turnstile /> component
+  // invokes setTurnstileToken(token) once the visitor solves the challenge;
+  // the token is then attached to the /register POST body as
+  // `turnstile_token`. Must be declared here (not below) so that
+  // <Turnstile onToken={setTurnstileToken} /> in the JSX has a defined
+  // setter at first paint — otherwise the component throws
+  // "ReferenceError: setTurnstileToken is not defined" and ErrorBoundary
+  // catches the crash, blanking the page.
+  const [turnstileToken, setTurnstileToken] = useState('');
+
   // ---- Google OAuth (sign-up via Google; sends refCode if a valid one is set) ----
   const [googleLoading, setGoogleLoading] = useState(false);
   const [googleClientId, setGoogleClientId] = useState<string>(GOOGLE_CLIENT_ID_BUILD);
