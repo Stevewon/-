@@ -865,6 +865,105 @@ app.put('/coins/:symbol', async (c) => {
   return c.json({ message: 'Coin updated' });
 });
 
+// ----------------------------------------------------------------------------
+// Coin price POLICY — steer OUR OWN coins (QTA/QX/QKEY) only.
+//
+// modes:
+//   'market'  — free random walk (default; no steering)
+//   'peg'     — hold exactly at target
+//   'target'  — glide from current price to target over [now .. now+duration_h]
+//   'managed' — random walk clamped to center ± band_pct%, biased by bias
+//   'jump'    — (action, not a stored mode) set price immediately to target and
+//               switch to peg so it stays there
+// ----------------------------------------------------------------------------
+const QUANTARIUM_STEERABLE = new Set(['QTA', 'QX', 'QKEY']);
+
+app.put('/coins/:symbol/price-policy', async (c) => {
+  const db = c.env.DB;
+  const symbol = String(c.req.param('symbol')).toUpperCase();
+  const body = await c.req.json().catch(() => ({} as any));
+
+  if (!QUANTARIUM_STEERABLE.has(symbol)) {
+    return c.json({ error: 'Price policy is only available for our own coins (QTA/QX/QKEY). Standard coins follow the real market.' }, 400);
+  }
+
+  const coin = await db.prepare('SELECT * FROM coins WHERE symbol = ?').bind(symbol).first() as any;
+  if (!coin) return c.json({ error: 'Coin not found' }, 404);
+
+  const mode = String(body.mode || '').toLowerCase();
+  const num = (v: any): number | null =>
+    v === null || v === undefined || v === '' || Number.isNaN(Number(v)) ? null : Number(v);
+  const now = Date.now();
+
+  const sets: string[] = [];
+  const params: any[] = [];
+  const push = (col: string, val: any) => { sets.push(`${col} = ?`); params.push(val); };
+
+  switch (mode) {
+    case 'market': {
+      push('price_mode', 'market');
+      break;
+    }
+    case 'peg': {
+      const target = num(body.target);
+      if (!target || target <= 0) return c.json({ error: 'peg requires a positive target price' }, 400);
+      push('price_mode', 'peg');
+      push('price_target', target);
+      push('price_usd', target); // keep the stored USD price in sync
+      break;
+    }
+    case 'jump': {
+      // Instant jump = set price now + hold via peg.
+      const target = num(body.target);
+      if (!target || target <= 0) return c.json({ error: 'jump requires a positive target price' }, 400);
+      push('price_mode', 'peg');
+      push('price_target', target);
+      push('price_usd', target);
+      break;
+    }
+    case 'target': {
+      const target = num(body.target);
+      const durationH = num(body.duration_h) ?? 24; // default 24h glide
+      if (!target || target <= 0) return c.json({ error: 'target requires a positive target price' }, 400);
+      if (durationH <= 0) return c.json({ error: 'duration_h must be positive' }, 400);
+      const from = num(coin.price_usd) ?? target;
+      push('price_mode', 'target');
+      push('price_target', target);
+      push('price_drift_from', from);
+      push('price_drift_start', now);
+      push('price_drift_end', now + durationH * 3600 * 1000);
+      break;
+    }
+    case 'managed': {
+      const center = num(body.center) ?? num(coin.price_usd);
+      const bandPct = num(body.band_pct) ?? 3;
+      const bias = Math.max(-1, Math.min(1, num(body.bias) ?? 0));
+      if (!center || center <= 0) return c.json({ error: 'managed requires a positive center price' }, 400);
+      if (bandPct == null || bandPct < 0) return c.json({ error: 'band_pct must be >= 0' }, 400);
+      push('price_mode', 'managed');
+      push('price_center', center);
+      push('price_band_pct', bandPct);
+      push('price_bias', bias);
+      break;
+    }
+    default:
+      return c.json({ error: `unknown mode "${mode}" (use market|peg|target|managed|jump)` }, 400);
+  }
+
+  params.push(symbol);
+  await db.prepare(`UPDATE coins SET ${sets.join(', ')} WHERE symbol = ?`).bind(...params).run();
+
+  await logAdminAction(c, {
+    action: 'coin.price_policy',
+    targetType: 'coin',
+    targetId: symbol,
+    payload: { mode, body },
+  });
+
+  const updated = await db.prepare('SELECT * FROM coins WHERE symbol = ?').bind(symbol).first();
+  return c.json({ message: 'Price policy updated', coin: updated });
+});
+
 // ============================================================================
 // System notification broadcaster
 // ============================================================================

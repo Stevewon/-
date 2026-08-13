@@ -6,6 +6,7 @@ import {
   fetchExternalTicker,
   fetchExternalTickersBatch,
 } from '../lib/market-data';
+import { policyFromCoinRow, nextPolicyPrice } from '../lib/price-policy';
 
 const app = new Hono<AppEnv>();
 
@@ -167,7 +168,17 @@ app.get('/tickers', async (c) => {
     // Quantarium asset, stablecoin, or external provider miss → our own data.
     // QuantaEX is USD-denominated; USDT and USDC both peg to ~$1 so the
     // base coin's USD price applies directly without conversion.
-    const price = closeByMarket.get(m.id) ?? (coin?.price_usd ?? 0);
+    let price = closeByMarket.get(m.id) ?? (coin?.price_usd ?? 0);
+
+    // Apply OUR-COIN price policy (peg / target-drift / managed / jump) so the
+    // REST snapshot matches what the SSE stream is steering toward.
+    if (coin && isQuantariumAsset(m.base_coin)) {
+      const policy = policyFromCoinRow(coin);
+      if (policy.mode !== 'market') {
+        price = nextPolicyPrice(policy, price || coin.price_usd || 0, price || coin.price_usd || 0);
+      }
+    }
+
     tickers[sym] = {
       last: price,
       change: coin?.change_24h ?? 0,

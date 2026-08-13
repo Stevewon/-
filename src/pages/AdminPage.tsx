@@ -992,9 +992,13 @@ function TradesTab({ t }: any) {
 // ============================================================================
 // Coins tab
 // ============================================================================
+// Our own steerable coins — price policy is available for these only.
+const STEERABLE_COINS = new Set(['QTA', 'QX', 'QKEY']);
+
 function CoinsTab({ t }: any) {
   const [list, setList] = useState<any[]>([]);
   const [editing, setEditing] = useState<Record<string, any>>({});
+  const [policyOpen, setPolicyOpen] = useState<string | null>(null);
 
   const load = async () => {
     try {
@@ -1081,18 +1085,171 @@ function CoinsTab({ t }: any) {
                   </button>
                 </td>
                 <td className="px-3 py-2 text-right">
-                  {beingEdited ? (
-                    <div className="flex justify-end gap-1">
-                      <button onClick={() => savePrice(c)} className="text-[11px] px-2 py-1 rounded bg-exchange-buy/15 text-exchange-buy">{t('common.save')}</button>
-                      <button onClick={() => setEditing(prev => { const n = { ...prev }; delete n[c.symbol]; return n; })} className="text-[11px] px-2 py-1 rounded bg-exchange-hover text-exchange-text-third">{t('common.cancel')}</button>
-                    </div>
-                  ) : null}
+                  <div className="flex justify-end items-center gap-1">
+                    {beingEdited ? (
+                      <>
+                        <button onClick={() => savePrice(c)} className="text-[11px] px-2 py-1 rounded bg-exchange-buy/15 text-exchange-buy">{t('common.save')}</button>
+                        <button onClick={() => setEditing(prev => { const n = { ...prev }; delete n[c.symbol]; return n; })} className="text-[11px] px-2 py-1 rounded bg-exchange-hover text-exchange-text-third">{t('common.cancel')}</button>
+                      </>
+                    ) : null}
+                    {STEERABLE_COINS.has(c.symbol) && (
+                      <button
+                        onClick={() => setPolicyOpen(policyOpen === c.symbol ? null : c.symbol)}
+                        className={`text-[11px] px-2 py-1 rounded border ${
+                          c.price_mode && c.price_mode !== 'market'
+                            ? 'bg-exchange-yellow/20 text-exchange-yellow border-exchange-yellow/40'
+                            : 'bg-exchange-hover text-exchange-text-secondary border-exchange-border'
+                        }`}
+                        title="Steer this coin's price"
+                      >
+                        시세조율{c.price_mode && c.price_mode !== 'market' ? ` · ${c.price_mode}` : ''}
+                      </button>
+                    )}
+                  </div>
                 </td>
               </tr>
             );
           })}
+          {/* Expandable price-policy editor rows for our own coins */}
+          {list.filter(c => STEERABLE_COINS.has(c.symbol) && policyOpen === c.symbol).map(c => (
+            <tr key={`${c.symbol}-policy`} className="bg-exchange-bg/40">
+              <td colSpan={7} className="px-3 py-3">
+                <PricePolicyEditor coin={c} t={t} onSaved={() => { load(); }} onClose={() => setPolicyOpen(null)} />
+              </td>
+            </tr>
+          ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+// ============================================================================
+// Price policy editor — 4 modes to steer our own coins (QTA/QX/QKEY)
+// ============================================================================
+function PricePolicyEditor({ coin, t, onSaved, onClose }: any) {
+  const [mode, setMode] = useState<string>(coin.price_mode && coin.price_mode !== 'market' ? coin.price_mode : 'peg');
+  const [target, setTarget] = useState<string>(String(coin.price_target ?? coin.price_usd ?? ''));
+  const [durationH, setDurationH] = useState<string>('24');
+  const [center, setCenter] = useState<string>(String(coin.price_center ?? coin.price_usd ?? ''));
+  const [bandPct, setBandPct] = useState<string>(String(coin.price_band_pct ?? 3));
+  const [bias, setBias] = useState<string>(String(coin.price_bias ?? 0));
+  const [saving, setSaving] = useState(false);
+
+  const save = async (overrideMode?: string) => {
+    const m = overrideMode || mode;
+    const payload: any = { mode: m };
+    if (m === 'peg' || m === 'jump' || m === 'target') payload.target = Number(target);
+    if (m === 'target') payload.duration_h = Number(durationH);
+    if (m === 'managed') {
+      payload.center = Number(center);
+      payload.band_pct = Number(bandPct);
+      payload.bias = Number(bias);
+    }
+    setSaving(true);
+    try {
+      await api.put(`/admin/coins/${coin.symbol}/price-policy`, payload);
+      showToast('success', t('common.save'), `${coin.symbol} 시세 정책: ${m}`);
+      onSaved();
+    } catch (e: any) {
+      showToast('error', t('common.error'), e.response?.data?.error || 'Failed');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const MODES = [
+    { id: 'peg', label: '📌 고정 페그', desc: '정확히 목표가에 고정' },
+    { id: 'target', label: '📈 목표가 이동', desc: '지정 기간 동안 목표가까지 서서히 이동' },
+    { id: 'managed', label: '🎚️ 변동폭+편향', desc: '중심가 ±변동폭 안에서 랜덤워크 + 상승/하락 편향' },
+    { id: 'market', label: '🎲 자율(시장)', desc: '조율 해제 — 자유 랜덤워크' },
+  ];
+
+  return (
+    <div className="rounded-lg border border-exchange-border bg-exchange-card p-3 space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="text-sm font-semibold text-exchange-yellow">{coin.symbol} 시세 조율</div>
+        <button onClick={onClose} className="text-[11px] px-2 py-1 rounded bg-exchange-hover text-exchange-text-third">{t('common.cancel')}</button>
+      </div>
+
+      {/* Mode selector */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+        {MODES.map(m => (
+          <button
+            key={m.id}
+            onClick={() => setMode(m.id)}
+            className={`text-left px-3 py-2 rounded border text-xs transition-colors ${
+              mode === m.id
+                ? 'bg-exchange-yellow/15 border-exchange-yellow/50 text-exchange-text'
+                : 'bg-exchange-hover/40 border-exchange-border text-exchange-text-secondary hover:border-exchange-yellow/30'
+            }`}
+          >
+            <div className="font-medium">{m.label}</div>
+            <div className="text-[10px] text-exchange-text-third mt-0.5 leading-tight">{m.desc}</div>
+          </button>
+        ))}
+      </div>
+
+      {/* Mode-specific inputs */}
+      {(mode === 'peg') && (
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="text-xs">
+            <div className="text-exchange-text-third mb-1">고정 가격 ($)</div>
+            <input type="number" step="any" value={target} onChange={e => setTarget(e.target.value)} className="input-field !py-1 text-xs w-40" />
+          </label>
+          <button disabled={saving} onClick={() => save('peg')} className="text-xs px-3 py-1.5 rounded bg-exchange-buy/20 text-exchange-buy font-medium">적용 (고정)</button>
+          <button disabled={saving} onClick={() => save('jump')} className="text-xs px-3 py-1.5 rounded bg-exchange-yellow/20 text-exchange-yellow font-medium">⚡ 즉시 점프</button>
+        </div>
+      )}
+
+      {(mode === 'target') && (
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="text-xs">
+            <div className="text-exchange-text-third mb-1">목표 가격 ($)</div>
+            <input type="number" step="any" value={target} onChange={e => setTarget(e.target.value)} className="input-field !py-1 text-xs w-40" />
+          </label>
+          <label className="text-xs">
+            <div className="text-exchange-text-third mb-1">이동 기간 (시간)</div>
+            <input type="number" step="any" value={durationH} onChange={e => setDurationH(e.target.value)} className="input-field !py-1 text-xs w-32" />
+          </label>
+          <button disabled={saving} onClick={() => save('target')} className="text-xs px-3 py-1.5 rounded bg-exchange-buy/20 text-exchange-buy font-medium">적용 (이동 시작)</button>
+          <div className="text-[10px] text-exchange-text-third">현재 ${coin.price_usd} → ${target || '?'} · {durationH}시간</div>
+        </div>
+      )}
+
+      {(mode === 'managed') && (
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="text-xs">
+            <div className="text-exchange-text-third mb-1">중심 가격 ($)</div>
+            <input type="number" step="any" value={center} onChange={e => setCenter(e.target.value)} className="input-field !py-1 text-xs w-36" />
+          </label>
+          <label className="text-xs">
+            <div className="text-exchange-text-third mb-1">변동폭 (±%)</div>
+            <input type="number" step="any" value={bandPct} onChange={e => setBandPct(e.target.value)} className="input-field !py-1 text-xs w-28" />
+          </label>
+          <label className="text-xs">
+            <div className="text-exchange-text-third mb-1">편향 (-1 하락 ~ +1 상승)</div>
+            <div className="flex items-center gap-2">
+              <input type="range" min="-1" max="1" step="0.1" value={bias} onChange={e => setBias(e.target.value)} className="w-32" />
+              <span className="tabular-nums text-xs w-8">{Number(bias).toFixed(1)}</span>
+            </div>
+          </label>
+          <button disabled={saving} onClick={() => save('managed')} className="text-xs px-3 py-1.5 rounded bg-exchange-buy/20 text-exchange-buy font-medium">적용 (관리형)</button>
+        </div>
+      )}
+
+      {(mode === 'market') && (
+        <div className="flex items-center gap-3">
+          <div className="text-xs text-exchange-text-secondary">조율을 해제하고 자유 랜덤워크로 되돌립니다.</div>
+          <button disabled={saving} onClick={() => save('market')} className="text-xs px-3 py-1.5 rounded bg-exchange-hover text-exchange-text font-medium">조율 해제</button>
+        </div>
+      )}
+
+      <div className="text-[10px] text-exchange-text-third border-t border-exchange-border pt-2">
+        현재 정책: <span className="text-exchange-text-secondary">{coin.price_mode || 'market'}</span>
+        {coin.price_target ? ` · target $${coin.price_target}` : ''}
+        {coin.price_mode === 'managed' && coin.price_center ? ` · center $${coin.price_center} ±${coin.price_band_pct}% bias ${coin.price_bias}` : ''}
+      </div>
     </div>
   );
 }

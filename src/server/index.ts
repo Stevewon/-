@@ -19,6 +19,7 @@ import { installObservability, captureError } from './utils/observability';
 import { geoBlock, geoStatusHandler } from './middleware/geo-block';
 import { isQuantariumAsset } from './lib/asset-routing';
 import { fetchExternalTickersBatch, type Ticker as ExtTicker } from './lib/market-data';
+import { policyFromCoinRow, nextPolicyPrice, type CoinPricePolicy } from './lib/price-policy';
 
 export type Env = {
   DB: D1Database;
@@ -189,6 +190,7 @@ let qtaHdIndexesBootstrapDone = false;
 //   the cron broadcaster needs to know native-vs-ERC20 per row. Existing rows
 //   default to 'QTA'.
 let qtaWithdrawalsAssetBootstrapDone = false;
+let coinPricePolicyBootstrapDone = false;
 
 app.use('/api/*', async (c, next) => {
   // Fast path: skip the DB lookup on every request by using an in-memory
@@ -1315,6 +1317,49 @@ app.use('/api/*', async (c, next) => {
     }
   }
 
+  // Self-bootstrap: coin price-policy columns (migration 0038). Lets the
+  // exchange steer OUR OWN coins' price (peg / target-drift / managed / jump).
+  if (!coinPricePolicyBootstrapDone) {
+    const ctx = c.executionCtx as any;
+    if (ctx && typeof ctx.waitUntil === 'function') {
+      ctx.waitUntil(
+        (async () => {
+          try {
+            const marker = await c.env.DB.prepare(
+              "SELECT value FROM system_state WHERE key = 'coin_price_policy_2026_08_13'"
+            ).first<{ value: string }>().catch(() => null);
+            if (marker && marker.value === 'migrated_v1') {
+              coinPricePolicyBootstrapDone = true;
+              return;
+            }
+
+            const addCol = async (sql: string) => {
+              try { await c.env.DB.prepare(sql).run(); } catch (_e) { /* exists */ }
+            };
+            await addCol(`ALTER TABLE coins ADD COLUMN price_mode TEXT NOT NULL DEFAULT 'market'`);
+            await addCol(`ALTER TABLE coins ADD COLUMN price_target REAL`);
+            await addCol(`ALTER TABLE coins ADD COLUMN price_center REAL`);
+            await addCol(`ALTER TABLE coins ADD COLUMN price_band_pct REAL`);
+            await addCol(`ALTER TABLE coins ADD COLUMN price_bias REAL NOT NULL DEFAULT 0`);
+            await addCol(`ALTER TABLE coins ADD COLUMN price_drift_from REAL`);
+            await addCol(`ALTER TABLE coins ADD COLUMN price_drift_start INTEGER`);
+            await addCol(`ALTER TABLE coins ADD COLUMN price_drift_end INTEGER`);
+
+            await c.env.DB.prepare(
+              `INSERT OR REPLACE INTO system_state (key, value, updated_at)
+               VALUES ('coin_price_policy_2026_08_13', 'migrated_v1', CURRENT_TIMESTAMP)`
+            ).run();
+
+            coinPricePolicyBootstrapDone = true;
+            console.log('[bootstrap] coin price-policy columns (0038) applied to production D1');
+          } catch (e) {
+            captureError(c as any, e, { where: 'coin-price-policy-bootstrap' });
+          }
+        })()
+      );
+    }
+  }
+
   await next();
 });
 
@@ -1576,19 +1621,24 @@ app.get('/api/stream/ticker', async (c) => {
   // Real trade page MUST NOT pass mock=1.
   const allowMock = c.req.query('mock') === '1';
 
-  // Try to blend with real DB data (non-blocking)
+  // Try to blend with real DB data (non-blocking). For OUR OWN coins that run
+  // under an active price policy (peg/target/managed), we DON'T blend toward
+  // price_usd here — the policy in buildTickers() is the source of truth and
+  // blending would fight it. Standard/market-mode coins still blend as before.
   try {
     const markets = await c.env.DB.prepare(
-      `SELECT m.base_coin, m.quote_coin, c.price_usd FROM markets m JOIN coins c ON c.symbol = m.base_coin WHERE m.is_active = 1`
+      `SELECT m.base_coin, m.quote_coin, c.price_usd, c.price_mode
+         FROM markets m JOIN coins c ON c.symbol = m.base_coin WHERE m.is_active = 1`
     ).all();
     for (const m of markets.results as any[]) {
       const key = `${m.base_coin}-${m.quote_coin}`;
-      if (priceState[key] && m.price_usd > 0) {
+      const managed = (m.price_mode && m.price_mode !== 'market');
+      if (priceState[key] && m.price_usd > 0 && !managed) {
         // USDT/USDC are both ~$1, no FX conversion needed.
         priceState[key].price = priceState[key].price * 0.95 + m.price_usd * 0.05;
       }
     }
-  } catch { /* DB might not be available */ }
+  } catch { /* DB might not be available (or price_mode column absent) */ }
 
   // Use ReadableStream with pull-based controller for CF Workers compatibility
   let tickCount = 0;
@@ -1617,10 +1667,30 @@ app.get('/api/stream/ticker', async (c) => {
     } catch { /* keep last snapshot */ }
   };
 
+  // Price POLICY for OUR OWN coins (QTA/QX/QKEY). The admin steers these via
+  // the coins table; we reload the policy every ~6 ticks so changes made in the
+  // admin panel take effect within seconds without restarting the stream.
+  const coinPolicies = new Map<string, CoinPricePolicy>();
+  const refreshCoinPolicies = async () => {
+    try {
+      const { results } = await c.env.DB.prepare(
+        `SELECT symbol, price_mode, price_target, price_center, price_band_pct,
+                price_bias, price_drift_from, price_drift_start, price_drift_end
+           FROM coins WHERE is_active = 1`
+      ).all();
+      for (const row of (results || []) as any[]) {
+        if (isQuantariumAsset(row.symbol)) {
+          coinPolicies.set(String(row.symbol).toUpperCase(), policyFromCoinRow(row));
+        }
+      }
+    } catch { /* columns may not exist yet on a cold DB — leave empty (market mode) */ }
+  };
+
   const buildTickers = () => {
     const tickers: Record<string, any> = {};
     for (const [symbol] of Object.entries(COIN_PRICES)) {
       const real = !isQuantariumAsset(symbol) ? realTickers.get(symbol) : undefined;
+      const policy = isQuantariumAsset(symbol) ? coinPolicies.get(symbol.toUpperCase()) : undefined;
       for (const quote of ['USDT', 'USDC']) {
         const key = `${symbol}-${quote}`;
         if (real) {
@@ -1634,9 +1704,20 @@ app.get('/api/stream/ticker', async (c) => {
           };
           continue;
         }
-        // Our own coin (or provider miss) → keep the internal price state.
-        tickPrice(key);
+        // Our own coin (or provider miss) → internal price state, steered by
+        // the coin's price policy (peg / target-drift / managed / jump).
         const s = priceState[key];
+        const prev = s.price;
+        tickPrice(key); // advances the free random-walk proposal + volume/high/low
+        if (policy && policy.mode !== 'market') {
+          const steered = nextPolicyPrice(policy, prev, s.price);
+          s.price = steered;
+          if (s.price > s.high) s.high = s.price;
+          if (s.price < s.low) s.low = s.price;
+          // Reflect the steer in 24h change so the ticker arrow is consistent.
+          s.change24h = prev > 0 ? ((s.price - prev) / prev) * 100 + s.change24h * 0.9 : s.change24h;
+          s.change24h = Math.max(-30, Math.min(30, s.change24h));
+        }
         tickers[key] = {
           last: +s.price.toPrecision(8),
           change: +s.change24h.toFixed(2),
@@ -1682,10 +1763,10 @@ app.get('/api/stream/ticker', async (c) => {
 
   const stream = new ReadableStream({
     start(controller) {
-      // Prime the real-market snapshot, then send the first ticker frame with
-      // real prices already blended in. Non-blocking so the stream still opens
-      // instantly even if the external provider is slow/unreachable.
-      refreshRealTickers()
+      // Prime the real-market snapshot AND our-coin policies, then send the
+      // first ticker frame with both already applied. Non-blocking so the
+      // stream still opens instantly even if a source is slow/unreachable.
+      Promise.all([refreshRealTickers(), refreshCoinPolicies()])
         .then(() => {
           try {
             controller.enqueue(encoder.encode(formatEvent('tickers', buildTickers())));
@@ -1731,8 +1812,11 @@ app.get('/api/stream/ticker', async (c) => {
         }
 
         try {
-          // Refresh the real-market snapshot every ~6 ticks (~9 s).
-          if (tickCount % 6 === 0) { refreshRealTickers().catch(() => {}); }
+          // Refresh the real-market snapshot + our-coin policies every ~6 ticks.
+          if (tickCount % 6 === 0) {
+            refreshRealTickers().catch(() => {});
+            refreshCoinPolicies().catch(() => {});
+          }
 
           const tickers = buildTickers();
           controller.enqueue(encoder.encode(formatEvent('tickers', tickers)));
