@@ -1,5 +1,5 @@
 import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
-import { BarChart3, Wallet, LayoutGrid, Shield, LogIn, LogOut, User, ClipboardList, TrendingUp, Layers } from 'lucide-react';
+import { BarChart3, Wallet, LayoutGrid, Shield, LogIn, LogOut, User, ClipboardList, TrendingUp, Layers, Percent } from 'lucide-react';
 import useStore from '../../store/useStore';
 import { useI18n } from '../../i18n';
 import QuantaLogo from '../common/QuantaLogo';
@@ -25,6 +25,7 @@ export default function Layout() {
   const navItems = [
     { path: '/trade/BTC-USDT', label: t('nav.trade'), icon: BarChart3 },
     { path: '/markets', label: t('nav.markets'), icon: LayoutGrid },
+    { path: '/earn', label: t('nav.earn'), icon: Percent },
     ...(user ? [
       { path: '/futures', label: t('futures.title') || 'Futures', icon: TrendingUp },
       { path: '/margin', label: t('margin.title') || 'Margin', icon: Layers },
@@ -129,10 +130,10 @@ export default function Layout() {
       <nav className="sm:hidden fixed bottom-0 left-0 right-0 bg-exchange-card/95 backdrop-blur border-t border-exchange-border flex z-50 safe-area-bottom">
         {(user
           ? [
-              { path: '/trade/BTC-USDT', label: t('nav.trade'),   icon: BarChart3 },
               { path: '/markets',        label: t('nav.markets'), icon: LayoutGrid },
+              { path: '/trade/BTC-USDT', label: t('nav.trade'),   icon: BarChart3 },
+              { path: '/earn',           label: t('nav.earn'),    icon: Percent },
               { path: '/wallet',         label: t('nav.wallet'),  icon: Wallet },
-              { path: '/futures',        label: t('futures.title') || 'Futures', icon: TrendingUp },
               { path: '/profile',        label: t('nav.profile')  || 'Profile',  icon: User },
             ]
           : [

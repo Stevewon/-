@@ -29,8 +29,7 @@ export default function TradePage() {
   const [selectedPrice, setSelectedPrice] = useState<number | undefined>();
   const [showMarkets, setShowMarkets] = useState(false);
   const [bottomTab, setBottomTab] = useState<'orders' | 'trades'>('orders');
-  const [mobilePanel, setMobilePanel] = useState<'buy' | 'sell' | null>(null);
-  const [mobileView, setMobileView] = useState<MobileView>('chart');
+  const [mobileView, setMobileView] = useState<MobileView>('orderbook');
 
   const [base, quote] = symbol.split('-');
   const ticker = tickers[symbol];
@@ -224,81 +223,58 @@ export default function TradePage() {
           </div>
         )}
 
-        {/* Mobile Tab Switcher */}
-        <div className="flex items-center border-b border-exchange-border bg-exchange-card">
+        {/* Mobile view switch — Order form (default) vs Chart, Binance-style */}
+        <div className="flex items-center gap-4 px-3 border-b border-exchange-border bg-exchange-card">
           {([
+            { key: 'orderbook' as MobileView, label: t('trade.placeOrder'), icon: BookOpen },
             { key: 'chart' as MobileView, label: t('trade.chart'), icon: BarChart3 },
-            { key: 'orderbook' as MobileView, label: t('trade.orderbookTab'), icon: BookOpen },
             { key: 'trades' as MobileView, label: t('trade.tradesTab'), icon: ArrowLeftRight },
           ]).map(({ key, label, icon: Icon }) => (
             <button
               key={key}
               onClick={() => setMobileView(key)}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-medium border-b-2 transition-colors ${
+              className={`flex items-center gap-1.5 py-2.5 text-[14px] font-semibold border-b-2 transition-colors ${
                 mobileView === key
-                  ? 'border-exchange-yellow text-exchange-yellow'
+                  ? 'border-exchange-yellow text-exchange-text'
                   : 'border-transparent text-exchange-text-third'
               }`}
             >
-              <Icon size={14} />
+              <Icon size={15} />
               {label}
             </button>
           ))}
         </div>
 
         {/* Mobile Content */}
-        <div className="flex-1 min-h-0 overflow-hidden">
-          {mobileView === 'chart' && (
-            <div className="h-full flex flex-col">
-              <div className="flex-1 min-h-0">
-                <CandleChart symbol={symbol} />
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          {/* DEFAULT: Order form (left) + Order book (right), side by side — the Binance layout */}
+          {mobileView === 'orderbook' && (
+            <div className="flex min-h-0">
+              {/* Left: order form */}
+              <div className="flex-1 min-w-0 border-r border-exchange-border">
+                <TradePanel symbol={symbol} initialPrice={selectedPrice} />
               </div>
-              {/* Mini Orderbook Below Chart */}
-              <div className="h-32 border-t border-exchange-border overflow-hidden flex">
-                <div className="flex-1 border-r border-exchange-border">
-                  <div className="px-2 py-1 text-[10px] text-exchange-text-third font-medium border-b border-exchange-border flex justify-between">
-                    <span>{t('trade.bidLabel')}</span>
-                    <span>{t('trade.quantity')}</span>
-                  </div>
-                  <div className="overflow-hidden">
-                    {useStore.getState().orderbook.bids.slice(0, 5).map((bid, i) => (
-                      <div key={`mb-${i}`} className="flex justify-between px-2 py-[2px] text-[10px]">
-                        <span className="text-exchange-buy tabular-nums">{formatPrice(bid.price)}</span>
-                        <span className="text-exchange-text-secondary tabular-nums">{formatPrice(bid.amount, 4)}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <div className="flex-1">
-                  <div className="px-2 py-1 text-[10px] text-exchange-text-third font-medium border-b border-exchange-border flex justify-between">
-                    <span>{t('trade.askLabel')}</span>
-                    <span>{t('trade.quantity')}</span>
-                  </div>
-                  <div className="overflow-hidden">
-                    {useStore.getState().orderbook.asks.slice(0, 5).map((ask, i) => (
-                      <div key={`ma-${i}`} className="flex justify-between px-2 py-[2px] text-[10px]">
-                        <span className="text-exchange-sell tabular-nums">{formatPrice(ask.price)}</span>
-                        <span className="text-exchange-text-secondary tabular-nums">{formatPrice(ask.amount, 4)}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+              {/* Right: order book */}
+              <div className="w-[42%] shrink-0 min-h-0">
+                {isLoadingOrderbook && useStore.getState().orderbook.bids.length === 0 ? (
+                  <SkeletonLoader type="orderbook" />
+                ) : (
+                  <Orderbook onPriceClick={(p) => setSelectedPrice(p)} />
+                )}
               </div>
             </div>
           )}
 
-          {mobileView === 'orderbook' && (
-            <div className="h-full">
-              {isLoadingOrderbook && useStore.getState().orderbook.bids.length === 0 ? (
-                <SkeletonLoader type="orderbook" />
-              ) : (
-                <Orderbook onPriceClick={(p) => { setSelectedPrice(p); setMobilePanel('buy'); }} />
-              )}
+          {mobileView === 'chart' && (
+            <div className="h-[70vh] flex flex-col">
+              <div className="flex-1 min-h-0">
+                <CandleChart symbol={symbol} />
+              </div>
             </div>
           )}
 
           {mobileView === 'trades' && (
-            <div className="h-full">
+            <div className="min-h-[60vh]">
               {isLoadingTrades ? (
                 <SkeletonLoader type="trades" />
               ) : (
@@ -307,30 +283,32 @@ export default function TradePage() {
             </div>
           )}
         </div>
-      </div>
 
-      {/* Mobile Trade Buttons — Bybit-style big rounded pills */}
-      <div className="md:hidden fixed bottom-[54px] left-0 right-0 bg-exchange-card/95 backdrop-blur border-t border-exchange-border px-3 py-2.5 flex gap-3 z-30">
-        <button className="flex-1 btn-buy !text-[15px] !py-3.5 !rounded-full font-bold" onClick={() => setMobilePanel('buy')}>
-          {t('trade.buy')} {base}
-        </button>
-        <button className="flex-1 btn-sell !text-[15px] !py-3.5 !rounded-full font-bold" onClick={() => setMobilePanel('sell')}>
-          {t('trade.sell')} {base}
-        </button>
-      </div>
-
-      {/* Mobile Trade Panel Modal */}
-      {mobilePanel && (
-        <div className="md:hidden fixed inset-0 z-50 bg-exchange-bg/90 backdrop-blur-sm flex items-end">
-          <div className="w-full bg-exchange-card rounded-t-2xl border-t border-exchange-border p-4 pb-8 max-h-[80vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="font-semibold">{mobilePanel === 'buy' ? t('trade.buy') : t('trade.sell')} {base}</h3>
-              <button onClick={() => setMobilePanel(null)} className="p-1"><X size={20} className="text-exchange-text-third" /></button>
-            </div>
-            <TradePanel symbol={symbol} initialPrice={selectedPrice} forceSide={mobilePanel} onComplete={() => setMobilePanel(null)} />
+        {/* Bottom sub-tabs: Orders / Trade history */}
+        <div className="border-t border-exchange-border bg-exchange-card">
+          <div className="flex items-center gap-5 px-3">
+            {([
+              { key: 'orders' as const, label: t('trade.openOrders') },
+              { key: 'trades' as const, label: t('trade.tradeHistory') },
+            ]).map(({ key, label }) => (
+              <button
+                key={key}
+                onClick={() => setBottomTab(key)}
+                className={`py-2.5 text-[13px] font-semibold border-b-2 transition-colors ${
+                  bottomTab === key
+                    ? 'border-exchange-yellow text-exchange-text'
+                    : 'border-transparent text-exchange-text-third'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="max-h-40 overflow-y-auto">
+            {bottomTab === 'orders' ? <OpenOrders symbol={symbol} /> : <RecentTrades />}
           </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }

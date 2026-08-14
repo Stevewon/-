@@ -12,6 +12,7 @@ import RegisterPage from './pages/RegisterPage';
 
 // Lazy loaded (secondary pages)
 const MarketsPage = lazy(() => import('./pages/MarketsPage'));
+const EarnPage = lazy(() => import('./pages/EarnPage'));
 const WalletPage = lazy(() => import('./pages/WalletPage'));
 const AdminPage = lazy(() => import('./pages/AdminPage'));
 const HomePage = lazy(() => import('./pages/HomePage'));
@@ -100,6 +101,7 @@ export default function App() {
           <Route index element={<Navigate to="/trade/BTC-USDT" replace />} />
           <Route path="trade/:symbol" element={<TradePage />} />
           <Route path="markets" element={<MarketsPage />} />
+          <Route path="earn" element={<EarnPage />} />
           <Route path="notice" element={<NoticePage />} />
           <Route path="fee" element={<FeePage />} />
           <Route path="terms" element={<TermsPage />} />
