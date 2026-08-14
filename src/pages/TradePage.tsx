@@ -113,9 +113,8 @@ export default function TradePage() {
         <div className="flex items-center gap-4 text-xs shrink-0">
           <div className="flex flex-col">
             <span className="text-exchange-text-third text-[10px]">{t('market.change24h')}</span>
-            <span className={`font-medium tabular-nums ${isUp ? 'text-exchange-buy' : 'text-exchange-sell'}`}>
-              {isUp ? <TrendingUp size={10} className="inline mr-0.5" /> : <TrendingDown size={10} className="inline mr-0.5" />}
-              {formatPercent(ticker?.change || 0)}
+            <span className={`chg-pill ${isUp ? 'up' : 'down'} mt-0.5`}>
+              {isUp ? '+' : ''}{formatPercent(ticker?.change || 0)}
             </span>
           </div>
           <div className="hidden sm:flex flex-col">
@@ -310,12 +309,12 @@ export default function TradePage() {
         </div>
       </div>
 
-      {/* Mobile Trade Buttons */}
-      <div className="md:hidden fixed bottom-14 left-0 right-0 bg-exchange-card border-t border-exchange-border p-2 flex gap-2 z-30">
-        <button className="flex-1 btn-buy text-sm py-2.5 rounded-lg font-semibold" onClick={() => setMobilePanel('buy')}>
+      {/* Mobile Trade Buttons — Bybit-style big rounded pills */}
+      <div className="md:hidden fixed bottom-[54px] left-0 right-0 bg-exchange-card/95 backdrop-blur border-t border-exchange-border px-3 py-2.5 flex gap-3 z-30">
+        <button className="flex-1 btn-buy !text-[15px] !py-3.5 !rounded-full font-bold" onClick={() => setMobilePanel('buy')}>
           {t('trade.buy')} {base}
         </button>
-        <button className="flex-1 btn-sell text-sm py-2.5 rounded-lg font-semibold" onClick={() => setMobilePanel('sell')}>
+        <button className="flex-1 btn-sell !text-[15px] !py-3.5 !rounded-full font-bold" onClick={() => setMobilePanel('sell')}>
           {t('trade.sell')} {base}
         </button>
       </div>

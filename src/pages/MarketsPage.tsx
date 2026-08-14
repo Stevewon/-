@@ -174,24 +174,24 @@ export default function MarketsPage() {
           {t('market.favorites')}
         </button>
 
-        {/* Quick Filters */}
-        <div className="flex items-center gap-1">
+        {/* Quick Filters — Bybit-style category tabs */}
+        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar -mx-1 px-1">
           {([
+            { key: 'hot' as QuickFilter, label: t('market.hot'), icon: Flame },
             { key: 'all' as QuickFilter, label: t('market.all'), icon: Filter },
             { key: 'gainers' as QuickFilter, label: t('market.rising'), icon: TrendingUp },
             { key: 'losers' as QuickFilter, label: t('market.falling'), icon: TrendingDown },
-            { key: 'hot' as QuickFilter, label: t('market.hot'), icon: Flame },
           ]).map(({ key, label, icon: Icon }) => (
             <button
               key={key}
               onClick={() => setQuickFilter(key)}
-              className={`flex items-center gap-1 px-2.5 py-1 text-xs rounded-md transition-colors ${
+              className={`flex items-center gap-1 px-3.5 py-1.5 text-[13px] font-semibold rounded-full whitespace-nowrap transition-colors ${
                 quickFilter === key
-                  ? 'bg-exchange-hover text-exchange-yellow'
-                  : 'text-exchange-text-third hover:text-exchange-text'
+                  ? 'bg-exchange-yellow text-black'
+                  : 'bg-exchange-card text-exchange-text-secondary hover:text-exchange-text border border-exchange-border'
               }`}
             >
-              <Icon size={11} />
+              <Icon size={13} />
               {label}
             </button>
           ))}
@@ -270,12 +270,13 @@ export default function MarketsPage() {
                         <div className="text-[11px] text-exchange-text-third">{m.base_name}</div>
                       </div>
                     </span>
-                    <span className="w-[18%] text-right text-sm font-medium tabular-nums text-exchange-text">
+                    <span className="w-[18%] text-right text-sm font-semibold tabular-nums text-exchange-text">
                       {formatPrice(m.last)}
                     </span>
-                    <span className={`w-[14%] text-right flex items-center justify-end gap-0.5 text-sm font-medium tabular-nums ${isUp ? 'text-exchange-buy' : 'text-exchange-sell'}`}>
-                      {isUp ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
-                      {formatPercent(m.change)}
+                    <span className="w-[14%] flex items-center justify-end">
+                      <span className={`chg-pill ${isUp ? 'up' : 'down'}`}>
+                        {isUp ? '+' : ''}{formatPercent(m.change)}
+                      </span>
                     </span>
                     <span className="w-[16%] text-right text-xs tabular-nums text-exchange-text-secondary">
                       {formatVolume(m.volume)}
@@ -297,8 +298,8 @@ export default function MarketsPage() {
             )}
           </div>
 
-          {/* Mobile Cards */}
-          <div className="md:hidden space-y-2">
+          {/* Mobile list — Bybit-style rows */}
+          <div className="md:hidden">
             {listed.length === 0 ? (
               <div className="py-12 text-center">
                 <BarChart3 size={32} className="mx-auto text-exchange-text-third mb-2 opacity-40" />
@@ -310,46 +311,45 @@ export default function MarketsPage() {
                 return (
                   <div
                     key={m.sym}
-                    className="bg-exchange-card rounded-xl border border-exchange-border p-3 active:bg-exchange-hover/30 transition-colors"
+                    className="flex items-center gap-3 px-1 py-3.5 border-b border-exchange-border/40 active:bg-exchange-hover/30 transition-colors"
                     onClick={() => navigate(`/trade/${m.sym}`)}
                   >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2.5">
-                        <button
-                          onClick={(e) => { e.stopPropagation(); toggleFavorite(m.sym); }}
-                          className="p-0.5"
-                        >
-                          <Star
-                            size={14}
-                            fill={m.isFav ? '#F0B90B' : 'none'}
-                            className={m.isFav ? 'text-exchange-yellow' : 'text-exchange-text-third'}
-                          />
-                        </button>
-                        <CoinIcon symbol={m.base_coin} size={28} />
-                        <div>
-                          <div className="text-sm font-semibold text-exchange-text">
-                            {m.base_coin}<span className="text-exchange-text-third text-xs">/{m.quote_coin}</span>
-                          </div>
-                          <div className="text-[11px] text-exchange-text-third">{m.base_name}</div>
-                        </div>
+                    {/* Left: icon + symbol/pair + volume */}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); toggleFavorite(m.sym); }}
+                      className="p-0.5 shrink-0"
+                    >
+                      <Star
+                        size={15}
+                        fill={m.isFav ? '#F0B90B' : 'none'}
+                        className={m.isFav ? 'text-exchange-yellow' : 'text-exchange-text-third'}
+                      />
+                    </button>
+                    <CoinIcon symbol={m.base_coin} size={34} />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-baseline gap-0.5">
+                        <span className="text-[15px] font-semibold text-exchange-text">{m.base_coin}</span>
+                        <span className="text-exchange-text-third text-[12px]">/{m.quote_coin}</span>
                       </div>
-
-                      <div className="text-right">
-                        <div className="text-sm font-medium tabular-nums text-exchange-text">{formatPrice(m.last)}</div>
-                        <div className={`text-xs tabular-nums flex items-center justify-end gap-0.5 ${isUp ? 'text-exchange-buy' : 'text-exchange-sell'}`}>
-                          {isUp ? <TrendingUp size={10} /> : <TrendingDown size={10} />}
-                          {formatPercent(m.change)}
-                        </div>
+                      <div className="text-[12px] text-exchange-text-third mt-0.5 tabular-nums">
+                        {formatVolume(m.volume)}
                       </div>
                     </div>
 
-                    <div className="flex items-center justify-between mt-2 pt-2 border-t border-exchange-border/30">
-                      <div className="flex items-center gap-3 text-[11px] text-exchange-text-third">
-                        <span>{t('market.vol')} {formatVolume(m.volume)}</span>
-                        <span>{t('market.high')} {formatPrice(m.high)}</span>
+                    {/* Middle: price + USD sub-price */}
+                    <div className="text-right shrink-0 mr-1">
+                      <div className="text-[15px] font-semibold tabular-nums text-exchange-text leading-tight">
+                        {formatPrice(m.last)}
                       </div>
-                      <Sparkline change={m.change} />
+                      <div className="text-[12px] text-exchange-text-third tabular-nums mt-0.5">
+                        ${formatPrice(m.last)}
+                      </div>
                     </div>
+
+                    {/* Right: rounded change pill */}
+                    <span className={`chg-pill ${isUp ? 'up' : 'down'} shrink-0`}>
+                      {isUp ? '+' : ''}{formatPercent(m.change)}
+                    </span>
                   </div>
                 );
               })

@@ -121,21 +121,21 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
 
   return (
     <div className="flex flex-col h-full p-3">
-      {/* Buy/Sell toggle */}
+      {/* Buy/Sell toggle — Bybit-style rounded segment */}
       {!forceSide && (
-        <div className="flex rounded-lg overflow-hidden mb-3 bg-exchange-input">
+        <div className="flex gap-1.5 p-1 rounded-xl mb-3 bg-exchange-input">
           <button
             onClick={() => setSide('buy')}
-            className={`flex-1 py-2.5 text-sm font-semibold transition-all ${
-              side === 'buy' ? 'bg-exchange-buy text-white shadow-lg' : 'text-exchange-text-secondary hover:text-exchange-text'
+            className={`flex-1 py-2.5 text-sm font-bold rounded-lg transition-all ${
+              side === 'buy' ? 'bg-exchange-buy text-white' : 'text-exchange-text-secondary hover:text-exchange-text'
             }`}
           >
             {t('trade.buy')}
           </button>
           <button
             onClick={() => setSide('sell')}
-            className={`flex-1 py-2.5 text-sm font-semibold transition-all ${
-              side === 'sell' ? 'bg-exchange-sell text-white shadow-lg' : 'text-exchange-text-secondary hover:text-exchange-text'
+            className={`flex-1 py-2.5 text-sm font-bold rounded-lg transition-all ${
+              side === 'sell' ? 'bg-exchange-sell text-white' : 'text-exchange-text-secondary hover:text-exchange-text'
             }`}
           >
             {t('trade.sell')}
@@ -237,7 +237,7 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
             <button
               key={pct}
               onClick={() => setPercentage(pct)}
-              className={`text-[10px] w-9 py-0.5 rounded transition-colors ${
+              className={`text-[11px] font-medium w-10 py-1 rounded-full transition-colors ${
                 sliderPct >= pct ? 'bg-exchange-yellow/20 text-exchange-yellow' : 'bg-exchange-input text-exchange-text-secondary'
               }`}
             >
@@ -303,11 +303,11 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
         </div>
       )}
 
-      {/* Submit */}
+      {/* Submit — Bybit-style big rounded pill */}
       <button
         onClick={handleSubmit}
         disabled={loading}
-        className={`w-full py-3 rounded-lg font-semibold text-sm transition-all disabled:opacity-50 ${
+        className={`w-full !py-3.5 !rounded-full font-bold text-[15px] transition-all disabled:opacity-50 ${
           side === 'buy' ? 'btn-buy' : 'btn-sell'
         }`}
       >

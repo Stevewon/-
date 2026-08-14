@@ -126,7 +126,7 @@ export default function Layout() {
         Logged-in:  Trade / Markets / Wallet / Futures / Profile
         Logged-out: Trade / Markets / Login
       */}
-      <nav className="sm:hidden fixed bottom-0 left-0 right-0 bg-exchange-card border-t border-exchange-border flex z-50 safe-area-bottom">
+      <nav className="sm:hidden fixed bottom-0 left-0 right-0 bg-exchange-card/95 backdrop-blur border-t border-exchange-border flex z-50 safe-area-bottom">
         {(user
           ? [
               { path: '/trade/BTC-USDT', label: t('nav.trade'),   icon: BarChart3 },
@@ -140,18 +140,21 @@ export default function Layout() {
               { path: '/markets',        label: t('nav.markets'), icon: LayoutGrid },
               { path: '/login',          label: t('nav.login'),   icon: LogIn },
             ]
-        ).map(({ path, label, icon: Icon }) => (
-          <Link
-            key={path}
-            to={path}
-            className={`flex-1 flex flex-col items-center py-2 text-[10px] transition-colors ${
-              isActive(path) ? 'text-exchange-yellow' : 'text-exchange-text-third'
-            }`}
-          >
-            <Icon size={20} />
-            <span className="mt-0.5">{label}</span>
-          </Link>
-        ))}
+        ).map(({ path, label, icon: Icon }) => {
+          const active = isActive(path);
+          return (
+            <Link
+              key={path}
+              to={path}
+              className={`flex-1 flex flex-col items-center gap-1 pt-2.5 pb-2 text-[11px] font-medium transition-colors ${
+                active ? 'text-exchange-text' : 'text-exchange-text-third'
+              }`}
+            >
+              <Icon size={23} strokeWidth={active ? 2.4 : 2} />
+              <span className={active ? 'font-semibold' : ''}>{label}</span>
+            </Link>
+          );
+        })}
       </nav>
     </div>
   );
