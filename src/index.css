@@ -163,15 +163,19 @@ select.input-field {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  background: var(--color-exchange-card);
+  /* Binance-style: input sits slightly below card surface, subtle border */
+  background: rgba(43, 49, 57, 0.35);
   border: 1px solid var(--color-exchange-border);
   color: var(--color-exchange-text);
   border-radius: 0.625rem;
   padding-left: 1rem;
   padding-right: 1rem;
-  min-height: 48px;
+  min-height: 50px;
   width: 100%;
   transition: border-color 0.15s, box-shadow 0.15s, background-color 0.15s;
+}
+.auth-field:hover:not(:focus-within) {
+  border-color: var(--color-exchange-hover);
 }
 /* PC: 입력란 더 크고 풍성하게 */
 @media (min-width: 640px) {
@@ -184,7 +188,7 @@ select.input-field {
 }
 .auth-field:focus-within {
   border-color: var(--color-exchange-yellow);
-  box-shadow: 0 0 0 3px rgba(240, 185, 11, 0.12);
+  box-shadow: 0 0 0 3px rgba(240, 185, 11, 0.14);
   background: var(--color-exchange-bg);
 }
 .auth-field > input {
@@ -240,12 +244,12 @@ select.input-field {
 .auth-input-plain {
   display: block;
   width: 100%;
-  background: var(--color-exchange-card);
+  background: rgba(43, 49, 57, 0.35);
   border: 1px solid var(--color-exchange-border);
   color: var(--color-exchange-text);
   border-radius: 0.625rem;
   padding: 0.875rem 1rem;
-  min-height: 48px;
+  min-height: 50px;
   font-size: 0.9375rem;
   outline: none;
   transition: border-color 0.15s, box-shadow 0.15s, background-color 0.15s;

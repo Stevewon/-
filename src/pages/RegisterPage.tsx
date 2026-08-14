@@ -382,19 +382,19 @@ export default function RegisterPage() {
   return (
     <AuthLayout variant="register">
       {/* Headline + inline login link (Binance mobile pattern) */}
-      <div className="mb-6">
+      <div className="mb-7">
         <div className="flex items-start justify-between gap-3">
-          <h1 className="text-2xl lg:text-3xl font-bold text-exchange-text leading-tight">
+          <h1 className="text-[28px] lg:text-[32px] font-bold text-exchange-text leading-[1.15] tracking-tight">
             {t('auth.createAccount')}
           </h1>
           <Link
             to="/login"
-            className="text-[13px] text-exchange-yellow hover:underline font-semibold whitespace-nowrap mt-1"
+            className="text-[13px] text-exchange-yellow hover:underline font-semibold whitespace-nowrap mt-1.5"
           >
             {t('nav.login')} →
           </Link>
         </div>
-        <p className="text-exchange-text-secondary mt-2 text-sm">
+        <p className="text-exchange-text-secondary mt-2.5 text-[14px] leading-relaxed">
           {t('auth.startTrading')}
         </p>
       </div>
@@ -415,13 +415,13 @@ export default function RegisterPage() {
       </div>
 
       {/* Email / Phone tab */}
-      <div className="mb-5 flex items-center gap-0 rounded-lg bg-exchange-card p-1 border border-exchange-border/60">
+      <div className="mb-6 flex items-center gap-1 rounded-xl bg-exchange-card p-1 border border-exchange-border/60">
         <button
           type="button"
           onClick={() => setMode('email')}
-          className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors ${
+          className={`flex-1 py-2.5 text-[14px] font-semibold rounded-lg transition-all ${
             mode === 'email'
-              ? 'bg-exchange-bg text-exchange-text shadow-sm'
+              ? 'bg-exchange-bg text-exchange-yellow shadow-sm'
               : 'text-exchange-text-secondary hover:text-exchange-text'
           }`}
         >
@@ -430,9 +430,9 @@ export default function RegisterPage() {
         <button
           type="button"
           onClick={() => setMode('phone')}
-          className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors relative ${
+          className={`flex-1 py-2.5 text-[14px] font-semibold rounded-lg transition-all relative ${
             mode === 'phone'
-              ? 'bg-exchange-bg text-exchange-text shadow-sm'
+              ? 'bg-exchange-bg text-exchange-yellow shadow-sm'
               : 'text-exchange-text-secondary hover:text-exchange-text'
           }`}
         >
@@ -443,7 +443,7 @@ export default function RegisterPage() {
         </button>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+      <form onSubmit={handleSubmit} className="space-y-5" noValidate>
         {error && (
           <div className="bg-exchange-sell/10 border border-exchange-sell/30 text-exchange-sell rounded-lg px-3 py-2.5 text-sm flex items-center gap-2">
             <X size={16} className="shrink-0" />
@@ -714,7 +714,7 @@ export default function RegisterPage() {
         <button
           type="submit"
           disabled={loading || !allValid}
-          className="hidden sm:block w-full !py-3.5 text-sm font-semibold rounded-lg bg-exchange-yellow text-black hover:bg-[#d9a60a] disabled:bg-exchange-border disabled:text-exchange-text-third disabled:cursor-not-allowed transition-colors mt-2"
+          className="hidden sm:block w-full !py-4 text-[15px] font-bold rounded-xl bg-exchange-yellow text-black hover:bg-[#d9a60a] active:scale-[0.99] disabled:bg-exchange-border disabled:text-exchange-text-third disabled:cursor-not-allowed transition-all mt-2"
         >
           {loading ? t('auth.creating') : t('auth.registerBtn')}
         </button>
@@ -756,7 +756,7 @@ export default function RegisterPage() {
             form?.requestSubmit();
           }}
           disabled={loading || !allValid}
-          className="w-full py-3.5 text-sm font-bold rounded-lg bg-exchange-yellow text-black hover:bg-[#d9a60a] disabled:bg-exchange-border disabled:text-exchange-text-third disabled:cursor-not-allowed transition-colors"
+          className="w-full py-4 text-[15px] font-bold rounded-xl bg-exchange-yellow text-black hover:bg-[#d9a60a] active:scale-[0.99] disabled:bg-exchange-border disabled:text-exchange-text-third disabled:cursor-not-allowed transition-all"
         >
           {loading ? t('auth.creating') : t('auth.registerBtn')}
         </button>
@@ -782,8 +782,8 @@ function FieldWrap({
 }) {
   return (
     <div>
-      <div className="flex items-center justify-between mb-1.5">
-        <label className="text-[13px] font-medium text-exchange-text-secondary">
+      <div className="flex items-center justify-between mb-2">
+        <label className="text-[13px] font-semibold text-exchange-text">
           {label}
         </label>
         {valid === true && (
@@ -839,7 +839,7 @@ function SocialBtn({
       disabled={!isInteractive || !!loading}
       onClick={isInteractive ? onClick : undefined}
       title={isInteractive ? label : `${label} (coming soon)`}
-      className="flex items-center justify-center gap-2 h-12 rounded-lg border border-exchange-border bg-exchange-card hover:bg-exchange-hover disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+      className="flex items-center justify-center gap-2 h-[52px] rounded-xl border border-exchange-border bg-exchange-card hover:bg-exchange-hover hover:border-exchange-hover disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
     >
       {loading ? (
         <span className="w-4 h-4 border-2 border-exchange-text-third border-t-transparent rounded-full animate-spin" />
