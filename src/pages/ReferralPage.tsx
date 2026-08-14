@@ -77,6 +77,18 @@ export default function ReferralPage() {
     ? `${window.location.origin}/register?ref=${code}`
     : '';
 
+  // ── Direct vs downline breakdown ──────────────────────────────────────────
+  // The `invited` list mixes L1 (people you personally invited) with L2/L3
+  // (your downline's invitees, credited via multi-level rewards). Showing the
+  // raw total as "friends invited" is misleading — a user who invited 1 person
+  // whose downline grew to 30 would appear to have invited 31. So we split it:
+  // the headline number is DIRECT (L1) invites; L2/L3 are shown as downline.
+  const directCount =
+    data?.by_level?.l1.count ??
+    (data?.invited.filter((r) => Number(r.level || 1) === 1).length ?? 0);
+  const totalCount = data?.invited_count ?? data?.invited.length ?? 0;
+  const indirectCount = Math.max(0, totalCount - directCount);
+
   const copyCode = () => {
     if (!code) return;
     navigator.clipboard.writeText(code);
@@ -305,8 +317,20 @@ export default function ReferralPage() {
                   className="font-bold text-exchange-text tabular-nums"
                   style={{ fontSize: '32px', lineHeight: 1.1 }}
                 >
-                  {data?.invited_count ?? 0}
+                  {directCount}
                 </div>
+                <p className="text-[11px] text-exchange-text-third mt-2 leading-snug">
+                  {t('referral.directCountHint')}
+                  {indirectCount > 0 && (
+                    <>
+                      <br />
+                      {t('referral.networkTotalHint', {
+                        total: String(totalCount),
+                        indirect: String(indirectCount),
+                      })}
+                    </>
+                  )}
+                </p>
               </div>
 
               <div
@@ -395,11 +419,19 @@ export default function ReferralPage() {
               className="flex items-center border-b border-exchange-border bg-exchange-bg/40"
               style={{ padding: '14px 20px' }}
             >
-              <h3 className="text-sm font-bold text-exchange-text flex items-center gap-2">
-                <Users size={15} className="text-exchange-yellow" />
-                {t('referral.historyTitle')}
-                <span className="text-xs text-exchange-text-third font-normal">
-                  ({data?.invited_count ?? 0})
+              <h3 className="text-sm font-bold text-exchange-text flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span className="flex items-center gap-2">
+                  <Users size={15} className="text-exchange-yellow" />
+                  {t('referral.historyTitle')}
+                  <span className="text-xs text-exchange-text-third font-normal">
+                    ({totalCount})
+                  </span>
+                </span>
+                <span className="text-[11px] font-normal text-exchange-text-third">
+                  {t('referral.historyAllLevels', {
+                    direct: String(directCount),
+                    indirect: String(indirectCount),
+                  })}
                 </span>
               </h3>
             </div>
@@ -430,8 +462,14 @@ export default function ReferralPage() {
                       style={{ padding: '14px 20px' }}
                     >
                       <span style={{ width: '40%' }} className="font-medium text-exchange-text truncate flex items-center gap-2">
-                        <span className="text-[10px] font-bold text-exchange-yellow bg-exchange-yellow/15 rounded-md px-1.5 py-0.5 shrink-0">
-                          L{lvl}
+                        <span
+                          className={`text-[10px] font-bold rounded-md px-1.5 py-0.5 shrink-0 ${
+                            lvl === 1
+                              ? 'text-exchange-yellow bg-exchange-yellow/15'
+                              : 'text-exchange-text-secondary bg-exchange-hover/60'
+                          }`}
+                        >
+                          {lvl === 1 ? t('referral.directBadge') : `${t('referral.downlineBadge')} L${lvl}`}
                         </span>
                         <span className="truncate">{row.referred_nickname}</span>
                       </span>
