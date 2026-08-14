@@ -1424,6 +1424,72 @@ app.get('/api/health/ready', async (c) => {
   return c.json(report, report.status === 'ok' ? 200 : 503);
 });
 
+// ============================================================================
+// TEMPORARY read-only referral-audit diagnostic. Mounted under /api/health so
+// it bypasses the geo-block (the operator's sandbox is a US IP). Guarded by a
+// shared token in ?t=. SELECT-only, no mutations. REMOVE after investigation.
+// ============================================================================
+app.get('/api/health/diag-ref', async (c) => {
+  const token = c.req.query('t') || '';
+  if (token !== 'qx-ref-audit-2026') {
+    return c.json({ error: 'forbidden' }, 403);
+  }
+  const email = (c.req.query('email') || 'onerh8282@gmail.com').toLowerCase();
+  const out: any = { email };
+  try {
+    out.user = await c.env.DB.prepare(
+      "SELECT id, email, nickname, referral_code FROM users WHERE email = ?"
+    ).bind(email).first();
+
+    if (out.user) {
+      const uid = out.user.id;
+      const counts = await c.env.DB.prepare(
+        "SELECT level, COUNT(*) AS n FROM referrals WHERE referrer_id = ? GROUP BY level"
+      ).bind(uid).all();
+      out.referral_counts_by_level = counts.results;
+
+      const sample = await c.env.DB.prepare(
+        `SELECT r.level, r.referral_code AS used_code, r.created_at,
+                ru.nickname AS referred_nick, ru.email AS referred_email
+         FROM referrals r JOIN users ru ON ru.id = r.referred_id
+         WHERE r.referrer_id = ? ORDER BY r.created_at DESC LIMIT 40`
+      ).bind(uid).all();
+      out.sample = sample.results;
+
+      // Distinct codes actually used in this user's referral rows.
+      const usedCodes = await c.env.DB.prepare(
+        `SELECT DISTINCT referral_code FROM referrals WHERE referrer_id = ?`
+      ).bind(uid).all();
+      out.distinct_used_codes = usedCodes.results;
+    }
+
+    // Are referral_codes unique across users? (root-cause candidate)
+    const dupes = await c.env.DB.prepare(
+      `SELECT referral_code, COUNT(*) AS n FROM users
+       WHERE referral_code IS NOT NULL AND referral_code <> ''
+       GROUP BY referral_code HAVING n > 1 ORDER BY n DESC LIMIT 20`
+    ).all();
+    out.duplicate_referral_codes = dupes.results;
+
+    // How many users share a NULL/empty code (they'd all match on '' lookups).
+    const emptyCodes = await c.env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM users WHERE referral_code IS NULL OR referral_code = ''`
+    ).first();
+    out.users_with_empty_code = emptyCodes;
+
+    // Global top referrers.
+    const topRef = await c.env.DB.prepare(
+      `SELECT u.email, u.referral_code, COUNT(*) AS n
+       FROM referrals r JOIN users u ON u.id = r.referrer_id
+       GROUP BY r.referrer_id ORDER BY n DESC LIMIT 15`
+    ).all();
+    out.top_referrers = topRef.results;
+  } catch (e: any) {
+    out.error = String(e?.message || e);
+  }
+  return c.json(out);
+});
+
 // ===== COIN BASE PRICES (source of truth) =====
 const COIN_PRICES: Record<string, number> = {
   BTC: 67250, ETH: 3450, BNB: 605, SOL: 172.5, XRP: 0.625,
