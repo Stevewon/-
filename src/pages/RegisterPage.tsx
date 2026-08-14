@@ -382,9 +382,9 @@ export default function RegisterPage() {
   return (
     <AuthLayout variant="register">
       {/* Headline + inline login link (Binance mobile pattern) */}
-      <div className="mb-7">
+      <div className="mb-8">
         <div className="flex items-start justify-between gap-3">
-          <h1 className="text-[28px] lg:text-[32px] font-bold text-exchange-text leading-[1.15] tracking-tight">
+          <h1 className="text-[30px] lg:text-[34px] font-bold text-exchange-text leading-[1.12] tracking-tight">
             {t('auth.createAccount')}
           </h1>
           <Link
@@ -443,7 +443,7 @@ export default function RegisterPage() {
         </button>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-5" noValidate>
+      <form onSubmit={handleSubmit} className="space-y-6" noValidate>
         {error && (
           <div className="bg-exchange-sell/10 border border-exchange-sell/30 text-exchange-sell rounded-lg px-3 py-2.5 text-sm flex items-center gap-2">
             <X size={16} className="shrink-0" />
@@ -714,25 +714,25 @@ export default function RegisterPage() {
         <button
           type="submit"
           disabled={loading || !allValid}
-          className="hidden sm:block w-full !py-4 text-[15px] font-bold rounded-xl bg-exchange-yellow text-black hover:bg-[#d9a60a] active:scale-[0.99] disabled:bg-exchange-border disabled:text-exchange-text-third disabled:cursor-not-allowed transition-all mt-2"
+          className="hidden sm:block w-full !py-[18px] text-[16px] font-bold rounded-full bg-exchange-yellow text-black hover:bg-[#d9a60a] active:scale-[0.99] disabled:bg-exchange-border disabled:text-exchange-text-third disabled:cursor-not-allowed transition-all mt-2"
         >
           {loading ? t('auth.creating') : t('auth.registerBtn')}
         </button>
 
         {/* Divider */}
-        <div className="relative py-2 mt-2">
+        <div className="relative py-3 mt-1">
           <div className="absolute inset-0 flex items-center">
             <div className="w-full border-t border-exchange-border/60" />
           </div>
           <div className="relative flex justify-center">
-            <span className="px-3 text-[11px] uppercase tracking-wider text-exchange-text-third bg-exchange-bg">
+            <span className="px-4 text-[12px] uppercase tracking-wider text-exchange-text-third bg-exchange-bg">
               {t('auth.or')}
             </span>
           </div>
         </div>
 
         {/* Social */}
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-3 gap-2.5">
           <SocialBtn
             label="Google"
             icon={<GoogleIcon />}
@@ -756,7 +756,7 @@ export default function RegisterPage() {
             form?.requestSubmit();
           }}
           disabled={loading || !allValid}
-          className="w-full py-4 text-[15px] font-bold rounded-xl bg-exchange-yellow text-black hover:bg-[#d9a60a] active:scale-[0.99] disabled:bg-exchange-border disabled:text-exchange-text-third disabled:cursor-not-allowed transition-all"
+          className="w-full py-[18px] text-[16px] font-bold rounded-full bg-exchange-yellow text-black hover:bg-[#d9a60a] active:scale-[0.99] disabled:bg-exchange-border disabled:text-exchange-text-third disabled:cursor-not-allowed transition-all"
         >
           {loading ? t('auth.creating') : t('auth.registerBtn')}
         </button>
@@ -839,7 +839,7 @@ function SocialBtn({
       disabled={!isInteractive || !!loading}
       onClick={isInteractive ? onClick : undefined}
       title={isInteractive ? label : `${label} (coming soon)`}
-      className="flex items-center justify-center gap-2 h-[52px] rounded-xl border border-exchange-border bg-exchange-card hover:bg-exchange-hover hover:border-exchange-hover disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+      className="flex items-center justify-center gap-2 h-[54px] rounded-full border border-exchange-border bg-exchange-card hover:bg-exchange-hover hover:border-exchange-hover disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
     >
       {loading ? (
         <span className="w-4 h-4 border-2 border-exchange-text-third border-t-transparent rounded-full animate-spin" />

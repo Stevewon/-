@@ -163,14 +163,14 @@ select.input-field {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  /* Binance-style: input sits slightly below card surface, subtle border */
+  /* Bybit/Binance-style: spacious input, sits slightly below card surface */
   background: rgba(43, 49, 57, 0.35);
   border: 1px solid var(--color-exchange-border);
   color: var(--color-exchange-text);
-  border-radius: 0.625rem;
-  padding-left: 1rem;
-  padding-right: 1rem;
-  min-height: 50px;
+  border-radius: 0.75rem;
+  padding-left: 1.125rem;
+  padding-right: 1.125rem;
+  min-height: 56px;
   width: 100%;
   transition: border-color 0.15s, box-shadow 0.15s, background-color 0.15s;
 }
@@ -180,10 +180,10 @@ select.input-field {
 /* PC: 입력란 더 크고 풍성하게 */
 @media (min-width: 640px) {
   .auth-field {
-    min-height: 56px;
-    padding-left: 1.125rem;
-    padding-right: 1.125rem;
-    border-radius: 0.75rem;
+    min-height: 60px;
+    padding-left: 1.25rem;
+    padding-right: 1.25rem;
+    border-radius: 0.875rem;
   }
 }
 .auth-field:focus-within {
@@ -201,13 +201,13 @@ select.input-field {
   /* 16px on mobile: bigger, readable, and prevents iOS zoom-on-focus */
   font-size: 1rem;
   font-weight: 500;
-  padding: 0.9375rem 0;
+  padding: 1.0625rem 0;
   width: 100%;
 }
 @media (min-width: 640px) {
   .auth-field > input {
     font-size: 1.0625rem;
-    padding: 1.0625rem 0;
+    padding: 1.1875rem 0;
   }
 }
 .auth-field > input::placeholder {
@@ -249,9 +249,9 @@ select.input-field {
   background: rgba(43, 49, 57, 0.35);
   border: 1px solid var(--color-exchange-border);
   color: var(--color-exchange-text);
-  border-radius: 0.625rem;
-  padding: 0.9375rem 1rem;
-  min-height: 54px;
+  border-radius: 0.75rem;
+  padding: 1.0625rem 1.125rem;
+  min-height: 56px;
   /* 16px on mobile: readable + prevents iOS zoom-on-focus */
   font-size: 1rem;
   font-weight: 500;
@@ -260,10 +260,10 @@ select.input-field {
 }
 @media (min-width: 640px) {
   .auth-input-plain {
-    min-height: 58px;
-    padding: 1.0625rem 1.125rem;
+    min-height: 60px;
+    padding: 1.1875rem 1.25rem;
     font-size: 1.0625rem;
-    border-radius: 0.75rem;
+    border-radius: 0.875rem;
   }
 }
 .auth-input-plain:focus {
