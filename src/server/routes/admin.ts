@@ -3,6 +3,7 @@ import type { AppEnv } from '../index';
 import { authMiddleware, adminMiddleware } from '../middleware/auth';
 import { createNotification } from './notifications';
 import { logAdminAction } from '../utils/audit';
+import { computeBalanceBreakdown } from '../lib/balance-breakdown';
 import {
   tmplWithdrawApproved,
   tmplWithdrawRejected,
@@ -238,6 +239,33 @@ app.get('/users/:id', async (c) => {
     recentOrders: recentOrders.results,
     logins: logins.results,
   });
+});
+
+// ============================================================================
+// GET /admin/users/:id/balance/:coin — per-coin balance breakdown for a user.
+// Same reconstruction the user sees, exposed to admins for support/audit:
+// shows how a balance decomposes into welcome bonus / referral / deposits /
+// admin credits / withdrawals, plus the raw source rows.
+// ============================================================================
+app.get('/users/:id/balance/:coin', async (c) => {
+  const db = c.env.DB;
+  const id = c.req.param('id');
+  const coin = (c.req.param('coin') || '').toUpperCase();
+  if (!coin) return c.json({ error: 'coin required' }, 400);
+
+  const u = await db
+    .prepare('SELECT id, email, nickname FROM users WHERE id = ?')
+    .bind(id)
+    .first<any>();
+  if (!u) return c.json({ error: 'User not found' }, 404);
+
+  try {
+    const breakdown = await computeBalanceBreakdown(db, id, coin);
+    return c.json({ user: u, breakdown });
+  } catch (e) {
+    console.error('[admin/users/balance] failed:', e);
+    return c.json({ error: 'Failed to compute balance breakdown' }, 500);
+  }
 });
 
 // Toggle active (ban / unban)

@@ -7,6 +7,7 @@ import { verifyTotp } from '../utils/totp';
 import { tmplWithdrawSubmitted, fireAndForgetMail, metaFromReq } from '../utils/mailer';
 import { getRiskState } from '../lib/risk';
 import { isQuantariumAsset } from '../lib/asset-routing';
+import { computeBalanceBreakdown } from '../lib/balance-breakdown';
 
 const app = new Hono<AppEnv>();
 
@@ -57,6 +58,26 @@ app.get('/', authMiddleware, async (c) => {
   }
 
   return c.json(wallets);
+});
+
+// ============================================================================
+// GET /wallet/breakdown/:symbol — where the current balance came from.
+// Read-only reconstruction (welcome bonus / referral rewards / deposits /
+// admin credits / withdrawals). Shown to the user so a 3,060 QX balance is
+// explained as e.g. 2,910 referral + 150 sign-up bonus.
+// NOTE: must be declared BEFORE '/:symbol' so it isn't captured by it.
+// ============================================================================
+app.get('/breakdown/:symbol', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const symbol = (c.req.param('symbol') || '').toUpperCase();
+  if (!symbol) return c.json({ error: 'symbol required' }, 400);
+  try {
+    const breakdown = await computeBalanceBreakdown(c.env.DB, user.id, symbol);
+    return c.json(breakdown);
+  } catch (e) {
+    console.error('[wallet/breakdown] failed:', e);
+    return c.json({ error: 'Failed to compute balance breakdown' }, 500);
+  }
 });
 
 // Get single wallet

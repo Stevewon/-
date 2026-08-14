@@ -15,6 +15,7 @@ import { formatPrice, timeAgo } from '../utils/format';
 import { showToast } from '../components/common/Toast';
 import CoinIcon from '../components/common/CoinIcon';
 import AdminLayout, { type AdminTab } from '../components/layout/AdminLayout';
+import BalanceBreakdownModal, { type BalanceBreakdown } from '../components/wallet/BalanceBreakdownModal';
 
 type Tab = AdminTab;
 
@@ -548,6 +549,11 @@ function UsersTab({ t, onUpdate }: any) {
 
 function UserDetailModal({ detail, onClose, t }: any) {
   const { user, wallets, recentOrders, logins } = detail;
+  const [bdCoin, setBdCoin] = useState<string | null>(null);
+  const loadAdminBreakdown = async (coin: string): Promise<BalanceBreakdown> => {
+    const r = await api.get(`/admin/users/${user.id}/balance/${coin}`);
+    return r.data.breakdown as BalanceBreakdown;
+  };
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-exchange-card rounded-xl border border-exchange-border w-full max-w-3xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
@@ -584,16 +590,22 @@ function UserDetailModal({ detail, onClose, t }: any) {
           )}
 
           <div className="border-t border-exchange-border/50 pt-3">
-            <h4 className="text-xs font-semibold text-exchange-text-secondary mb-2 flex items-center gap-1.5"><Wallet size={12} /> {t('admin.wallets')} ({wallets?.length || 0})</h4>
+            <h4 className="text-xs font-semibold text-exchange-text-secondary mb-2 flex items-center gap-1.5"><Wallet size={12} /> {t('admin.wallets')} ({wallets?.length || 0}) <span className="text-[10px] text-exchange-text-third font-normal">· {t('wallet.balanceDetail')}</span></h4>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs">
               {(wallets || []).slice(0, 12).map((w: any, i: number) => (
-                <div key={i} className="flex items-center gap-2 bg-exchange-hover/30 px-2 py-1.5 rounded">
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => setBdCoin(w.coin_symbol)}
+                  title={t('wallet.balanceDetail')}
+                  className="flex items-center gap-2 bg-exchange-hover/30 px-2 py-1.5 rounded text-left hover:bg-exchange-hover hover:ring-1 hover:ring-exchange-yellow/40 transition-colors"
+                >
                   <CoinIcon symbol={w.coin_symbol} size={18} />
                   <div className="flex-1 min-w-0">
-                    <div className="font-medium text-[11px]">{w.coin_symbol}</div>
+                    <div className="font-medium text-[11px] flex items-center gap-1">{w.coin_symbol} <Receipt size={9} className="text-exchange-text-third" /></div>
                     <div className="text-[10px] text-exchange-text-third tabular-nums truncate">{formatPrice(w.available)} / <span className="text-exchange-text-secondary">{formatPrice(w.locked)}L</span></div>
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           </div>
@@ -633,6 +645,13 @@ function UserDetailModal({ detail, onClose, t }: any) {
           </div>
         </div>
       </div>
+      <BalanceBreakdownModal
+        open={bdCoin !== null}
+        onClose={() => setBdCoin(null)}
+        coin={bdCoin || 'QX'}
+        load={loadAdminBreakdown}
+        subtitle={user.email}
+      />
     </div>
   );
 }

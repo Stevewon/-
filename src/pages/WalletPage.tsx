@@ -9,12 +9,13 @@ import DesktopPageLayout from '../components/common/DesktopPageLayout';
 import DepositModal from '../components/wallet/DepositModal';
 import WithdrawModal from '../components/wallet/WithdrawModal';
 import TransactionDetailModal from '../components/wallet/TransactionDetailModal';
+import BalanceBreakdownModal, { type BalanceBreakdown } from '../components/wallet/BalanceBreakdownModal';
 import api from '../utils/api';
 import {
   Wallet, Eye, EyeOff, RefreshCw, ArrowDownLeft, ArrowUpRight,
   TrendingUp, TrendingDown, Search, ChevronDown, ChevronUp,
   Clock, CheckCircle2, XCircle, AlertCircle, PieChart,
-  History,
+  History, Receipt,
 } from 'lucide-react';
 
 type Tab = 'assets' | 'deposits' | 'withdrawals';
@@ -38,6 +39,12 @@ export default function WalletPage() {
   const [txModal, setTxModal] = useState<{ open: boolean; tx: any; type: 'deposit' | 'withdrawal' }>({
     open: false, tx: null, type: 'deposit',
   });
+  // Balance breakdown ("잔액 상세") modal
+  const [breakdownCoin, setBreakdownCoin] = useState<string | null>(null);
+  const loadBreakdown = async (coin: string): Promise<BalanceBreakdown> => {
+    const r = await api.get(`/wallet/breakdown/${coin}`);
+    return r.data as BalanceBreakdown;
+  };
 
   // History
   const [deposits, setDeposits] = useState<any[]>([]);
@@ -548,6 +555,14 @@ export default function WalletPage() {
                           style={{ width: '8%', gap: '6px' }}
                         >
                           <button
+                            onClick={() => setBreakdownCoin(w.coin_symbol)}
+                            title={t('wallet.balanceDetail')}
+                            className="rounded bg-exchange-hover/50 text-exchange-text-secondary hover:text-exchange-yellow hover:bg-exchange-hover font-medium inline-flex items-center"
+                            style={{ padding: '4px 8px', fontSize: '11px', gap: '3px' }}
+                          >
+                            <Receipt size={12} /> {t('wallet.detail')}
+                          </button>
+                          <button
                             onClick={() => openDeposit(w.coin_symbol)}
                             className="rounded bg-exchange-buy/10 text-exchange-buy hover:bg-exchange-buy/20 font-medium"
                             style={{ padding: '4px 8px', fontSize: '11px' }}
@@ -606,6 +621,12 @@ export default function WalletPage() {
                         )}
                       </div>
                       <div className="flex gap-1.5 pt-2 border-t border-exchange-border/30">
+                        <button
+                          onClick={() => setBreakdownCoin(w.coin_symbol)}
+                          className="flex-1 text-[11px] py-1.5 rounded bg-exchange-hover/50 text-exchange-text-secondary font-medium inline-flex items-center justify-center gap-1"
+                        >
+                          <Receipt size={12} /> {t('wallet.detail')}
+                        </button>
                         <button
                           onClick={() => openDeposit(w.coin_symbol)}
                           className="flex-1 text-[11px] py-1.5 rounded bg-exchange-buy/10 text-exchange-buy font-medium"
@@ -756,6 +777,12 @@ export default function WalletPage() {
         onClose={() => setTxModal({ ...txModal, open: false })}
         transaction={txModal.tx}
         type={txModal.type}
+      />
+      <BalanceBreakdownModal
+        open={breakdownCoin !== null}
+        onClose={() => setBreakdownCoin(null)}
+        coin={breakdownCoin || 'QX'}
+        load={loadBreakdown}
       />
     </DesktopPageLayout>
   );
