@@ -357,7 +357,16 @@ export default function ReferralPage() {
                   <div className="space-y-2">
                     {(['l1', 'l2', 'l3'] as const).map((k) => {
                       const stat = data.by_level![k];
-                      const reward = data.level_rewards?.[k] ?? 0;
+                      // Show the ACTUAL average per person implied by the stored
+                      // rewards (reward_qx / count), NOT the current fixed rate.
+                      // Historical rows may have been credited at older rates, so
+                      // the fixed rate would make "count × rate" disagree with the
+                      // real total. Rounding keeps the chip clean while the +QX
+                      // figure remains the exact source of truth.
+                      const perPerson =
+                        stat.count > 0
+                          ? Math.round(stat.reward_qx / stat.count)
+                          : data.level_rewards?.[k] ?? 0;
                       const lvlNum = k === 'l1' ? 1 : k === 'l2' ? 2 : 3;
                       return (
                         <div
@@ -378,7 +387,7 @@ export default function ReferralPage() {
                               +{stat.reward_qx.toLocaleString()} QX
                             </span>
                             <span className="text-[10px] text-exchange-text-third ml-1.5">
-                              ({reward}/{t('referral.perPerson')})
+                              (~{perPerson}/{t('referral.perPerson')})
                             </span>
                           </div>
                         </div>
