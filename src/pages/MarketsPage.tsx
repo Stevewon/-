@@ -185,13 +185,13 @@ export default function MarketsPage() {
             <button
               key={key}
               onClick={() => setQuickFilter(key)}
-              className={`flex items-center gap-1.5 px-4 py-2 text-[14px] font-semibold rounded-full whitespace-nowrap transition-colors ${
+              className={`flex items-center gap-1 px-3 py-1.5 text-[12px] font-medium rounded-full whitespace-nowrap transition-colors ${
                 quickFilter === key
                   ? 'bg-exchange-yellow text-black'
                   : 'bg-exchange-card text-exchange-text-secondary hover:text-exchange-text border border-exchange-border'
               }`}
             >
-              <Icon size={14} />
+              <Icon size={12} />
               {label}
             </button>
           ))}
@@ -199,13 +199,13 @@ export default function MarketsPage() {
 
         {/* Search */}
         <div className="relative flex-1 min-w-[180px] max-w-xs ml-auto">
-          <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-exchange-text-third" />
+          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-exchange-text-third" />
           <input
             type="text"
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder={t('market.searchCoin')}
-            className="input-field pl-10 text-[14px] h-11 w-full rounded-full"
+            className="input-field pl-9 text-[13px] h-9 w-full rounded-full"
           />
         </div>
       </div>
@@ -275,7 +275,7 @@ export default function MarketsPage() {
                     </span>
                     <span className="w-[14%] flex items-center justify-end">
                       <span className={`chg-pill ${isUp ? 'up' : 'down'}`}>
-                        {isUp ? '+' : ''}{formatPercent(m.change)}
+                        {formatPercent(m.change)}
                       </span>
                     </span>
                     <span className="w-[16%] text-right text-xs tabular-nums text-exchange-text-secondary">
@@ -298,15 +298,15 @@ export default function MarketsPage() {
             )}
           </div>
 
-          {/* Mobile list — Binance-style rows */}
+          {/* Mobile list — Bybit-style DENSE rows */}
           <div className="md:hidden">
             {/* Column header row */}
-            <div className="flex items-center px-1 pb-2.5 text-[12px] text-exchange-text-third">
+            <div className="flex items-center px-1 pb-2 text-[11px] text-exchange-text-third">
               <span className="flex-1">{t('market.pair')} / {t('market.volume')}</span>
-              <button onClick={() => toggleSort('price')} className="flex items-center gap-0.5 mr-2 tabular-nums">
+              <button onClick={() => toggleSort('price')} className="flex items-center gap-0.5 tabular-nums w-[26%] justify-end">
                 {t('trade.price')} <SortIcon field="price" />
               </button>
-              <button onClick={() => toggleSort('change')} className="flex items-center justify-center gap-0.5" style={{ minWidth: 74 }}>
+              <button onClick={() => toggleSort('change')} className="flex items-center justify-end gap-0.5 w-[22%]">
                 {t('market.change')} <SortIcon field="change" />
               </button>
             </div>
@@ -321,45 +321,47 @@ export default function MarketsPage() {
                 return (
                   <div
                     key={m.sym}
-                    className="flex items-center gap-3 px-1 py-4 border-b border-exchange-border/40 active:bg-exchange-hover/30 transition-colors"
+                    className="flex items-center gap-2.5 px-1 py-2.5 border-b border-exchange-border/40 active:bg-exchange-hover/30 transition-colors"
                     onClick={() => navigate(`/trade/${m.sym}`)}
                   >
-                    {/* Left: icon + symbol/pair + volume */}
+                    {/* Left: star + icon + symbol/pair + volume */}
                     <button
                       onClick={(e) => { e.stopPropagation(); toggleFavorite(m.sym); }}
                       className="p-0.5 shrink-0"
                     >
                       <Star
-                        size={16}
+                        size={13}
                         fill={m.isFav ? '#F0B90B' : 'none'}
                         className={m.isFav ? 'text-exchange-yellow' : 'text-exchange-text-third'}
                       />
                     </button>
-                    <CoinIcon symbol={m.base_coin} size={36} />
+                    <CoinIcon symbol={m.base_coin} size={28} />
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-baseline gap-1">
-                        <span className="text-[17px] font-semibold text-exchange-text leading-none">{m.base_coin}</span>
-                        <span className="text-exchange-text-third text-[13px] leading-none">/ {m.quote_coin}</span>
+                      <div className="flex items-baseline gap-1 leading-tight">
+                        <span className="text-[15px] font-bold text-exchange-text">{m.base_coin}</span>
+                        <span className="text-exchange-text-third text-[11px]">/{m.quote_coin}</span>
                       </div>
-                      <div className="text-[13px] text-exchange-text-third mt-[7px] tabular-nums leading-none">
+                      <div className="text-[11px] text-exchange-text-third tabular-nums leading-tight mt-0.5">
                         {formatVolume(m.volume)} {m.quote_coin}
                       </div>
                     </div>
 
                     {/* Middle: price + USD sub-price */}
-                    <div className="text-right shrink-0 mr-2">
-                      <div className="text-[17px] font-semibold tabular-nums text-exchange-text leading-none">
+                    <div className="text-right shrink-0 w-[26%] leading-tight">
+                      <div className="text-[15px] font-bold tabular-nums text-exchange-text">
                         {formatPrice(m.last)}
                       </div>
-                      <div className="text-[13px] text-exchange-text-third tabular-nums mt-[7px] leading-none">
-                        ${formatPrice(m.last)} USD
+                      <div className="text-[11px] text-exchange-text-third tabular-nums mt-0.5">
+                        ${formatPrice(m.last)}
                       </div>
                     </div>
 
-                    {/* Right: rounded change pill (Binance-style, roomy) */}
-                    <span className={`chg-pill-lg ${isUp ? 'up' : 'down'} shrink-0`}>
-                      {isUp ? '+' : ''}{formatPercent(m.change)}
-                    </span>
+                    {/* Right: compact filled change pill (Bybit-style) */}
+                    <div className="w-[22%] flex justify-end shrink-0">
+                      <span className={`chg-pill ${isUp ? 'up' : 'down'}`}>
+                        {formatPercent(m.change)}
+                      </span>
+                    </div>
                   </div>
                 );
               })
