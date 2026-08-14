@@ -143,39 +143,43 @@ export default function MarketsPage() {
       </div>
 
       {/* Filters Bar */}
-      <div className="qx-page-toolbar flex flex-wrap items-center gap-3">
-        {/* Quote Tabs */}
-        <div className="flex items-center gap-0.5 bg-exchange-card rounded-lg border border-exchange-border p-0.5">
-          {quotes.map(q => (
-            <button
-              key={q}
-              onClick={() => setQuoteFilter(q)}
-              className={`px-3.5 py-2 text-[13px] rounded-md font-medium transition-colors ${
-                quoteFilter === q
-                  ? 'bg-exchange-yellow text-black'
-                  : 'text-exchange-text-secondary hover:text-exchange-text'
-              }`}
-            >
-              {q}
-            </button>
-          ))}
+      <div className="qx-page-toolbar">
+        {/* Row 1: Quote tabs + Favorites (never wraps oddly) */}
+        <div className="flex items-center gap-2 mb-2.5">
+          {/* Quote Tabs */}
+          <div className="flex items-center gap-1 bg-exchange-card rounded-lg border border-exchange-border p-1 shrink-0">
+            {quotes.map(q => (
+              <button
+                key={q}
+                onClick={() => setQuoteFilter(q)}
+                className={`text-[13px] rounded-md font-medium whitespace-nowrap shrink-0 transition-colors ${
+                  quoteFilter === q
+                    ? 'bg-exchange-yellow text-black'
+                    : 'text-exchange-text-secondary hover:text-exchange-text'
+                }`}
+                style={{ padding: '6px 16px' }}
+              >
+                {q}
+              </button>
+            ))}
+          </div>
+
+          {/* Favorite Toggle */}
+          <button
+            onClick={() => setShowFavOnly(!showFavOnly)}
+            className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors shrink-0 ${
+              showFavOnly
+                ? 'bg-exchange-yellow/10 text-exchange-yellow border-exchange-yellow/30'
+                : 'text-exchange-text-secondary border-exchange-border hover:text-exchange-text'
+            }`}
+          >
+            <Star size={12} fill={showFavOnly ? '#F0B90B' : 'none'} />
+            {t('market.favorites')}
+          </button>
         </div>
 
-        {/* Favorite Toggle */}
-        <button
-          onClick={() => setShowFavOnly(!showFavOnly)}
-          className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-            showFavOnly
-              ? 'bg-exchange-yellow/10 text-exchange-yellow border-exchange-yellow/30'
-              : 'text-exchange-text-secondary border-exchange-border hover:text-exchange-text'
-          }`}
-        >
-          <Star size={12} fill={showFavOnly ? '#F0B90B' : 'none'} />
-          {t('market.favorites')}
-        </button>
-
-        {/* Quick Filters — Bybit-style category tabs */}
-        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar -mx-1 px-1">
+        {/* Row 2: Quick Filters — horizontally scrollable, never clipped */}
+        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar mb-2.5">
           {([
             { key: 'hot' as QuickFilter, label: t('market.hot'), icon: Flame },
             { key: 'all' as QuickFilter, label: t('market.all'), icon: Filter },
@@ -185,11 +189,12 @@ export default function MarketsPage() {
             <button
               key={key}
               onClick={() => setQuickFilter(key)}
-              className={`flex items-center gap-1 px-3 py-1.5 text-[12px] font-medium rounded-full whitespace-nowrap transition-colors ${
+              className={`flex items-center gap-1.5 text-[12px] font-medium rounded-full whitespace-nowrap shrink-0 transition-colors ${
                 quickFilter === key
                   ? 'bg-exchange-yellow text-black'
                   : 'bg-exchange-card text-exchange-text-secondary hover:text-exchange-text border border-exchange-border'
               }`}
+              style={{ padding: '7px 16px' }}
             >
               <Icon size={12} />
               {label}
@@ -197,15 +202,16 @@ export default function MarketsPage() {
           ))}
         </div>
 
-        {/* Search */}
-        <div className="relative flex-1 min-w-[180px] max-w-xs ml-auto">
-          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-exchange-text-third" />
+        {/* Row 3: Search — full width, no icon/text overlap */}
+        <div className="relative w-full">
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-exchange-text-third pointer-events-none" />
           <input
             type="text"
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder={t('market.searchCoin')}
-            className="input-field pl-9 text-[13px] h-9 w-full rounded-full"
+            className="input-field text-[13px] h-9 w-full rounded-full"
+            style={{ paddingLeft: '36px', paddingRight: '14px' }}
           />
         </div>
       </div>
@@ -321,7 +327,8 @@ export default function MarketsPage() {
                 return (
                   <div
                     key={m.sym}
-                    className="flex items-center gap-2.5 px-1 py-2.5 border-b border-exchange-border/40 active:bg-exchange-hover/30 transition-colors"
+                    className="flex items-center gap-2.5 px-1 border-b border-exchange-border/40 active:bg-exchange-hover/30 transition-colors"
+                    style={{ paddingTop: '16px', paddingBottom: '16px' }}
                     onClick={() => navigate(`/trade/${m.sym}`)}
                   >
                     {/* Left: star + icon + symbol/pair + volume */}
@@ -330,28 +337,28 @@ export default function MarketsPage() {
                       className="p-0.5 shrink-0"
                     >
                       <Star
-                        size={13}
+                        size={14}
                         fill={m.isFav ? '#F0B90B' : 'none'}
                         className={m.isFav ? 'text-exchange-yellow' : 'text-exchange-text-third'}
                       />
                     </button>
-                    <CoinIcon symbol={m.base_coin} size={28} />
+                    <CoinIcon symbol={m.base_coin} size={32} />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-baseline gap-1 leading-tight">
-                        <span className="text-[15px] font-bold text-exchange-text">{m.base_coin}</span>
-                        <span className="text-exchange-text-third text-[11px]">/{m.quote_coin}</span>
+                        <span className="text-[16px] font-bold text-exchange-text">{m.base_coin}</span>
+                        <span className="text-exchange-text-third text-[12px]">/{m.quote_coin}</span>
                       </div>
-                      <div className="text-[11px] text-exchange-text-third tabular-nums leading-tight mt-0.5">
+                      <div className="text-[12px] text-exchange-text-third tabular-nums leading-tight mt-1">
                         {formatVolume(m.volume)} {m.quote_coin}
                       </div>
                     </div>
 
                     {/* Middle: price + USD sub-price */}
                     <div className="text-right shrink-0 w-[26%] leading-tight">
-                      <div className="text-[15px] font-bold tabular-nums text-exchange-text">
+                      <div className="text-[16px] font-bold tabular-nums text-exchange-text">
                         {formatPrice(m.last)}
                       </div>
-                      <div className="text-[11px] text-exchange-text-third tabular-nums mt-0.5">
+                      <div className="text-[12px] text-exchange-text-third tabular-nums mt-1">
                         ${formatPrice(m.last)}
                       </div>
                     </div>
