@@ -289,19 +289,6 @@ export default function ReferralPage() {
                 </div>
               </div>
 
-              {data?.referred_by && (
-                <div
-                  className="bg-exchange-buy/5 border border-exchange-buy/20 rounded-xl flex items-center gap-3"
-                  style={{ padding: '14px 16px' }}
-                >
-                  <CheckCircle2 size={16} className="text-exchange-buy shrink-0" />
-                  <p className="text-sm text-exchange-text-secondary">
-                    {t('referral.referredByPre')}{' '}
-                    <b className="text-exchange-text">{data.referred_by.nickname}</b>
-                    {' '}({data.referred_by.code})
-                  </p>
-                </div>
-              )}
             </div>
 
             {/* RIGHT — Stats */}
