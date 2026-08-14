@@ -254,7 +254,8 @@ export default function NoticePage() {
                   <button
                     key={notice.id}
                     onClick={() => setSelectedNotice(notice)}
-                    className="w-full flex items-center justify-between px-5 sm:px-6 py-5 hover:bg-exchange-hover/20 transition-colors text-left group"
+                    style={{ paddingTop: '22px', paddingBottom: '22px' }}
+                    className="w-full flex items-center justify-between px-5 sm:px-6 hover:bg-exchange-hover/20 transition-colors text-left group"
                   >
                     <div className="flex items-start gap-3 min-w-0 flex-1">
                       {notice.pinned && (
