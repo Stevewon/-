@@ -394,7 +394,7 @@ export default function RegisterPage() {
             {t('nav.login')} →
           </Link>
         </div>
-        <p className="text-exchange-text-secondary mt-2.5 text-[14px] leading-relaxed">
+        <p className="text-exchange-text-secondary mt-2.5 text-[15px] leading-relaxed">
           {t('auth.startTrading')}
         </p>
       </div>
@@ -562,7 +562,7 @@ export default function RegisterPage() {
             </div>
           )}
           {(focused === 'pw' || password.length > 0) && (
-            <ul className="mt-2.5 space-y-1 text-[12px]">
+            <ul className="mt-2.5 space-y-1.5 text-[13px]">
               <RuleRow ok={rules.length} label={t('auth.pwRule8')} />
               <RuleRow ok={rules.letter} label={t('auth.pwRuleLetter')} />
               <RuleRow ok={rules.number} label={t('auth.pwRuleNumber')} />
@@ -607,15 +607,15 @@ export default function RegisterPage() {
           <button
             type="button"
             onClick={() => setShowRef(!showRef)}
-            className="text-xs text-exchange-text-secondary hover:text-exchange-yellow transition-colors flex items-center gap-1"
+            className="text-[14px] font-medium text-exchange-text-secondary hover:text-exchange-yellow transition-colors flex items-center gap-1.5 py-1"
           >
             <span>{t('auth.referralCode')}</span>
             <span className="text-exchange-text-third">
               ({t('auth.optional')})
             </span>
             <svg
-              width="10"
-              height="10"
+              width="12"
+              height="12"
               viewBox="0 0 10 10"
               fill="currentColor"
               className={`transition-transform ${showRef ? 'rotate-180' : ''}`}
@@ -624,36 +624,36 @@ export default function RegisterPage() {
             </svg>
           </button>
           {showRef && (
-            <div className="mt-2">
+            <div className="mt-2.5">
               <div className="relative">
                 <input
                   type="text"
                   value={refCode}
                   onChange={(e) => setRefCode(e.target.value.toUpperCase())}
-                  className="auth-input-plain pr-10"
+                  className="auth-input-plain pr-11 tracking-wider"
                   placeholder={t('auth.referralPlaceholder')}
                   maxLength={12}
                 />
                 {refCheck.state === 'checking' && (
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-exchange-text-third text-xs">
+                  <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-exchange-text-third text-sm">
                     …
                   </span>
                 )}
                 {refCheck.state === 'valid' && (
-                  <Check size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-exchange-buy" />
+                  <Check size={20} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-exchange-buy" />
                 )}
                 {refCheck.state === 'invalid' && (
-                  <X size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-exchange-sell" />
+                  <X size={20} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-exchange-sell" />
                 )}
               </div>
               {refCheck.state === 'valid' && (
-                <p className="mt-1.5 text-[11px] text-exchange-buy flex items-center gap-1">
-                  <Gift size={11} />
+                <p className="mt-2 text-[13px] text-exchange-buy flex items-center gap-1.5">
+                  <Gift size={14} />
                   Referred by <b>{refCheck.masked}</b> — you'll both get a QTA bonus!
                 </p>
               )}
               {refCheck.state === 'invalid' && refCode.length >= 4 && (
-                <p className="mt-1.5 text-[11px] text-exchange-sell">
+                <p className="mt-2 text-[13px] text-exchange-sell">
                   Invalid referral code
                 </p>
               )}
@@ -662,15 +662,15 @@ export default function RegisterPage() {
         </div>
 
         {/* Terms */}
-        <div className="space-y-2.5 pt-1">
-          <label className="flex items-start gap-2.5 cursor-pointer group">
+        <div className="space-y-3 pt-1">
+          <label className="flex items-start gap-3 cursor-pointer group">
             <input
               type="checkbox"
               checked={agreeTerms}
               onChange={(e) => setAgreeTerms(e.target.checked)}
-              className="mt-0.5 w-4 h-4 rounded border-exchange-border accent-exchange-yellow shrink-0"
+              className="mt-0.5 w-[18px] h-[18px] rounded border-exchange-border accent-exchange-yellow shrink-0"
             />
-            <span className="text-xs text-exchange-text-secondary leading-relaxed">
+            <span className="text-[13px] text-exchange-text-secondary leading-relaxed">
               {t('auth.agreeTermsPre')}{' '}
               <Link
                 to="/terms"
@@ -688,14 +688,14 @@ export default function RegisterPage() {
               <span className="text-exchange-sell ml-0.5">*</span>
             </span>
           </label>
-          <label className="flex items-start gap-2.5 cursor-pointer group">
+          <label className="flex items-start gap-3 cursor-pointer group">
             <input
               type="checkbox"
               checked={agreeMarketing}
               onChange={(e) => setAgreeMarketing(e.target.checked)}
-              className="mt-0.5 w-4 h-4 rounded border-exchange-border accent-exchange-yellow shrink-0"
+              className="mt-0.5 w-[18px] h-[18px] rounded border-exchange-border accent-exchange-yellow shrink-0"
             />
-            <span className="text-xs text-exchange-text-secondary leading-relaxed">
+            <span className="text-[13px] text-exchange-text-secondary leading-relaxed">
               {t('auth.agreeMarketing')}{' '}
               <span className="text-exchange-text-third">
                 ({t('auth.optional')})
@@ -783,19 +783,19 @@ function FieldWrap({
   return (
     <div>
       <div className="flex items-center justify-between mb-2">
-        <label className="text-[13px] font-semibold text-exchange-text">
+        <label className="text-[14px] font-semibold text-exchange-text">
           {label}
         </label>
         {valid === true && (
-          <span className="flex items-center gap-1 text-[11px] text-exchange-buy">
-            <Check size={12} /> OK
+          <span className="flex items-center gap-1 text-[12px] text-exchange-buy">
+            <Check size={13} /> OK
           </span>
         )}
       </div>
       {children}
       {hint && valid === false && (
-        <p className="mt-1.5 text-[11px] text-exchange-sell flex items-center gap-1">
-          <X size={11} /> {hint}
+        <p className="mt-2 text-[13px] text-exchange-sell flex items-center gap-1.5">
+          <X size={13} /> {hint}
         </p>
       )}
     </div>

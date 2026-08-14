@@ -198,13 +198,15 @@ select.input-field {
   border: 0;
   outline: none;
   color: inherit;
-  font-size: 0.9375rem;
-  padding: 0.875rem 0;
+  /* 16px on mobile: bigger, readable, and prevents iOS zoom-on-focus */
+  font-size: 1rem;
+  font-weight: 500;
+  padding: 0.9375rem 0;
   width: 100%;
 }
 @media (min-width: 640px) {
   .auth-field > input {
-    font-size: 1rem;
+    font-size: 1.0625rem;
     padding: 1.0625rem 0;
   }
 }
@@ -248,17 +250,19 @@ select.input-field {
   border: 1px solid var(--color-exchange-border);
   color: var(--color-exchange-text);
   border-radius: 0.625rem;
-  padding: 0.875rem 1rem;
-  min-height: 50px;
-  font-size: 0.9375rem;
+  padding: 0.9375rem 1rem;
+  min-height: 54px;
+  /* 16px on mobile: readable + prevents iOS zoom-on-focus */
+  font-size: 1rem;
+  font-weight: 500;
   outline: none;
   transition: border-color 0.15s, box-shadow 0.15s, background-color 0.15s;
 }
 @media (min-width: 640px) {
   .auth-input-plain {
-    min-height: 56px;
+    min-height: 58px;
     padding: 1.0625rem 1.125rem;
-    font-size: 1rem;
+    font-size: 1.0625rem;
     border-radius: 0.75rem;
   }
 }
