@@ -10,7 +10,7 @@
 // demand and shared across all mount points.
 // ============================================================================
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 const SCRIPT_ID = 'cf-turnstile-script';
 const SCRIPT_SRC = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
@@ -62,6 +62,11 @@ interface Props {
   theme?: 'light' | 'dark' | 'auto';
   size?: 'normal' | 'compact' | 'flexible';
   className?: string;
+  /** Called with true when the widget fails to render (e.g. Turnstile 400020
+   *  when the site key hasn't propagated) and with false once it recovers, so
+   *  the parent can hide the surrounding "Security check" label instead of
+   *  leaving an ugly broken/Troubleshoot widget on screen. */
+  onError?: (errored: boolean) => void;
 }
 
 /**
@@ -80,9 +85,10 @@ interface Props {
 // Cloudflare, but the server fails open (does not reject) if the secret is unset.
 const TURNSTILE_PROD_SITE_KEY = '0x4AAAAAAAEQfq1J4bGr1h1Ye';
 
-export default function Turnstile({ onToken, theme = 'dark', size = 'flexible', className }: Props) {
+export default function Turnstile({ onToken, onError, theme = 'dark', size = 'flexible', className }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const widgetIdRef = useRef<string | null>(null);
+  const [errored, setErrored] = useState(false);
   const envKey = (import.meta as any).env?.VITE_TURNSTILE_SITE_KEY as string | undefined;
   // Use the build-time env key if provided, otherwise the hard-coded prod key.
   const siteKey = envKey && envKey.trim() ? envKey.trim() : TURNSTILE_PROD_SITE_KEY;
@@ -96,6 +102,15 @@ export default function Turnstile({ onToken, theme = 'dark', size = 'flexible', 
     }
 
     let cancelled = false;
+    const markError = () => {
+      // Widget could not render / validate (e.g. Turnstile 400020 before the
+      // site key has propagated). Fail open: emit an empty token and tell the
+      // parent to hide the challenge UI so no broken widget is shown.
+      onToken('');
+      if (!cancelled) setErrored(true);
+      onError?.(true);
+    };
+
     loadScript()
       .then(() => {
         if (cancelled) return;
@@ -105,14 +120,19 @@ export default function Turnstile({ onToken, theme = 'dark', size = 'flexible', 
           theme,
           size,
           appearance: 'always',
-          callback: (token: string) => onToken(token),
+          callback: (token: string) => {
+            if (cancelled) return;
+            setErrored(false);
+            onError?.(false);
+            onToken(token);
+          },
           'expired-callback': () => onToken(''),
-          'error-callback': () => onToken(''),
+          'error-callback': () => markError(),
         });
       })
       .catch((e) => {
         console.warn('[turnstile] load failed — failing open:', e);
-        onToken('');
+        markError();
       });
 
     return () => {
@@ -126,9 +146,9 @@ export default function Turnstile({ onToken, theme = 'dark', size = 'flexible', 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteKey]);
 
-  // When no key is configured we still render nothing (invisible in prod-like
-  // preview builds without secrets).
-  if (!siteKey) return null;
+  // When no key is configured, or the widget errored out, render nothing so
+  // the login form stays clean (no "Troubleshoot" broken-widget UI).
+  if (!siteKey || errored) return null;
 
   return <div ref={ref} className={className} />;
 }

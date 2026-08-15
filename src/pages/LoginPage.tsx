@@ -162,6 +162,7 @@ export default function LoginPage() {
   const [totp, setTotp] = useState('');
   // Cloudflare Turnstile token 2014 empty when unconfigured (dev/preview).
   const [turnstileToken, setTurnstileToken] = useState('');
+  const [turnstileErrored, setTurnstileErrored] = useState(false);
 
   // ---- Email-OTP (passwordless) login — Bybit-style one-time code ----
   const [authMethod, setAuthMethod] = useState<'password' | 'otp'>('password');
@@ -781,14 +782,24 @@ export default function LoginPage() {
         )}
 
         {/* Cloudflare Turnstile bot protection — a visible human-verification
-             challenge shown on every login attempt (like other exchanges). */}
-        <div className="pt-1 space-y-2">
-          <p className="flex items-center gap-1.5 text-[13px] sm:text-sm font-medium text-exchange-text-secondary">
-            <ShieldCheck size={15} className="text-exchange-yellow" />
-            {t('auth.botCheck') || '보안 확인 (봇 방지)'}
-          </p>
-          <Turnstile onToken={setTurnstileToken} theme="dark" size="flexible" />
-        </div>
+             challenge shown on every login attempt (like other exchanges).
+             If the widget fails to render (e.g. before the site key has fully
+             propagated), the whole block hides itself instead of leaving a
+             broken "Troubleshoot" widget on screen. */}
+        {!turnstileErrored && (
+          <div className="pt-1 space-y-2">
+            <p className="flex items-center gap-1.5 text-[13px] sm:text-sm font-medium text-exchange-text-secondary">
+              <ShieldCheck size={15} className="text-exchange-yellow" />
+              {t('auth.botCheck') || '보안 확인 (봇 방지)'}
+            </p>
+            <Turnstile
+              onToken={setTurnstileToken}
+              onError={setTurnstileErrored}
+              theme="dark"
+              size="flexible"
+            />
+          </div>
+        )}
 
         {/* Desktop / tablet inline submit */}
         <button
