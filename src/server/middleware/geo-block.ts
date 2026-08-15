@@ -56,7 +56,14 @@ const BLOCKED_COUNTRIES = new Set<string>([
   // the owner gives explicit GO. Until then, KR users see the same UX
   // as global users; the legal-counsel sign-off is captured in the
   // Terms-of-Service residency declaration at signup time (Step 4).
-  // 'KR', // Republic of Korea — TEMPORARILY OPENED (2026-05-07)
+  //
+  // SOFT-LAUNCH DECISION (2026-08-15, owner confirmed): keep KR OPEN for
+  // the soft-launch. The soft-launch operates on internal balances only
+  // (on-chain deposits/withdrawals gated by QTA_CHAIN_DRIVER='mock'), so
+  // KR users can register/trade internally while licensing is pending.
+  // Re-add 'KR' below (uncomment) before enabling real on-chain money
+  // movement, OR once the owner gives the explicit close directive.
+  // 'KR', // Republic of Korea — OPEN for soft-launch (owner: 2026-08-15)
   'US', // United States — SEC/CFTC/FinCEN; 50-state MTL otherwise required
   'CN', // China — outright ban on crypto trading
   'JP', // Japan — JFSA license required for Japanese residents
