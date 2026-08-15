@@ -53,6 +53,8 @@ const rlRegister  = rateLimit({ key: 'auth:register',  max: 5,  windowSec: 3600 
 const rlLogin     = rateLimit({ key: 'auth:login',     max: 10, windowSec: 300 });    // 10/5min per IP
 const rlForgotPw  = rateLimit({ key: 'auth:forgot-pw', max: 5,  windowSec: 3600 });   // 5/h per IP
 const rlReqVerify = rateLimit({ key: 'auth:req-verif', max: 5,  windowSec: 3600 });   // 5/h per IP
+const rlOtpReq    = rateLimit({ key: 'auth:otp-req',   max: 6,  windowSec: 600 });    // 6/10min per IP (email OTP send)
+const rlOtpVerify = rateLimit({ key: 'auth:otp-verify',max: 15, windowSec: 600 });    // 15/10min per IP (code checks)
 
 // Cloudflare Turnstile bot protection. Fails OPEN when TURNSTILE_SECRET is
 // unset so preview / local dev is unaffected. Applied to all human-facing
@@ -540,6 +542,228 @@ app.post('/login', rlLogin, turnstile, async (c) => {
     await c.env.DB.prepare(`UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = ?`)
       .bind(user.id).run();
   } catch { /* column may not exist yet on first deploy; ignore */ }
+  return c.json({ token, user: safeUser });
+});
+
+// ============================================================================
+// Email OTP login (Bybit-style passwordless one-time code)
+// ----------------------------------------------------------------------------
+// POST /api/auth/login-otp/request { email }        -> emails a 6-digit code
+// POST /api/auth/login-otp/verify  { email, code }  -> issues JWT on match
+//
+// Design notes:
+//  • Codes are 6 numeric digits, single-use, 10-min expiry, stored only as a
+//    SHA-256 hash (never plaintext), just like our verify-email tokens.
+//  • login-otp/request always returns 200 (no user enumeration) but only
+//    actually creates+sends a code when the account exists and is active.
+//  • login-otp/verify still enforces 2FA (returns requires_2fa) and is_active.
+//  • The login_otps table is created lazily here because the deploy workflow
+//    only auto-applies migrations 0007/0008; see migrations/0039_login_otp.sql.
+// ============================================================================
+async function ensureLoginOtpTable(c: any): Promise<void> {
+  try {
+    await c.env.DB.batch([
+      c.env.DB.prepare(
+        `CREATE TABLE IF NOT EXISTS login_otps (
+           id TEXT PRIMARY KEY,
+           user_id TEXT NOT NULL,
+           email TEXT NOT NULL,
+           code_hash TEXT NOT NULL,
+           expires_at DATETIME NOT NULL,
+           used_at DATETIME,
+           attempts INTEGER NOT NULL DEFAULT 0,
+           ip_address TEXT,
+           created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+         )`
+      ),
+      c.env.DB.prepare(
+        `CREATE INDEX IF NOT EXISTS idx_login_otps_email ON login_otps(email, created_at DESC)`
+      ),
+      c.env.DB.prepare(
+        `CREATE INDEX IF NOT EXISTS idx_login_otps_hash ON login_otps(code_hash)`
+      ),
+    ]);
+  } catch (e) {
+    console.warn('[login-otp] ensure table failed:', e);
+  }
+}
+
+/** Cryptographically-random 6-digit code, e.g. "042973". */
+function randomOtpCode(): string {
+  const buf = new Uint32Array(1);
+  crypto.getRandomValues(buf);
+  return (buf[0] % 1_000_000).toString().padStart(6, '0');
+}
+
+app.post('/login-otp/request', rlOtpReq, turnstile, async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const email = (body.email || '').toString().trim().toLowerCase();
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return c.json({ error: 'Valid email required' }, 400);
+  }
+
+  await ensureLoginOtpTable(c);
+
+  const user = await c.env.DB.prepare(
+    'SELECT id, email, is_active FROM users WHERE email = ?'
+  ).bind(email).first<{ id: string; email: string; is_active: number }>();
+
+  // Always 200 to avoid user-enumeration. Only send when the account exists
+  // and is active.
+  if (user && user.is_active) {
+    // Throttle: refuse if a still-valid code was issued < 30s ago (anti-spam).
+    try {
+      const recent = await c.env.DB.prepare(
+        `SELECT created_at FROM login_otps
+         WHERE email = ? AND used_at IS NULL
+         ORDER BY created_at DESC LIMIT 1`
+      ).bind(email).first<{ created_at: string }>();
+      if (recent && Date.now() - new Date(recent.created_at + 'Z').getTime() < 30 * 1000) {
+        return c.json({ ok: true, message: 'Code already sent', sent: true, cooldown: true });
+      }
+    } catch { /* table brand new — no rows yet */ }
+
+    const code = randomOtpCode();
+    const codeHash = await sha256Hex(code);
+    const expires = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 min
+    const ip =
+      c.req.header('cf-connecting-ip') ||
+      c.req.header('x-forwarded-for') ||
+      'unknown';
+
+    // Invalidate any older unused codes for this email so only the newest works.
+    try {
+      await c.env.DB.prepare(
+        `UPDATE login_otps SET used_at = CURRENT_TIMESTAMP
+         WHERE email = ? AND used_at IS NULL`
+      ).bind(email).run();
+    } catch { /* ignore */ }
+
+    try {
+      await c.env.DB.prepare(
+        `INSERT INTO login_otps (id, user_id, email, code_hash, expires_at, ip_address)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      ).bind(uuid(), user.id, user.email, codeHash, expires, ip).run();
+    } catch (e) {
+      console.error('[login-otp/request] insert failed:', e);
+      return c.json({ error: 'Service temporarily unavailable' }, 500);
+    }
+
+    const mail = await sendMail(c.env as any, {
+      to: user.email,
+      subject: `${code} is your QuantaEX login code`,
+      html: templateBasic(
+        'Your login code',
+        `Use the one-time code below to sign in to QuantaEX. It expires in 10 minutes.
+         <div style="margin:20px 0;text-align:center">
+           <span style="display:inline-block;font-size:34px;font-weight:700;letter-spacing:10px;color:#f0b90b;font-family:monospace">${code}</span>
+         </div>
+         Never share this code with anyone. QuantaEX staff will never ask for it.`,
+      ),
+      text: `Your QuantaEX login code is ${code}. It expires in 10 minutes. Never share this code.`,
+    });
+
+    return c.json({
+      ok: true,
+      message: 'Login code sent',
+      sent: mail.sent,
+      // Only surface the code when the mail provider isn't wired up (dev/preview).
+      ...(mail.sent ? {} : { dev_code: code }),
+    });
+  }
+
+  return c.json({ ok: true, message: 'If the account exists, a login code was sent.' });
+});
+
+app.post('/login-otp/verify', rlOtpVerify, async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const email = (body.email || '').toString().trim().toLowerCase();
+  const code = (body.code || '').toString().trim();
+  const totpCode = (body.totp_code || '').toString().trim();
+  if (!email || !/^\d{6}$/.test(code)) {
+    return c.json({ error: 'Email and 6-digit code required' }, 400);
+  }
+
+  await ensureLoginOtpTable(c);
+
+  const user = await c.env.DB.prepare('SELECT * FROM users WHERE email = ?')
+    .bind(email).first() as any;
+  if (!user) return c.json({ error: 'Invalid or expired code' }, 401);
+
+  // Find the newest unused code for this email.
+  const row = await c.env.DB.prepare(
+    `SELECT id, code_hash, expires_at, used_at, attempts
+     FROM login_otps WHERE email = ? AND used_at IS NULL
+     ORDER BY created_at DESC LIMIT 1`
+  ).bind(email).first<any>();
+
+  if (!row) return c.json({ error: 'Invalid or expired code' }, 401);
+  if (new Date(row.expires_at + 'Z').getTime() < Date.now()) {
+    return c.json({ error: 'Code expired. Please request a new one.' }, 401);
+  }
+  if (row.attempts >= 5) {
+    // Burn it so a fresh code must be requested.
+    try {
+      await c.env.DB.prepare(`UPDATE login_otps SET used_at = CURRENT_TIMESTAMP WHERE id = ?`)
+        .bind(row.id).run();
+    } catch { /* ignore */ }
+    return c.json({ error: 'Too many attempts. Please request a new code.' }, 429);
+  }
+
+  const codeHash = await sha256Hex(code);
+  if (codeHash !== row.code_hash) {
+    try {
+      await c.env.DB.prepare(`UPDATE login_otps SET attempts = attempts + 1 WHERE id = ?`)
+        .bind(row.id).run();
+    } catch { /* ignore */ }
+    await recordLogin(c, user.id, 'failed', 'bad_otp');
+    return c.json({ error: 'Invalid or expired code' }, 401);
+  }
+
+  if (!user.is_active) {
+    await recordLogin(c, user.id, 'failed', 'account_disabled');
+    return c.json({ error: 'Account disabled' }, 403);
+  }
+
+  // 2FA challenge — same behaviour as password login.
+  if (user.two_factor_enabled && user.two_factor_secret) {
+    if (!totpCode) {
+      return c.json({ requires_2fa: true, message: '2FA code required' }, 401);
+    }
+    const { verifyTotp } = await import('../utils/totp');
+    const ok = await verifyTotp(user.two_factor_secret, totpCode);
+    if (!ok) {
+      await recordLogin(c, user.id, 'failed', 'bad_totp');
+      return c.json({ error: 'Invalid 2FA code' }, 401);
+    }
+  }
+
+  // Consume the code (single-use).
+  try {
+    await c.env.DB.prepare(`UPDATE login_otps SET used_at = CURRENT_TIMESTAMP WHERE id = ?`)
+      .bind(row.id).run();
+  } catch { /* ignore */ }
+
+  await recordLogin(c, user.id, 'success');
+
+  // Login-alert email (fire-and-forget, never blocks login).
+  try {
+    const appUrl = (c.env as any).APP_URL || 'https://quantaex.io';
+    fireAndForgetMail(
+      c.env as any,
+      user.email,
+      tmplLoginAlert(appUrl, metaFromReq(c.req)),
+      c.executionCtx as any,
+    );
+  } catch (e) { console.warn('[login-otp] alert mail failed:', e); }
+
+  const token = await generateToken({ ...user, token_version: user.token_version || 0 }, c.env.JWT_SECRET);
+  const { password: _, two_factor_secret: __, two_factor_pending_secret: ___, ...safeUser } = user;
+  try {
+    await c.env.DB.prepare(`UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = ?`)
+      .bind(user.id).run();
+  } catch { /* column may not exist yet; ignore */ }
+
   return c.json({ token, user: safeUser });
 });
 

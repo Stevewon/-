@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { Eye, EyeOff, Mail, Lock, AlertCircle, Gift, Check, X } from 'lucide-react';
+import { Eye, EyeOff, Mail, Lock, AlertCircle, Gift, Check, X, KeyRound, ShieldCheck } from 'lucide-react';
 import useStore from '../store/useStore';
 import { useI18n } from '../i18n';
 import api from '../utils/api';
@@ -162,6 +162,31 @@ export default function LoginPage() {
   const [totp, setTotp] = useState('');
   // Cloudflare Turnstile token 2014 empty when unconfigured (dev/preview).
   const [turnstileToken, setTurnstileToken] = useState('');
+
+  // ---- Email-OTP (passwordless) login — Bybit-style one-time code ----
+  const [authMethod, setAuthMethod] = useState<'password' | 'otp'>('password');
+  const [otpSent, setOtpSent] = useState(false);
+  const [otpCode, setOtpCode] = useState('');
+  const [otpSending, setOtpSending] = useState(false);
+  const [otpResendIn, setOtpResendIn] = useState(0); // resend cooldown seconds
+  const [otpNotice, setOtpNotice] = useState('');     // "code sent" info line
+
+  // Resend countdown ticker.
+  useEffect(() => {
+    if (otpResendIn <= 0) return;
+    const id = setInterval(() => setOtpResendIn((s) => (s > 0 ? s - 1 : 0)), 1000);
+    return () => clearInterval(id);
+  }, [otpResendIn]);
+
+  // Reset OTP state whenever the user switches login method or edits email.
+  useEffect(() => {
+    setOtpSent(false);
+    setOtpCode('');
+    setOtpNotice('');
+    setOtpResendIn(0);
+    setNeeds2fa(false);
+    setError('');
+  }, [authMethod]);
 
   // ---- Google OAuth state ----
   const [googleLoading, setGoogleLoading] = useState(false);
@@ -334,16 +359,76 @@ export default function LoginPage() {
 
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
   const canSubmit =
-    emailValid &&
-    password.length >= 1 &&
-    !loading &&
-    (!needs2fa || totp.length === 6);
+    authMethod === 'otp'
+      ? emailValid && otpSent && otpCode.length === 6 && !loading && (!needs2fa || totp.length === 6)
+      : emailValid && password.length >= 1 && !loading && (!needs2fa || totp.length === 6);
+
+  // ---- Send / resend the email OTP code ----
+  const requestOtp = async () => {
+    setError('');
+    if (mode === 'phone') return setError(t('auth.phoneComingSoon'));
+    if (!emailValid) return setError(t('auth.invalidEmail'));
+    setOtpSending(true);
+    try {
+      const payload: any = { email };
+      if (turnstileToken) payload.turnstile_token = turnstileToken;
+      const res = await api.post('/auth/login-otp/request', payload);
+      setOtpSent(true);
+      setOtpResendIn(30);
+      setNeeds2fa(false);
+      // Dev/preview: server returns dev_code when the mail provider isn't wired.
+      const devCode = res.data?.dev_code;
+      setOtpNotice(
+        devCode
+          ? `${t('auth.otpSent')} (dev: ${devCode})`
+          : t('auth.otpSent')
+      );
+    } catch (err: any) {
+      setError(err.response?.data?.error || t('auth.otpSendFailed'));
+    } finally {
+      setOtpSending(false);
+    }
+  };
+
+  // ---- Verify the OTP code and log in ----
+  const verifyOtp = async () => {
+    setError('');
+    if (!/^\d{6}$/.test(otpCode)) return setError(t('auth.otpDigits'));
+    if (needs2fa && !/^\d{6}$/.test(totp))
+      return setError(t('auth.totpDigits') || 'Enter 6-digit code');
+    setLoading(true);
+    try {
+      const payload: any = { email, code: otpCode };
+      if (needs2fa) payload.totp_code = totp;
+      const res = await api.post('/auth/login-otp/verify', payload);
+      setAuth(res.data.user, res.data.token);
+      if (remember) localStorage.setItem('quantaex_last_email', email);
+      else localStorage.removeItem('quantaex_last_email');
+      navigate(redirect);
+    } catch (err: any) {
+      const data = err.response?.data;
+      if (data?.requires_2fa) {
+        setNeeds2fa(true);
+        setTotp('');
+        setError('');
+      } else {
+        setError(data?.error || t('auth.loginFailed'));
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     if (mode === 'phone') return setError(t('auth.phoneComingSoon'));
     if (!emailValid) return setError(t('auth.invalidEmail'));
+    // Email-OTP (passwordless) path.
+    if (authMethod === 'otp') {
+      if (!otpSent) return requestOtp();
+      return verifyOtp();
+    }
     if (!password) return setError(t('auth.enterPassword'));
     if (needs2fa && !/^\d{6}$/.test(totp))
       return setError(t('auth.totpDigits') || 'Enter 6-digit code');
@@ -428,6 +513,34 @@ export default function LoginPage() {
         </button>
       </div>
 
+      {/* Login method: password vs. email one-time code (Bybit-style) */}
+      {mode === 'email' && (
+        <div className="mb-5 sm:mb-6 grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => setAuthMethod('password')}
+            className={`flex items-center justify-center gap-1.5 py-2.5 text-[13px] sm:text-sm font-medium rounded-lg border transition-colors ${
+              authMethod === 'password'
+                ? 'border-exchange-yellow/70 bg-exchange-yellow/10 text-exchange-yellow'
+                : 'border-exchange-border/60 bg-exchange-card text-exchange-text-secondary hover:text-exchange-text'
+            }`}
+          >
+            <Lock size={15} /> {t('auth.methodPassword')}
+          </button>
+          <button
+            type="button"
+            onClick={() => setAuthMethod('otp')}
+            className={`flex items-center justify-center gap-1.5 py-2.5 text-[13px] sm:text-sm font-medium rounded-lg border transition-colors ${
+              authMethod === 'otp'
+                ? 'border-exchange-yellow/70 bg-exchange-yellow/10 text-exchange-yellow'
+                : 'border-exchange-border/60 bg-exchange-card text-exchange-text-secondary hover:text-exchange-text'
+            }`}
+          >
+            <KeyRound size={15} /> {t('auth.methodOtp')}
+          </button>
+        </div>
+      )}
+
       <form onSubmit={handleSubmit} className="space-y-4 sm:space-y-5" noValidate>
         {error && (
           <div className="bg-exchange-sell/10 border border-exchange-sell/30 text-exchange-sell rounded-lg px-3 py-2.5 text-sm flex items-center gap-2">
@@ -459,7 +572,8 @@ export default function LoginPage() {
           </div>
         </div>
 
-        {/* Password */}
+        {/* Password (password login method only) */}
+        {authMethod === 'password' && (
         <div>
           <div className="flex items-center justify-between mb-1.5 sm:mb-2.5">
             <label className="text-[13px] sm:text-sm font-medium text-exchange-text-secondary">
@@ -507,6 +621,74 @@ export default function LoginPage() {
             </p>
           )}
         </div>
+        )}
+
+        {/* Email one-time code (OTP login method only) */}
+        {authMethod === 'otp' && (
+        <div>
+          <div className="flex items-center justify-between mb-1.5 sm:mb-2.5">
+            <label className="text-[13px] sm:text-sm font-medium text-exchange-text-secondary">
+              {t('auth.otpLabel')}
+            </label>
+            {otpSent && (
+              <button
+                type="button"
+                onClick={requestOtp}
+                disabled={otpResendIn > 0 || otpSending}
+                className="text-[12px] sm:text-[13px] text-exchange-yellow hover:underline disabled:text-exchange-text-third disabled:no-underline disabled:cursor-not-allowed"
+              >
+                {otpResendIn > 0
+                  ? t('auth.otpResendIn', { s: otpResendIn })
+                  : t('auth.otpResend')}
+              </button>
+            )}
+          </div>
+
+          {!otpSent ? (
+            <button
+              type="button"
+              onClick={requestOtp}
+              disabled={!emailValid || otpSending}
+              className="w-full flex items-center justify-center gap-2 py-3.5 text-sm font-semibold rounded-lg border border-exchange-yellow/60 bg-exchange-yellow/10 text-exchange-yellow hover:bg-exchange-yellow/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {otpSending ? (
+                <span className="w-4 h-4 rounded-full border-2 border-exchange-yellow border-t-transparent animate-spin" />
+              ) : (
+                <KeyRound size={16} />
+              )}
+              {t('auth.otpSendBtn')}
+            </button>
+          ) : (
+            <>
+              <div className="auth-field">
+                <span className="auth-icon">
+                  <ShieldCheck size={18} className="sm:!w-5 sm:!h-5" />
+                </span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={otpCode}
+                  onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  placeholder={t('auth.otpPlaceholder')}
+                  maxLength={6}
+                  autoFocus
+                  autoComplete="one-time-code"
+                  className="tracking-[0.4em] font-mono"
+                />
+              </div>
+              {otpNotice && (
+                <p className="mt-1.5 text-[11px] text-exchange-buy flex items-center gap-1">
+                  <Check size={11} /> {otpNotice}
+                </p>
+              )}
+              <p className="mt-1 text-[11px] text-exchange-text-third">
+                {t('auth.otpHint')}
+              </p>
+            </>
+          )}
+        </div>
+        )}
 
         {/* Remember me */}
         <label className="flex items-center gap-2 sm:gap-2.5 cursor-pointer select-none w-fit pt-1">
@@ -565,6 +747,10 @@ export default function LoginPage() {
             ? t('auth.loggingIn')
             : needs2fa
             ? t('auth.verify') || 'Verify'
+            : authMethod === 'otp' && !otpSent
+            ? t('auth.otpSendBtn')
+            : authMethod === 'otp'
+            ? t('auth.otpLoginBtn')
             : t('auth.loginBtn')}
         </button>
 
@@ -673,7 +859,13 @@ export default function LoginPage() {
           disabled={!canSubmit}
           className="w-full py-3.5 text-sm font-bold rounded-lg bg-exchange-yellow text-black hover:bg-[#d9a60a] disabled:bg-exchange-border disabled:text-exchange-text-third disabled:cursor-not-allowed transition-colors"
         >
-          {loading ? t('auth.loggingIn') : t('auth.loginBtn')}
+          {loading
+            ? t('auth.loggingIn')
+            : authMethod === 'otp' && !otpSent
+            ? t('auth.otpSendBtn')
+            : authMethod === 'otp'
+            ? t('auth.otpLoginBtn')
+            : t('auth.loginBtn')}
         </button>
       </div>
     </AuthLayout>
