@@ -64,9 +64,13 @@ const BLOCKED_COUNTRIES = new Set<string>([
   // Re-add 'KR' below (uncomment) before enabling real on-chain money
   // movement, OR once the owner gives the explicit close directive.
   // 'KR', // Republic of Korea — OPEN for soft-launch (owner: 2026-08-15)
+  // SOFT-LAUNCH DECISION (2026-08-15, owner confirmed): JP also OPENED for
+  // the soft-launch, same rationale as KR — internal-balance-only operation
+  // (on-chain gated by QTA_CHAIN_DRIVER='mock'). Re-add 'JP' below before
+  // enabling real on-chain money movement, OR on explicit owner directive.
+  // 'JP', // Japan — OPEN for soft-launch (owner: 2026-08-15); JFSA license required before real on-chain
   'US', // United States — SEC/CFTC/FinCEN; 50-state MTL otherwise required
   'CN', // China — outright ban on crypto trading
-  'JP', // Japan — JFSA license required for Japanese residents
 
   // Tier-2: sanctions (OFAC / EU / UN)
   'IR', // Iran
