@@ -562,13 +562,14 @@ export default function LoginPage() {
       }
       return;
     }
-    // Password-login path with the 2FA code attached.
+    // Password-login path with the 2FA code attached. The authenticator code
+    // is the proof-of-human for this second-stage submit; the first submit
+    // already passed Turnstile with a single-use token, so we do NOT resend
+    // it (server skips Turnstile when totp_code is present).
     setLoading(true);
     setError('');
     try {
-      const tsToken = await waitForTurnstile();
       const payload: any = { email, password, totp_code: totpVal };
-      if (tsToken) payload.turnstile_token = tsToken;
       const res = await api.post('/auth/login', payload);
       setAuth(res.data.user, res.data.token);
       if (remember) localStorage.setItem('quantaex_last_email', email);
@@ -594,10 +595,13 @@ export default function LoginPage() {
     setLoading(true);
     setError('');
     try {
-      const tsToken = await waitForTurnstile();
+      // Second-stage submit: the emailed OTP code is the proof-of-human here.
+      // The Turnstile token from the first submit is single-use and already
+      // consumed, so we do NOT resend it (the server skips Turnstile when
+      // email_otp/totp_code is present). Resending would fail as
+      // TURNSTILE_INVALID and surface a spurious bot-check error.
       const payload: any = { email, password, email_otp: otpVal };
       if (needs2fa && totp) payload.totp_code = totp;
-      if (tsToken) payload.turnstile_token = tsToken;
       const res = await api.post('/auth/login', payload);
       setAuth(res.data.user, res.data.token);
       if (remember) localStorage.setItem('quantaex_last_email', email);

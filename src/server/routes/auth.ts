@@ -61,6 +61,26 @@ const rlOtpVerify = rateLimit({ key: 'auth:otp-verify',max: 15, windowSec: 600 }
 // auth-critical endpoints below.
 const turnstile = requireTurnstile();
 
+// Login gets its own Turnstile guard that SKIPS verification on the second
+// stage of a multi-step login. The first submit (password only) must pass the
+// bot check and consumes a single-use Turnstile token. The follow-up submit
+// that carries the emailed OTP (`email_otp`) or authenticator code
+// (`totp_code`) is already proven-human by that code, and cannot reuse the
+// now-consumed token (Cloudflare would return TURNSTILE_INVALID). Re-checking
+// there produces a false "complete the human-verification check" error.
+const turnstileLogin = requireTurnstile({
+  skipWhen: async (c) => {
+    try {
+      const body = await c.req.json();
+      const hasOtp = !!(body?.email_otp && String(body.email_otp).trim());
+      const hasTotp = !!(body?.totp_code && String(body.totp_code).trim());
+      return hasOtp || hasTotp;
+    } catch {
+      return false;
+    }
+  },
+});
+
 // ============================================================================
 // Referral helpers
 // ----------------------------------------------------------------------------
@@ -490,7 +510,7 @@ app.post('/register', rlRegister, turnstile, async (c) => {
 });
 
 // Login
-app.post('/login', rlLogin, turnstile, async (c) => {
+app.post('/login', rlLogin, turnstileLogin, async (c) => {
   const body = await c.req.json();
   const email = (body.email || '').toString().trim().toLowerCase();
   const password = (body.password || '').toString();

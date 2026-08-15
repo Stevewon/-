@@ -66,9 +66,27 @@ async function extractToken(c: Context<AppEnv>): Promise<string | null> {
 /**
  * requireTurnstile — verify Cloudflare Turnstile token, or fail-open when
  * TURNSTILE_SECRET is not configured (dev / preview convenience).
+ *
+ * @param opts.skipWhen  Optional async predicate. When it returns true for a
+ *   request, Turnstile verification is skipped entirely. This is used for the
+ *   SECOND stage of a multi-step login: the first `/login` submit (password
+ *   only) already consumed a one-time Turnstile token and passed the bot
+ *   check. The follow-up submit that carries the emailed OTP code
+ *   (`email_otp`) or an authenticator code (`totp_code`) is proven-human by
+ *   that code itself, and would otherwise fail because Turnstile tokens are
+ *   single-use — re-sending the stale token yields TURNSTILE_INVALID.
  */
-export function requireTurnstile() {
+export function requireTurnstile(opts?: {
+  skipWhen?: (c: Context<AppEnv>) => boolean | Promise<boolean>;
+}) {
   return async function turnstileMw(c: Context<AppEnv>, next: Next) {
+    if (opts?.skipWhen) {
+      try {
+        if (await opts.skipWhen(c)) return next();
+      } catch {
+        /* predicate error — fall through to normal verification */
+      }
+    }
     const secret = (c.env as any).TURNSTILE_SECRET as string | undefined;
     // Only BLOCK the request when enforcement is explicitly 'strict'. In any
     // other mode we still VERIFY a token if one is present, but never reject
