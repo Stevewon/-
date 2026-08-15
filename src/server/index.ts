@@ -92,8 +92,44 @@ const app = new Hono<AppEnv>();
 // Install FIRST so any middleware/route that throws is captured.
 installObservability(app as any);
 
-// CORS for API routes
-app.use('/api/*', cors());
+// CORS for API routes.
+// Soft-launch hardening (2026-08-15): lock browser origins to our own
+// domains instead of the previous wildcard `cors()` (which reflected any
+// Origin). This blocks other websites from making authenticated browser
+// calls against our API.
+//
+// Why this does NOT break the external trading API (/api/v1):
+//   CORS is a *browser*-enforced mechanism. Server-to-server clients
+//   (curl, algo/bot traders using API key + PQ signature + IP whitelist)
+//   ignore CORS entirely, so narrowing the allowed browser Origin has no
+//   effect on them.
+//
+// Non-browser requests (no Origin header) are allowed through: the hono
+// cors() `origin` callback returns the requested origin only when it is in
+// the allowlist, and returns undefined otherwise (no ACAO header emitted),
+// which is the correct, safe behaviour for both cases.
+const CORS_ALLOWED_ORIGINS = new Set<string>([
+  'https://quantaex.io',
+  'https://www.quantaex.io',
+  'https://quantaex.pages.dev', // Cloudflare Pages canonical deployment
+]);
+app.use(
+  '/api/*',
+  cors({
+    origin: (origin) => {
+      // Requests with no Origin header (server-to-server, curl, same-origin
+      // navigations) — let them through; there is nothing to reflect.
+      if (!origin) return origin;
+      // Allow our own apex/www/pages domains.
+      if (CORS_ALLOWED_ORIGINS.has(origin)) return origin;
+      // Allow Cloudflare Pages preview deployments (<hash>.quantaex.pages.dev).
+      if (/^https:\/\/[a-z0-9-]+\.quantaex\.pages\.dev$/.test(origin)) return origin;
+      // Anything else: deny (no Access-Control-Allow-Origin header).
+      return null;
+    },
+    credentials: true,
+  }),
+);
 
 // Sprint 5 Phase G1 — Geo-blocking gate.
 // Mounted directly after CORS so cross-origin preflight succeeds, but the
