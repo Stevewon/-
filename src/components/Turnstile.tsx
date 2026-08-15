@@ -85,10 +85,10 @@ interface Props {
 // Cloudflare, but the server fails open (does not reject) if the secret is unset.
 // Cloudflare Turnstile site key for the "quantaex-login-2" widget (Managed
 // mode; hostnames quantaex.io / www.quantaex.io / quantaex.pages.dev).
-// Format is the canonical 0x4AAAAAAA (0x4 + eight A) prefix + suffix.
-// The previous widget's key produced Cloudflare error 400020, so a fresh
-// widget was created. Overridable at build time via VITE_TURNSTILE_SITE_KEY.
-const TURNSTILE_PROD_SITE_KEY = '0x4AAAAAAAEQiYDpYXkamzaZI';
+// NOTE: this key has SIX 'A' after 0x4 (0x4AAAAAA…), verified against the
+// dashboard. An earlier eight-A guess produced Cloudflare error 400020.
+// Overridable at build time via VITE_TURNSTILE_SITE_KEY.
+const TURNSTILE_PROD_SITE_KEY = '0x4AAAAAAEQiYDpYXkamzaZI';
 
 export default function Turnstile({ onToken, onError, theme = 'dark', size = 'flexible', className }: Props) {
   const ref = useRef<HTMLDivElement>(null);
