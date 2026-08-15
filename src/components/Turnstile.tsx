@@ -83,11 +83,12 @@ interface Props {
 // TURNSTILE_SECRET environment variable on the Cloudflare Pages project, plus
 // TURNSTILE_ENFORCE='strict'. Until then the widget is shown and validated by
 // Cloudflare, but the server fails open (does not reject) if the secret is unset.
-// NOTE: char #21 is a lowercase 'l' (…bGrlh1Ye), NOT the digit '1'. An earlier
-// transcription used '1' there which produced Cloudflare error 400020 (invalid
-// sitekey) and prevented the widget from rendering. Verified against the
-// dashboard "Widget Keys → Site key" field.
-const TURNSTILE_PROD_SITE_KEY = '0x4AAAAAAAEQfq1J4bGrlh1Ye';
+// Cloudflare Turnstile site key for the "quantaex-login-2" widget (Managed
+// mode; hostnames quantaex.io / www.quantaex.io / quantaex.pages.dev).
+// Format is the canonical 0x4AAAAAAA (0x4 + eight A) prefix + suffix.
+// The previous widget's key produced Cloudflare error 400020, so a fresh
+// widget was created. Overridable at build time via VITE_TURNSTILE_SITE_KEY.
+const TURNSTILE_PROD_SITE_KEY = '0x4AAAAAAAEQiYDpYXkamzaZI';
 
 export default function Turnstile({ onToken, onError, theme = 'dark', size = 'flexible', className }: Props) {
   const ref = useRef<HTMLDivElement>(null);
