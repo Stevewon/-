@@ -8,6 +8,50 @@ interface Props {
 
 const INTERVALS = ['1m', '5m', '15m', '1h', '4h', '1d'];
 
+// ----------------------------------------------------------------------------
+// Korea Standard Time (KST, UTC+9) display helpers.
+// ----------------------------------------------------------------------------
+// lightweight-charts renders the time axis in UTC by default. Our candle
+// `time` values are Unix seconds (UTC). Rather than mutating the underlying
+// data (which would corrupt the real candle open-times), we format the axis
+// tick marks and the crosshair tooltip into KST here. `Intl` with the fixed
+// 'Asia/Seoul' zone is DST-safe (Korea has no DST) and consistent regardless
+// of the viewer's own browser timezone.
+const KST_ZONE = 'Asia/Seoul';
+const pad2 = (n: number) => (n < 10 ? `0${n}` : `${n}`);
+
+function kstParts(unixSec: number) {
+  const d = new Date(unixSec * 1000);
+  const fmt = new Intl.DateTimeFormat('en-GB', {
+    timeZone: KST_ZONE,
+    year: 'numeric', month: 'short', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  });
+  const parts = fmt.formatToParts(d).reduce((acc, p) => {
+    acc[p.type] = p.value;
+    return acc;
+  }, {} as Record<string, string>);
+  return parts; // { year, month, day, hour, minute }
+}
+
+// Axis tick labels. For intraday intervals show HH:MM (KST); for daily+ show
+// the date. lightweight-charts passes the tickmark `time` (Unix seconds here).
+function makeTickMarkFormatter(interval: string) {
+  const intraday = /m|h/.test(interval); // 1m/5m/15m/1h/4h
+  return (time: number) => {
+    const p = kstParts(typeof time === 'number' ? time : Number(time));
+    if (intraday) return `${p.hour}:${p.minute}`;
+    return `${p.day} ${p.month}`;
+  };
+}
+
+// Crosshair tooltip time — always full date + HH:MM in KST, with a KST tag so
+// it's unambiguous.
+function kstCrosshairFormatter(time: number) {
+  const p = kstParts(typeof time === 'number' ? time : Number(time));
+  return `${p.day} ${p.month} ${p.year} ${p.hour}:${p.minute} (KST)`;
+}
+
 export default function CandleChart({ symbol }: Props) {
   const chartRef = useRef<HTMLDivElement>(null);
   const chartInstance = useRef<any>(null);
@@ -29,6 +73,10 @@ export default function CandleChart({ symbol }: Props) {
         horzLines: { color: '#1E2329' },
       },
       crosshair: { mode: CrosshairMode.Normal },
+      // Display all time labels in Korea Standard Time (KST, UTC+9).
+      localization: {
+        timeFormatter: kstCrosshairFormatter,
+      },
       rightPriceScale: {
         borderColor: '#2B3139',
         scaleMargins: { top: 0.1, bottom: 0.25 },
@@ -37,6 +85,7 @@ export default function CandleChart({ symbol }: Props) {
         borderColor: '#2B3139',
         timeVisible: true,
         secondsVisible: false,
+        tickMarkFormatter: makeTickMarkFormatter('1h'),
       },
       handleScroll: { vertTouchDrag: false },
     });
@@ -80,6 +129,14 @@ export default function CandleChart({ symbol }: Props) {
       chart.remove();
     };
   }, []);
+
+  // Keep the KST axis tick formatting appropriate for the current interval
+  // (HH:MM for intraday, DD Mon for daily+).
+  useEffect(() => {
+    chartInstance.current?.timeScale().applyOptions({
+      tickMarkFormatter: makeTickMarkFormatter(interval),
+    });
+  }, [interval]);
 
   useEffect(() => {
     loadCandles();
