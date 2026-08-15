@@ -467,7 +467,7 @@ export default function LoginPage() {
   return (
     <AuthLayout variant="login">
       {/* Headline + inline register link (Binance mobile pattern) */}
-      <div className="mb-7 sm:mb-9">
+      <div className="mb-9 sm:mb-10">
         <div className="flex items-start justify-between gap-3">
           <h1 className="text-2xl sm:text-3xl lg:text-[34px] font-bold text-exchange-text leading-tight">
             {t('auth.welcome')}
@@ -485,11 +485,12 @@ export default function LoginPage() {
       </div>
 
       {/* Email / Phone tab */}
-      <div className="mb-5 sm:mb-7 flex items-center gap-0 rounded-lg sm:rounded-xl bg-exchange-card p-1 sm:p-1.5 border border-exchange-border/60">
+      <div className="mb-6 sm:mb-7 flex items-center gap-0 rounded-lg sm:rounded-xl bg-exchange-card p-1.5 border border-exchange-border/60">
         <button
           type="button"
           onClick={() => setMode('email')}
-          className={`flex-1 py-2 sm:py-2.5 text-sm sm:text-[15px] font-medium rounded-md sm:rounded-lg transition-colors ${
+          style={{ paddingTop: '11px', paddingBottom: '11px' }}
+          className={`flex-1 text-sm sm:text-[15px] font-medium rounded-md sm:rounded-lg transition-colors ${
             mode === 'email'
               ? 'bg-exchange-bg text-exchange-text shadow-sm'
               : 'text-exchange-text-secondary hover:text-exchange-text'
@@ -500,7 +501,8 @@ export default function LoginPage() {
         <button
           type="button"
           onClick={() => setMode('phone')}
-          className={`flex-1 py-2 sm:py-2.5 text-sm sm:text-[15px] font-medium rounded-md sm:rounded-lg transition-colors relative ${
+          style={{ paddingTop: '11px', paddingBottom: '11px' }}
+          className={`flex-1 text-sm sm:text-[15px] font-medium rounded-md sm:rounded-lg transition-colors relative ${
             mode === 'phone'
               ? 'bg-exchange-bg text-exchange-text shadow-sm'
               : 'text-exchange-text-secondary hover:text-exchange-text'
@@ -515,11 +517,12 @@ export default function LoginPage() {
 
       {/* Login method: password vs. email one-time code (Bybit-style) */}
       {mode === 'email' && (
-        <div className="mb-5 sm:mb-6 grid grid-cols-2 gap-2">
+        <div className="mb-7 sm:mb-6 grid grid-cols-2 gap-2.5">
           <button
             type="button"
             onClick={() => setAuthMethod('password')}
-            className={`flex items-center justify-center gap-1.5 py-2.5 text-[13px] sm:text-sm font-medium rounded-lg border transition-colors ${
+            style={{ paddingTop: '13px', paddingBottom: '13px' }}
+            className={`flex items-center justify-center gap-1.5 text-[13px] sm:text-sm font-medium rounded-lg border transition-colors ${
               authMethod === 'password'
                 ? 'border-exchange-yellow/70 bg-exchange-yellow/10 text-exchange-yellow'
                 : 'border-exchange-border/60 bg-exchange-card text-exchange-text-secondary hover:text-exchange-text'
@@ -530,7 +533,8 @@ export default function LoginPage() {
           <button
             type="button"
             onClick={() => setAuthMethod('otp')}
-            className={`flex items-center justify-center gap-1.5 py-2.5 text-[13px] sm:text-sm font-medium rounded-lg border transition-colors ${
+            style={{ paddingTop: '13px', paddingBottom: '13px' }}
+            className={`flex items-center justify-center gap-1.5 text-[13px] sm:text-sm font-medium rounded-lg border transition-colors ${
               authMethod === 'otp'
                 ? 'border-exchange-yellow/70 bg-exchange-yellow/10 text-exchange-yellow'
                 : 'border-exchange-border/60 bg-exchange-card text-exchange-text-secondary hover:text-exchange-text'
@@ -541,7 +545,12 @@ export default function LoginPage() {
         </div>
       )}
 
-      <form onSubmit={handleSubmit} className="space-y-4 sm:space-y-5" noValidate>
+      <form
+        onSubmit={handleSubmit}
+        className="flex flex-col"
+        style={{ gap: '26px' }}
+        noValidate
+      >
         {error && (
           <div className="bg-exchange-sell/10 border border-exchange-sell/30 text-exchange-sell rounded-lg px-3 py-2.5 text-sm flex items-center gap-2">
             <AlertCircle size={16} className="shrink-0" />
