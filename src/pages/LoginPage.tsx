@@ -781,25 +781,20 @@ export default function LoginPage() {
           </div>
         )}
 
-        {/* Cloudflare Turnstile bot protection — a visible human-verification
-             challenge shown on every login attempt (like other exchanges).
-             If the widget fails to render (e.g. before the site key has fully
-             propagated), the whole block hides itself instead of leaving a
-             broken "Troubleshoot" widget on screen. */}
-        {!turnstileErrored && (
-          <div className="pt-1 space-y-2">
-            <p className="flex items-center gap-1.5 text-[13px] sm:text-sm font-medium text-exchange-text-secondary">
-              <ShieldCheck size={15} className="text-exchange-yellow" />
-              {t('auth.botCheck') || '보안 확인 (봇 방지)'}
-            </p>
-            <Turnstile
-              onToken={setTurnstileToken}
-              onError={setTurnstileErrored}
-              theme="dark"
-              size="flexible"
-            />
-          </div>
-        )}
+        {/* Cloudflare Turnstile bot protection.
+             The widget runs INVISIBLY in the background: it still tries to
+             obtain a verification token (used automatically once server-side
+             enforcement TURNSTILE_ENFORCE=strict is re-enabled), but it never
+             renders a visible box or a "Troubleshoot" link, so the login form
+             stays clean whether or not the site key has propagated. */}
+        <div aria-hidden className="hidden">
+          <Turnstile
+            onToken={setTurnstileToken}
+            onError={setTurnstileErrored}
+            theme="dark"
+            size="flexible"
+          />
+        </div>
 
         {/* Desktop / tablet inline submit */}
         <button
