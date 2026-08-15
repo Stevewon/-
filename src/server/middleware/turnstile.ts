@@ -70,6 +70,13 @@ async function extractToken(c: Context<AppEnv>): Promise<string | null> {
 export function requireTurnstile() {
   return async function turnstileMw(c: Context<AppEnv>, next: Next) {
     const secret = (c.env as any).TURNSTILE_SECRET as string | undefined;
+    // Only BLOCK the request when enforcement is explicitly 'strict'. In any
+    // other mode we still VERIFY a token if one is present, but never reject
+    // the request for a missing/invalid token — this prevents a full auth
+    // lockout when the widget can't render (e.g. the site key's allowed
+    // hostname list doesn't yet include the live domain → Turnstile 400020).
+    const enforce =
+      String((c.env as any).TURNSTILE_ENFORCE || '').toLowerCase() === 'strict';
 
     // Fail-open when unconfigured — never break preview / local dev.
     if (!secret) {
@@ -78,14 +85,18 @@ export function requireTurnstile() {
 
     const token = await extractToken(c);
     if (!token) {
-      return c.json(
-        {
-          error: 'Bot verification required',
-          code: 'TURNSTILE_TOKEN_MISSING',
-          hint: 'Complete the Turnstile challenge and re-submit.',
-        },
-        400,
-      );
+      // No token: only block in strict mode, otherwise let the request pass.
+      if (enforce) {
+        return c.json(
+          {
+            error: 'Bot verification required',
+            code: 'TURNSTILE_TOKEN_MISSING',
+            hint: 'Complete the Turnstile challenge and re-submit.',
+          },
+          400,
+        );
+      }
+      return next();
     }
 
     try {
@@ -104,23 +115,31 @@ export function requireTurnstile() {
       };
 
       if (!data.success) {
-        return c.json(
-          {
-            error: 'Bot verification failed',
-            code: 'TURNSTILE_INVALID',
-            details: data['error-codes'] || [],
-          },
-          403,
+        // Invalid token: only block in strict mode.
+        if (enforce) {
+          return c.json(
+            {
+              error: 'Bot verification failed',
+              code: 'TURNSTILE_INVALID',
+              details: data['error-codes'] || [],
+            },
+            403,
+          );
+        }
+        console.warn(
+          '[turnstile] token invalid (non-strict, allowing):',
+          (data['error-codes'] || []).join(','),
         );
       }
     } catch (e) {
-      // Verification service error — fail closed on production (secret set
-      // implies boss wants strict enforcement).
+      // Verification service error — only fail closed in strict mode.
       console.warn('[turnstile] verify error:', (e as Error).message);
-      return c.json(
-        { error: 'Bot verification unavailable', code: 'TURNSTILE_UNREACHABLE' },
-        503,
-      );
+      if (enforce) {
+        return c.json(
+          { error: 'Bot verification unavailable', code: 'TURNSTILE_UNREACHABLE' },
+          503,
+        );
+      }
     }
 
     return next();
