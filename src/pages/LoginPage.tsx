@@ -360,7 +360,11 @@ export default function LoginPage() {
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
   const canSubmit =
     authMethod === 'otp'
-      ? emailValid && otpSent && otpCode.length === 6 && !loading && (!needs2fa || totp.length === 6)
+      ? // Before the code is sent: only a valid email is needed to request one.
+        // After it's sent: require the full 6-digit code (+ 2FA if applicable).
+        !otpSent
+        ? emailValid && !loading && !otpSending
+        : emailValid && otpCode.length === 6 && !loading && (!needs2fa || totp.length === 6)
       : emailValid && password.length >= 1 && !loading && (!needs2fa || totp.length === 6);
 
   // ---- Send / resend the email OTP code ----
@@ -457,6 +461,47 @@ export default function LoginPage() {
     }
   };
 
+  // Auto-submit once the 2FA code is complete. Re-runs whichever login flow
+  // triggered the challenge (password login or email-OTP login).
+  const submit2fa = async (code?: string) => {
+    const totpVal = code ?? totp;
+    if (!/^\d{6}$/.test(totpVal) || loading) return;
+    if (authMethod === 'otp') {
+      // OTP-verify path with the 2FA code attached.
+      setLoading(true);
+      setError('');
+      try {
+        const payload: any = { email, code: otpCode, totp_code: totpVal };
+        const res = await api.post('/auth/login-otp/verify', payload);
+        setAuth(res.data.user, res.data.token);
+        if (remember) localStorage.setItem('quantaex_last_email', email);
+        else localStorage.removeItem('quantaex_last_email');
+        navigate(redirect);
+      } catch (err: any) {
+        setError(err.response?.data?.error || t('auth.loginFailed'));
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+    // Password-login path with the 2FA code attached.
+    setLoading(true);
+    setError('');
+    try {
+      const payload: any = { email, password, totp_code: totpVal };
+      if (turnstileToken) payload.turnstile_token = turnstileToken;
+      const res = await api.post('/auth/login', payload);
+      setAuth(res.data.user, res.data.token);
+      if (remember) localStorage.setItem('quantaex_last_email', email);
+      else localStorage.removeItem('quantaex_last_email');
+      navigate(redirect);
+    } catch (err: any) {
+      setError(err.response?.data?.error || t('auth.loginFailed'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const onPwKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
     const caps =
       typeof (e as any).getModifierState === 'function' &&
@@ -474,12 +519,12 @@ export default function LoginPage() {
           </h1>
           <Link
             to="/register"
-            className="text-[13px] sm:text-sm text-exchange-yellow hover:underline font-semibold whitespace-nowrap mt-1 sm:mt-2"
+            className="text-[14px] sm:text-[15px] text-exchange-yellow hover:underline font-semibold whitespace-nowrap mt-1 sm:mt-2"
           >
             {t('nav.register')} →
           </Link>
         </div>
-        <p className="text-exchange-text-secondary mt-2 sm:mt-3 text-sm sm:text-[15px]">
+        <p className="text-exchange-text-secondary mt-2 sm:mt-3 text-[15px] sm:text-base">
           {t('auth.loginTo')}
         </p>
       </div>
@@ -490,7 +535,7 @@ export default function LoginPage() {
           type="button"
           onClick={() => setMode('email')}
           style={{ paddingTop: '11px', paddingBottom: '11px' }}
-          className={`flex-1 text-sm sm:text-[15px] font-medium rounded-md sm:rounded-lg transition-colors ${
+          className={`flex-1 text-[15px] sm:text-base font-medium rounded-md sm:rounded-lg transition-colors ${
             mode === 'email'
               ? 'bg-exchange-bg text-exchange-text shadow-sm'
               : 'text-exchange-text-secondary hover:text-exchange-text'
@@ -502,7 +547,7 @@ export default function LoginPage() {
           type="button"
           onClick={() => setMode('phone')}
           style={{ paddingTop: '11px', paddingBottom: '11px' }}
-          className={`flex-1 text-sm sm:text-[15px] font-medium rounded-md sm:rounded-lg transition-colors relative ${
+          className={`flex-1 text-[15px] sm:text-base font-medium rounded-md sm:rounded-lg transition-colors relative ${
             mode === 'phone'
               ? 'bg-exchange-bg text-exchange-text shadow-sm'
               : 'text-exchange-text-secondary hover:text-exchange-text'
@@ -522,25 +567,25 @@ export default function LoginPage() {
             type="button"
             onClick={() => setAuthMethod('password')}
             style={{ paddingTop: '13px', paddingBottom: '13px' }}
-            className={`flex items-center justify-center gap-1.5 text-[13px] sm:text-sm font-medium rounded-lg border transition-colors ${
+            className={`flex items-center justify-center gap-2 text-[14px] sm:text-[15px] font-medium rounded-lg border transition-colors ${
               authMethod === 'password'
                 ? 'border-exchange-yellow/70 bg-exchange-yellow/10 text-exchange-yellow'
                 : 'border-exchange-border/60 bg-exchange-card text-exchange-text-secondary hover:text-exchange-text'
             }`}
           >
-            <Lock size={15} /> {t('auth.methodPassword')}
+            <Lock size={16} /> {t('auth.methodPassword')}
           </button>
           <button
             type="button"
             onClick={() => setAuthMethod('otp')}
             style={{ paddingTop: '13px', paddingBottom: '13px' }}
-            className={`flex items-center justify-center gap-1.5 text-[13px] sm:text-sm font-medium rounded-lg border transition-colors ${
+            className={`flex items-center justify-center gap-2 text-[14px] sm:text-[15px] font-medium rounded-lg border transition-colors ${
               authMethod === 'otp'
                 ? 'border-exchange-yellow/70 bg-exchange-yellow/10 text-exchange-yellow'
                 : 'border-exchange-border/60 bg-exchange-card text-exchange-text-secondary hover:text-exchange-text'
             }`}
           >
-            <KeyRound size={15} /> {t('auth.methodOtp')}
+            <KeyRound size={16} /> {t('auth.methodOtp')}
           </button>
         </div>
       )}
@@ -560,7 +605,7 @@ export default function LoginPage() {
 
         {/* Email */}
         <div>
-          <label className="text-[13px] sm:text-sm font-medium text-exchange-text-secondary mb-1.5 sm:mb-2.5 block">
+          <label className="text-[15px] sm:text-[15px] font-medium text-exchange-text-secondary mb-2 sm:mb-2.5 block">
             {t('auth.email')}
           </label>
           <div className="auth-field">
@@ -585,12 +630,12 @@ export default function LoginPage() {
         {authMethod === 'password' && (
         <div>
           <div className="flex items-center justify-between mb-1.5 sm:mb-2.5">
-            <label className="text-[13px] sm:text-sm font-medium text-exchange-text-secondary">
+            <label className="text-[15px] sm:text-[15px] font-medium text-exchange-text-secondary">
               {t('auth.password')}
             </label>
             <Link
               to="/forgot-password"
-              className="text-[12px] sm:text-[13px] text-exchange-yellow hover:underline"
+              className="text-[14px] sm:text-[14px] text-exchange-yellow hover:underline"
             >
               {t('auth.forgotPw')}
             </Link>
@@ -636,7 +681,7 @@ export default function LoginPage() {
         {authMethod === 'otp' && (
         <div>
           <div className="flex items-center justify-between mb-1.5 sm:mb-2.5">
-            <label className="text-[13px] sm:text-sm font-medium text-exchange-text-secondary">
+            <label className="text-[15px] sm:text-[15px] font-medium text-exchange-text-secondary">
               {t('auth.otpLabel')}
             </label>
             {otpSent && (
@@ -644,7 +689,7 @@ export default function LoginPage() {
                 type="button"
                 onClick={requestOtp}
                 disabled={otpResendIn > 0 || otpSending}
-                className="text-[12px] sm:text-[13px] text-exchange-yellow hover:underline disabled:text-exchange-text-third disabled:no-underline disabled:cursor-not-allowed"
+                className="text-[14px] sm:text-[14px] text-exchange-yellow hover:underline disabled:text-exchange-text-third disabled:no-underline disabled:cursor-not-allowed"
               >
                 {otpResendIn > 0
                   ? t('auth.otpResendIn', { s: otpResendIn })
@@ -669,29 +714,19 @@ export default function LoginPage() {
             </button>
           ) : (
             <>
-              <div className="auth-field">
-                <span className="auth-icon">
-                  <ShieldCheck size={18} className="sm:!w-5 sm:!h-5" />
-                </span>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  value={otpCode}
-                  onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                  placeholder={t('auth.otpPlaceholder')}
-                  maxLength={6}
-                  autoFocus
-                  autoComplete="one-time-code"
-                  className="tracking-[0.4em] font-mono"
-                />
-              </div>
+              <OtpBoxes
+                value={otpCode}
+                onChange={setOtpCode}
+                onComplete={() => { if (!loading) verifyOtp(); }}
+                autoFocus
+                disabled={loading}
+              />
               {otpNotice && (
-                <p className="mt-1.5 text-[11px] text-exchange-buy flex items-center gap-1">
-                  <Check size={11} /> {otpNotice}
+                <p className="mt-2.5 text-[12px] text-exchange-buy flex items-center gap-1">
+                  <Check size={12} /> {otpNotice}
                 </p>
               )}
-              <p className="mt-1 text-[11px] text-exchange-text-third">
+              <p className="mt-2 text-[12px] text-exchange-text-third">
                 {t('auth.otpHint')}
               </p>
             </>
@@ -707,42 +742,51 @@ export default function LoginPage() {
             onChange={(e) => setRemember(e.target.checked)}
             className="w-4 h-4 sm:w-[18px] sm:h-[18px] rounded border-exchange-border accent-exchange-yellow"
           />
-          <span className="text-xs sm:text-[13px] text-exchange-text-secondary">
+          <span className="text-[14px] sm:text-[14px] text-exchange-text-secondary">
             {t('auth.rememberMe')}
           </span>
         </label>
 
-        {/* 2FA challenge */}
+        {/* 2FA challenge — Bybit-style "Security Verification" with a
+             segmented 6-digit authenticator-code input. Only shown after the
+             server responds { requires_2fa: true }, i.e. for users who have
+             Google Authenticator enabled. Users without 2FA never see this and
+             log in with just email + password. */}
         {needs2fa && (
-          <div className="bg-exchange-yellow/10 border border-exchange-yellow/30 rounded-lg p-4 space-y-3">
-            <div>
-              <p className="text-[13px] font-semibold text-exchange-yellow mb-1">
-                {t('auth.twoFactorTitle') || 'Two-Factor Authentication'}
-              </p>
-              <p className="text-[11px] text-exchange-text-secondary">
-                {t('auth.twoFactorDesc') ||
-                  'Enter the 6-digit code from your authenticator app.'}
+          <div className="bg-exchange-card border border-exchange-border/70 rounded-xl p-4 sm:p-5">
+            <div className="flex items-center gap-2 mb-1">
+              <ShieldCheck size={18} className="text-exchange-yellow" />
+              <p className="text-[15px] font-semibold text-exchange-text">
+                {t('auth.securityVerification') || 'Security Verification'}
               </p>
             </div>
-            <input
-              type="text"
-              inputMode="numeric"
-              pattern="[0-9]*"
+            <div className="flex items-center gap-1.5 mb-4 text-exchange-text-secondary">
+              <KeyRound size={14} />
+              <span className="text-[13px]">
+                {t('auth.googleAuthenticator') || 'Google Authenticator'}
+              </span>
+            </div>
+            <OtpBoxes
               value={totp}
-              onChange={(e) =>
-                setTotp(e.target.value.replace(/\D/g, '').slice(0, 6))
-              }
-              placeholder="123456"
-              maxLength={6}
+              onChange={setTotp}
+              onComplete={(code) => submit2fa(code)}
               autoFocus
-              className="auth-input-plain text-center text-xl tracking-[0.5em] font-mono"
+              disabled={loading}
             />
+            <p className="mt-3 text-[12px] text-exchange-text-third">
+              {t('auth.twoFactorDesc') ||
+                'Enter the 6-digit code from your authenticator app.'}
+            </p>
           </div>
         )}
 
-        {/* Cloudflare Turnstile bot protection — renders nothing when
-             VITE_TURNSTILE_SITE_KEY is unset (dev/preview). */}
-        <div className="pt-1">
+        {/* Cloudflare Turnstile bot protection — a visible human-verification
+             challenge shown on every login attempt (like other exchanges). */}
+        <div className="pt-1 space-y-2">
+          <p className="flex items-center gap-1.5 text-[13px] sm:text-sm font-medium text-exchange-text-secondary">
+            <ShieldCheck size={15} className="text-exchange-yellow" />
+            {t('auth.botCheck') || '보안 확인 (봇 방지)'}
+          </p>
           <Turnstile onToken={setTurnstileToken} theme="dark" size="flexible" />
         </div>
 
@@ -769,7 +813,7 @@ export default function LoginPage() {
             <div className="w-full border-t border-exchange-border/60" />
           </div>
           <div className="relative flex justify-center">
-            <span className="px-3 text-[11px] sm:text-[12px] uppercase tracking-wider text-exchange-text-third bg-exchange-bg">
+            <span className="px-3 text-[12px] sm:text-[13px] uppercase tracking-wider text-exchange-text-third bg-exchange-bg">
               {t('auth.or')}
             </span>
           </div>
@@ -783,33 +827,33 @@ export default function LoginPage() {
             <button
               type="button"
               onClick={() => setShowRef(true)}
-              className="w-full flex items-center justify-center gap-1.5 py-2 text-[12px] sm:text-[13px] text-exchange-text-secondary hover:text-exchange-yellow transition-colors"
+              className="w-full flex items-center justify-center gap-1.5 py-2.5 text-[14px] sm:text-[15px] text-exchange-text-secondary hover:text-exchange-yellow transition-colors"
             >
-              <Gift size={13} className="opacity-70" />
+              <Gift size={15} className="opacity-70" />
               <span>{t('auth.refCodeAdd') || '추천 코드 입력 (선택)'}</span>
             </button>
           ) : (
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
-                <label className="text-[12px] sm:text-[13px] font-medium text-exchange-text-secondary flex items-center gap-1.5">
-                  <Gift size={13} className="opacity-70" />
+                <label className="text-[14px] sm:text-[15px] font-medium text-exchange-text-secondary flex items-center gap-1.5">
+                  <Gift size={15} className="opacity-70" />
                   {t('auth.refCode') || '추천 코드'}
                   <span className="text-exchange-text-third">
                     ({t('auth.optional') || '선택'})
                   </span>
                 </label>
                 {refCheck.state === 'valid' && refCheck.masked && (
-                  <span className="flex items-center gap-1 text-[11px] text-exchange-buy">
-                    <Check size={12} /> {refCheck.masked}
+                  <span className="flex items-center gap-1 text-[12px] sm:text-[13px] text-exchange-buy">
+                    <Check size={13} /> {refCheck.masked}
                   </span>
                 )}
                 {refCheck.state === 'invalid' && (
-                  <span className="flex items-center gap-1 text-[11px] text-exchange-sell">
-                    <X size={11} /> {t('auth.refCodeInvalid') || '유효하지 않은 코드'}
+                  <span className="flex items-center gap-1 text-[12px] sm:text-[13px] text-exchange-sell">
+                    <X size={13} /> {t('auth.refCodeInvalid') || '유효하지 않은 코드'}
                   </span>
                 )}
                 {refCheck.state === 'checking' && (
-                  <span className="text-[11px] text-exchange-text-third">…</span>
+                  <span className="text-[12px] sm:text-[13px] text-exchange-text-third">…</span>
                 )}
               </div>
               <input
@@ -824,7 +868,7 @@ export default function LoginPage() {
                 autoCapitalize="characters"
                 className="auth-input-plain text-sm tracking-wider font-mono"
               />
-              <p className="text-[10.5px] sm:text-[11px] text-exchange-text-third leading-snug">
+              <p className="text-[12px] sm:text-[13px] text-exchange-text-third leading-snug">
                 {t('auth.refCodeGoogleHint') ||
                   '구글 신규 가입 시에만 적용 — 기존 계정 로그인엔 영향 없음'}
               </p>
@@ -847,9 +891,9 @@ export default function LoginPage() {
       </form>
 
       {/* Trust row */}
-      <div className="mt-10 sm:mt-12 flex items-center justify-center gap-4 text-[11px] sm:text-[12px] text-exchange-text-third">
+      <div className="mt-10 sm:mt-12 flex items-center justify-center gap-4 text-[12px] sm:text-[13px] text-exchange-text-third">
         <span className="flex items-center gap-1">
-          <Lock size={11} /> {t('auth.secure256')}
+          <Lock size={13} /> {t('auth.secure256')}
         </span>
         <span className="w-1 h-1 rounded-full bg-exchange-text-third" />
         <span>{t('auth.trustedBy')}</span>
@@ -878,6 +922,116 @@ export default function LoginPage() {
         </button>
       </div>
     </AuthLayout>
+  );
+}
+
+// ============================================================================
+// OtpBoxes — Bybit-style segmented 6-digit code input.
+// ----------------------------------------------------------------------------
+// Six individual boxes; typing a digit auto-advances, Backspace on an empty
+// box steps back, and pasting a 6-digit code fills every box at once.
+// Fully controlled via `value` (a string of up to 6 digits) + `onChange`.
+// ============================================================================
+function OtpBoxes({
+  value,
+  onChange,
+  onComplete,
+  autoFocus,
+  disabled,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  onComplete?: (v: string) => void;
+  autoFocus?: boolean;
+  disabled?: boolean;
+}) {
+  const refs = useRef<Array<HTMLInputElement | null>>([]);
+  const digits = value.split('').concat(Array(6).fill('')).slice(0, 6);
+
+  useEffect(() => {
+    if (autoFocus) refs.current[0]?.focus();
+  }, [autoFocus]);
+
+  const setAt = (i: number, ch: string) => {
+    const next = digits.slice();
+    next[i] = ch;
+    const joined = next.join('').replace(/\D/g, '').slice(0, 6);
+    onChange(joined);
+    if (joined.length === 6) onComplete?.(joined);
+    return joined;
+  };
+
+  const handleChange = (i: number, raw: string) => {
+    const only = raw.replace(/\D/g, '');
+    if (!only) { setAt(i, ''); return; }
+    // If the user typed/auto-filled more than one digit, distribute forward.
+    if (only.length > 1) {
+      const next = digits.slice();
+      let j = i;
+      for (const ch of only.split('')) {
+        if (j > 5) break;
+        next[j] = ch;
+        j++;
+      }
+      const joined = next.join('').replace(/\D/g, '').slice(0, 6);
+      onChange(joined);
+      if (joined.length === 6) onComplete?.(joined);
+      refs.current[Math.min(j, 5)]?.focus();
+      return;
+    }
+    setAt(i, only);
+    if (i < 5) refs.current[i + 1]?.focus();
+  };
+
+  const handleKeyDown = (i: number, e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Backspace') {
+      if (digits[i]) {
+        setAt(i, '');
+      } else if (i > 0) {
+        refs.current[i - 1]?.focus();
+        setAt(i - 1, '');
+      }
+    } else if (e.key === 'ArrowLeft' && i > 0) {
+      refs.current[i - 1]?.focus();
+    } else if (e.key === 'ArrowRight' && i < 5) {
+      refs.current[i + 1]?.focus();
+    }
+  };
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    e.preventDefault();
+    const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
+    if (!pasted) return;
+    onChange(pasted);
+    if (pasted.length === 6) onComplete?.(pasted);
+    refs.current[Math.min(pasted.length, 5)]?.focus();
+  };
+
+  return (
+    <div className="flex items-center justify-between gap-2 sm:gap-2.5">
+      {digits.map((d, i) => (
+        <input
+          key={i}
+          ref={(el) => { refs.current[i] = el; }}
+          type="text"
+          inputMode="numeric"
+          pattern="[0-9]*"
+          maxLength={1}
+          value={d}
+          disabled={disabled}
+          onChange={(e) => handleChange(i, e.target.value)}
+          onKeyDown={(e) => handleKeyDown(i, e)}
+          onPaste={handlePaste}
+          onFocus={(e) => e.target.select()}
+          autoComplete={i === 0 ? 'one-time-code' : 'off'}
+          aria-label={`Digit ${i + 1}`}
+          className="flex-1 min-w-0 h-14 sm:h-16 text-center text-xl sm:text-2xl font-semibold font-mono
+                     rounded-xl bg-exchange-card border border-exchange-border/70 text-exchange-text
+                     outline-none transition-colors focus:border-exchange-yellow
+                     focus:ring-2 focus:ring-exchange-yellow/30 disabled:opacity-50"
+        />
+      ))}
+    </div>
   );
 }
 

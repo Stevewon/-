@@ -69,10 +69,22 @@ interface Props {
  * form still submits — the server side likewise fails open when its secret
  * is not configured.
  */
+// Cloudflare's official Turnstile TEST site key. It ALWAYS renders a visible
+// managed widget that immediately passes — used so the bot-check is visible on
+// the live site even before production keys are provisioned. Swap in a real key
+// via VITE_TURNSTILE_SITE_KEY (Cloudflare Turnstile dashboard) for real bot
+// enforcement; pair it with TURNSTILE_SECRET + TURNSTILE_ENFORCE='strict' on the
+// server. The matching TEST secret (1x0000000000000000000000000000000AA) makes
+// the server verification pass in this demo mode.
+const TURNSTILE_TEST_SITE_KEY = '1x00000000000000000000AA';
+
 export default function Turnstile({ onToken, theme = 'dark', size = 'flexible', className }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const widgetIdRef = useRef<string | null>(null);
-  const siteKey = (import.meta as any).env?.VITE_TURNSTILE_SITE_KEY as string | undefined;
+  const envKey = (import.meta as any).env?.VITE_TURNSTILE_SITE_KEY as string | undefined;
+  // Fall back to the always-visible TEST key so the bot check is shown even
+  // when no production key is configured.
+  const siteKey = envKey && envKey.trim() ? envKey.trim() : TURNSTILE_TEST_SITE_KEY;
 
   useEffect(() => {
     // Fail-open: no site key configured → immediately signal empty token so
@@ -91,6 +103,7 @@ export default function Turnstile({ onToken, theme = 'dark', size = 'flexible', 
           sitekey: siteKey,
           theme,
           size,
+          appearance: 'always',
           callback: (token: string) => onToken(token),
           'expired-callback': () => onToken(''),
           'error-callback': () => onToken(''),
