@@ -885,20 +885,21 @@ export default function LoginPage() {
           </div>
         )}
 
-        {/* Cloudflare Turnstile bot protection.
-             The widget runs INVISIBLY in the background: it still tries to
-             obtain a verification token (used automatically once server-side
-             enforcement TURNSTILE_ENFORCE=strict is re-enabled), but it never
-             renders a visible box or a "Troubleshoot" link, so the login form
-             stays clean whether or not the site key has propagated. */}
-        <div aria-hidden className="hidden">
-          <Turnstile
-            onToken={setTurnstileToken}
-            onError={setTurnstileErrored}
-            theme="dark"
-            size="flexible"
-          />
-        </div>
+        {/* Cloudflare Turnstile bot protection — shown like other exchanges.
+             The widget verifies the visitor is a human and yields a token that
+             is sent with the login request. If the widget errors (e.g. site key
+             not yet propagated) it hides itself and the component fails open, so
+             the form never shows a broken "Troubleshoot" box. */}
+        {!turnstileErrored && (
+          <div className="pt-1">
+            <Turnstile
+              onToken={setTurnstileToken}
+              onError={setTurnstileErrored}
+              theme="dark"
+              size="flexible"
+            />
+          </div>
+        )}
 
         {/* Desktop / tablet inline submit */}
         <button
