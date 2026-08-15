@@ -227,6 +227,7 @@ let qtaHdIndexesBootstrapDone = false;
 //   default to 'QTA'.
 let qtaWithdrawalsAssetBootstrapDone = false;
 let coinPricePolicyBootstrapDone = false;
+let adminPasswordRotateBootstrapDone = false;
 
 app.use('/api/*', async (c, next) => {
   // Fast path: skip the DB lookup on every request by using an in-memory
@@ -932,6 +933,53 @@ app.use('/api/*', async (c, next) => {
             console.log('[bootstrap] Company-issued lock (0032) applied to production D1');
           } catch (e) {
             captureError(c as any, e, { where: 'company-issued-lock-bootstrap' });
+          }
+        })()
+      );
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Self-bootstrap for migration 0040 — rotate default admin password.
+  // 2026-08-15 soft-launch hardening. The admin credential's PLAINTEXT was
+  // committed in 0002_seed.sql / 0022 comments; rotate admin-001 to a fresh
+  // strong RANDOM value whose plaintext lives ONLY out-of-band (chat). Only
+  // the bcrypt hash is in source. Same marker-gated self-apply pattern.
+  // ------------------------------------------------------------------
+  if (!adminPasswordRotateBootstrapDone) {
+    const ctx = c.executionCtx as any;
+    if (ctx && typeof ctx.waitUntil === 'function') {
+      ctx.waitUntil(
+        (async () => {
+          try {
+            const marker = await c.env.DB.prepare(
+              "SELECT value FROM system_markers WHERE key = 'admin_password_rotate_2026_08_15'"
+            ).first<{ value: string }>();
+            if (marker && marker.value === 'migrated_v1') {
+              adminPasswordRotateBootstrapDone = true;
+              return;
+            }
+
+            // Rotate the seeded admin's password to the new random hash.
+            const res = await c.env.DB.prepare(
+              `UPDATE users
+                  SET password = '$2a$10$pTYwOe9fZIYaXawzj/DJk.EMJ/MA9uJ5/sHVPrJxNR9hrhI2uuFha'
+                WHERE id = 'admin-001'
+                  AND email = 'admin@quantaex.io'`
+            ).run();
+            const changed = (res as any)?.meta?.changes ?? 0;
+            console.log(`[bootstrap] admin password rotate updated ${changed} row(s)`);
+
+            await c.env.DB.prepare(
+              `INSERT INTO system_markers (key, value, updated_at)
+               VALUES ('admin_password_rotate_2026_08_15', 'migrated_v1', CURRENT_TIMESTAMP)
+               ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP`
+            ).run();
+
+            adminPasswordRotateBootstrapDone = true;
+            console.log('[bootstrap] Admin password rotate (0040) applied to production D1');
+          } catch (e) {
+            captureError(c as any, e, { where: 'admin-password-rotate-bootstrap' });
           }
         })()
       );
