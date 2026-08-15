@@ -375,6 +375,27 @@ export default function LoginPage() {
     }
   };
 
+  // Keep the freshest Turnstile token in a ref so waitForTurnstile() can poll
+  // it without stale-closure issues.
+  const turnstileTokenRef = useRef('');
+  useEffect(() => { turnstileTokenRef.current = turnstileToken; }, [turnstileToken]);
+
+  // When bot-check enforcement is ON, the server rejects logins that arrive
+  // without a Turnstile token. The Managed widget usually issues a token within
+  // a second for real users, but a fast click can beat it. This waits up to
+  // ~4s for the token before giving up. If the widget errored out entirely
+  // (turnstileErrored) we don't wait — the server fails open in that case.
+  const waitForTurnstile = async (): Promise<string> => {
+    if (turnstileTokenRef.current) return turnstileTokenRef.current;
+    if (turnstileErrored) return '';
+    for (let i = 0; i < 20; i++) {
+      await new Promise((r) => setTimeout(r, 200));
+      if (turnstileTokenRef.current) return turnstileTokenRef.current;
+      if (turnstileErrored) return '';
+    }
+    return turnstileTokenRef.current;
+  };
+
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
   const canSubmit =
     authMethod === 'otp'
@@ -396,8 +417,9 @@ export default function LoginPage() {
     if (!emailValid) return setError(t('auth.invalidEmail'));
     setOtpSending(true);
     try {
+      const tsToken = await waitForTurnstile();
       const payload: any = { email };
-      if (turnstileToken) payload.turnstile_token = turnstileToken;
+      if (tsToken) payload.turnstile_token = tsToken;
       const res = await api.post('/auth/login-otp/request', payload);
       setOtpSent(true);
       setOtpResendIn(30);
@@ -410,7 +432,13 @@ export default function LoginPage() {
           : t('auth.otpSent')
       );
     } catch (err: any) {
-      setError(err.response?.data?.error || t('auth.otpSendFailed'));
+      const data = err.response?.data;
+      if (data?.code && String(data.code).startsWith('TURNSTILE')) {
+        setTurnstileToken('');
+        setError(t('auth.botCheckFailed') || 'Please complete the human-verification check and try again.');
+      } else {
+        setError(data?.error || t('auth.otpSendFailed'));
+      }
     } finally {
       setOtpSending(false);
     }
@@ -464,10 +492,11 @@ export default function LoginPage() {
 
     setLoading(true);
     try {
+      const tsToken = await waitForTurnstile();
       const payload: any = { email, password };
       if (needs2fa) payload.totp_code = totp;
       if (pwEmailOtpStep && pwEmailOtp) payload.email_otp = pwEmailOtp;
-      if (turnstileToken) payload.turnstile_token = turnstileToken;
+      if (tsToken) payload.turnstile_token = tsToken;
       const res = await api.post('/auth/login', payload);
       setAuth(res.data.user, res.data.token);
       if (remember) localStorage.setItem('quantaex_last_email', email);
@@ -475,7 +504,15 @@ export default function LoginPage() {
       navigate(redirect);
     } catch (err: any) {
       const data = err.response?.data;
-      if (data?.requires_2fa) {
+      if (
+        data?.code === 'TURNSTILE_TOKEN_MISSING' ||
+        data?.code === 'TURNSTILE_INVALID' ||
+        data?.code === 'TURNSTILE_UNREACHABLE'
+      ) {
+        // Reset the widget so a fresh token is issued, then ask to retry.
+        setTurnstileToken('');
+        setError(t('auth.botCheckFailed') || 'Please complete the human-verification check and try again.');
+      } else if (data?.requires_2fa) {
         setNeeds2fa(true);
         setTotp('');
         setError('');
@@ -529,15 +566,22 @@ export default function LoginPage() {
     setLoading(true);
     setError('');
     try {
+      const tsToken = await waitForTurnstile();
       const payload: any = { email, password, totp_code: totpVal };
-      if (turnstileToken) payload.turnstile_token = turnstileToken;
+      if (tsToken) payload.turnstile_token = tsToken;
       const res = await api.post('/auth/login', payload);
       setAuth(res.data.user, res.data.token);
       if (remember) localStorage.setItem('quantaex_last_email', email);
       else localStorage.removeItem('quantaex_last_email');
       navigate(redirect);
     } catch (err: any) {
-      setError(err.response?.data?.error || t('auth.loginFailed'));
+      const data = err.response?.data;
+      if (data?.code && String(data.code).startsWith('TURNSTILE')) {
+        setTurnstileToken('');
+        setError(t('auth.botCheckFailed') || 'Please complete the human-verification check and try again.');
+      } else {
+        setError(data?.error || t('auth.loginFailed'));
+      }
     } finally {
       setLoading(false);
     }
@@ -550,9 +594,10 @@ export default function LoginPage() {
     setLoading(true);
     setError('');
     try {
+      const tsToken = await waitForTurnstile();
       const payload: any = { email, password, email_otp: otpVal };
       if (needs2fa && totp) payload.totp_code = totp;
-      if (turnstileToken) payload.turnstile_token = turnstileToken;
+      if (tsToken) payload.turnstile_token = tsToken;
       const res = await api.post('/auth/login', payload);
       setAuth(res.data.user, res.data.token);
       if (remember) localStorage.setItem('quantaex_last_email', email);
@@ -560,7 +605,10 @@ export default function LoginPage() {
       navigate(redirect);
     } catch (err: any) {
       const data = err.response?.data;
-      if (data?.requires_email_otp) {
+      if (data?.code && String(data.code).startsWith('TURNSTILE')) {
+        setTurnstileToken('');
+        setError(t('auth.botCheckFailed') || 'Please complete the human-verification check and try again.');
+      } else if (data?.requires_email_otp) {
         setPwEmailOtp('');
         setError(data?.error || t('auth.loginFailed'));
       } else {

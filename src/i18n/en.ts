@@ -1102,6 +1102,7 @@ const en = {
   'auth.securityVerification': 'Security Verification',
   'auth.googleAuthenticator': 'Google Authenticator',
   'auth.emailCodeLabel': 'Email verification code',
+  'auth.botCheckFailed': 'Please complete the human-verification check and try again.',
   'auth.botCheck': 'Security check (bot protection)',
   'auth.bonusHeadline': 'Welcome Bonus: 100 QX',
   'auth.bonusSubline': 'Credited to your wallet instantly on sign-up',

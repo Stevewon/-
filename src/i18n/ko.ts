@@ -1093,6 +1093,7 @@ const ko = {
   'auth.securityVerification': '보안 인증',
   'auth.googleAuthenticator': 'Google Authenticator',
   'auth.emailCodeLabel': '이메일 인증 코드',
+  'auth.botCheckFailed': '사람 인증(로봇 체크)을 완료한 뒤 다시 시도해 주세요.',
   'auth.botCheck': '보안 확인 (봇 방지)',
   'auth.bonusHeadline': '가입 즉시 100 QX 지급',
   'auth.bonusSubline': '회원가입 완료 시 지갑에 바로 입금됩니다',
