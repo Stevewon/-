@@ -11,6 +11,8 @@ import {
   tmplKycApproved,
   tmplKycRejected,
   fireAndForgetMail,
+  sendMail,
+  templateBasic,
 } from '../utils/mailer';
 
 // Small helper: look up an email by user id, returning null on any failure.
@@ -1306,6 +1308,148 @@ app.get('/system-health', async (c) => {
   probes.checked_at = new Date().toISOString();
 
   return c.json(probes);
+});
+
+// ============================================================================
+// POST /admin/mail-test — soft-launch email deliverability self-test (item ⑪).
+// ----------------------------------------------------------------------------
+// Sends a real transactional email through the exact same sendMail() path the
+// login-OTP / verification flows use, and reports which provider actually
+// accepted it (resend | mailchannels | dev). This is the only way to verify
+// end-to-end email delivery WITHOUT going through a geo-blocked signup flow.
+//
+// Body: { to?: string }  — defaults to the calling admin's own email.
+// Response: { ok, provider, sent, to, config } — awaited (NOT fire-and-forget)
+// so the admin sees the true result. Provider config presence is surfaced so
+// the operator can confirm RESEND_API_KEY / MAIL_FROM are wired.
+// ============================================================================
+app.post('/mail-test', async (c) => {
+  const admin = c.get('user') as any;
+  let body: any = {};
+  try { body = await c.req.json(); } catch { /* empty body ok */ }
+
+  // Resolve recipient: explicit `to`, else the admin's own email on file.
+  let to = (body?.to || '').toString().trim().toLowerCase();
+  if (!to) {
+    const row = await c.env.DB.prepare('SELECT email FROM users WHERE id = ?')
+      .bind(admin?.id).first<{ email: string }>();
+    to = (row?.email || '').toLowerCase();
+  }
+  if (!to || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+    return c.json({ ok: false, error: 'A valid recipient email is required' }, 400);
+  }
+
+  const env = c.env as any;
+  const config = {
+    resend_api_key: !!env.RESEND_API_KEY,          // paid provider wired?
+    mail_from: env.MAIL_FROM || 'QuantaEX <no-reply@quantaex.io>',
+    mail_dev_noop: env.MAIL_DEV_NOOP === '1',      // true → sends are skipped
+  };
+
+  const when = new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+  const html = templateBasic(
+    'QuantaEX email deliverability test',
+    `<p>This is a test email triggered from the admin panel to confirm that
+      transactional email delivery is working before soft-launch.</p>
+     <p style="margin-top:12px">If you received this, login OTP codes,
+      verification links, and security alerts will reach your users.</p>
+     <div style="margin-top:16px;padding:12px;background:#0b1017;border:1px solid #1f2a37;border-radius:8px;font-size:12px;color:#8ea0b5">
+       <strong>Sent at:</strong> ${when}
+     </div>`,
+  );
+  const text = `QuantaEX email deliverability test.\nSent at: ${when}\nIf you received this, transactional email is working.`;
+
+  // Awaited on purpose — the admin needs the real provider result.
+  const result = await sendMail(env, {
+    to,
+    subject: 'QuantaEX — email deliverability test',
+    html,
+    text,
+  });
+
+  await logAdminAction(c, {
+    action: 'mail_test',
+    targetType: 'system',
+    targetId: to,
+    payload: { provider: result.provider, sent: result.sent },
+  }).catch(() => {});
+
+  return c.json({
+    ok: result.sent,
+    provider: result.provider,   // 'resend' | 'mailchannels' | 'dev'
+    sent: result.sent,
+    to,
+    error: result.error || null,
+    config,
+    hint: result.sent
+      ? 'Email accepted by provider. Check the inbox (and spam) to confirm actual delivery.'
+      : (config.mail_dev_noop
+          ? 'MAIL_DEV_NOOP=1 is set — sends are disabled. Unset it in production.'
+          : 'Provider rejected the send. Check RESEND_API_KEY and that the sending domain (quantaex.io) has SPF/DKIM verified.'),
+  });
+});
+
+// ============================================================================
+// GET /admin/db-export — on-demand logical backup of core tables (item ⑫).
+// ----------------------------------------------------------------------------
+// Streams a JSON snapshot of the operationally-critical tables so an operator
+// can take a manual backup from the admin panel at any time (in addition to
+// the recommended `wrangler d1 export` CLI job). Kept read-only and bounded:
+// only whitelisted tables, capped rows per table, so it can't be abused to
+// dump unbounded data or hammer D1.
+//
+// This is a convenience/safety net for soft-launch (low data volume). For
+// production-scale, schedule `wrangler d1 export quantaex-production --remote`
+// off-platform — see BACKUP.md.
+// ============================================================================
+app.get('/db-export', async (c) => {
+  const admin = c.get('user') as any;
+  // Whitelist of core tables to include, with a hard per-table row cap.
+  const TABLES = [
+    'users', 'wallets', 'orders', 'trades', 'withdrawals',
+    'qta_withdrawals', 'deposits', 'coins', 'notices',
+    'admin_audit_logs', 'system_markers', 'user_consents',
+  ];
+  const PER_TABLE_CAP = 5000;
+
+  const snapshot: Record<string, any> = {
+    meta: {
+      generated_at: new Date().toISOString(),
+      generated_by: admin?.email || admin?.id || 'admin',
+      db: 'quantaex-production',
+      per_table_cap: PER_TABLE_CAP,
+      note: 'Logical JSON snapshot. For full/consistent backups use `wrangler d1 export`.',
+    },
+    tables: {},
+  };
+
+  for (const t of TABLES) {
+    try {
+      const { results } = await c.env.DB.prepare(
+        `SELECT * FROM ${t} LIMIT ${PER_TABLE_CAP}`
+      ).all<any>();
+      const rows = results || [];
+      // Redact password hashes even from admins — a backup file shouldn't
+      // carry credential material around.
+      if (t === 'users') {
+        for (const r of rows) if (r && 'password' in r) r.password = '[REDACTED]';
+      }
+      snapshot.tables[t] = { rows: rows.length, capped: rows.length >= PER_TABLE_CAP, data: rows };
+    } catch (e: any) {
+      snapshot.tables[t] = { error: String(e?.message || e).slice(0, 200) };
+    }
+  }
+
+  await logAdminAction(c, {
+    action: 'db_export',
+    targetType: 'system',
+    targetId: 'snapshot',
+    payload: { tables: Object.keys(snapshot.tables).length },
+  }).catch(() => {});
+
+  const stamp = new Date().toISOString().slice(0, 10);
+  c.header('Content-Disposition', `attachment; filename="quantaex_snapshot_${stamp}.json"`);
+  return c.json(snapshot);
 });
 
 // GET /admin/consents/:user_id — regulatory / audit view of a single user's
