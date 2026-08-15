@@ -1191,7 +1191,7 @@ const ko = {
   // Login hero
   'auth.heroLoginBadge': '실시간 시세 · 24/7',
   'auth.heroLoginTitleA': '돌아오신 것을 환영합니다,',
-  'auth.heroLoginTitleB': '세상에서 가장 빠른 거래소.',
+  'auth.heroLoginTitleB': '세상에서 가장 안전한 거래소.',
   'auth.heroLoginDesc':
     '멈췄던 곳에서 바로 이어가세요. 포트폴리오 확인, 주문 접수, 시세 추적을 한 곳에서.',
   'auth.heroLoginBenefit1Title': '실시간 마켓',

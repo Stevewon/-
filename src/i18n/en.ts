@@ -1200,7 +1200,7 @@ const en = {
   // Login hero
   'auth.heroLoginBadge': 'LIVE MARKETS · 24/7',
   'auth.heroLoginTitleA': 'Welcome back',
-  'auth.heroLoginTitleB': "to the world's fastest exchange.",
+  'auth.heroLoginTitleB': "to the world's most secure exchange.",
   'auth.heroLoginDesc':
     'Pick up where you left off. Check your portfolio, place orders and track the markets in one place.',
   'auth.heroLoginBenefit1Title': 'Real-time markets',
