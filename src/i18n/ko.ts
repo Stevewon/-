@@ -1092,6 +1092,7 @@ const ko = {
   'auth.otpDigits': '6자리 숫자 코드를 입력해 주세요',
   'auth.securityVerification': '보안 인증',
   'auth.googleAuthenticator': 'Google Authenticator',
+  'auth.emailCodeLabel': '이메일 인증 코드',
   'auth.botCheck': '보안 확인 (봇 방지)',
   'auth.bonusHeadline': '가입 즉시 100 QX 지급',
   'auth.bonusSubline': '회원가입 완료 시 지갑에 바로 입금됩니다',

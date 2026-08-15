@@ -160,6 +160,11 @@ export default function LoginPage() {
 
   const [needs2fa, setNeeds2fa] = useState(false);
   const [totp, setTotp] = useState('');
+  // Email-OTP step-up for PASSWORD logins (accounts without an authenticator
+  // app must still confirm a one-time code emailed to them — Bybit-style).
+  const [pwEmailOtpStep, setPwEmailOtpStep] = useState(false);
+  const [pwEmailOtp, setPwEmailOtp] = useState('');
+  const [pwOtpNotice, setPwOtpNotice] = useState('');
   // Cloudflare Turnstile token 2014 empty when unconfigured (dev/preview).
   const [turnstileToken, setTurnstileToken] = useState('');
   const [turnstileErrored, setTurnstileErrored] = useState(false);
@@ -186,8 +191,20 @@ export default function LoginPage() {
     setOtpNotice('');
     setOtpResendIn(0);
     setNeeds2fa(false);
+    setPwEmailOtpStep(false);
+    setPwEmailOtp('');
+    setPwOtpNotice('');
     setError('');
   }, [authMethod]);
+
+  // Editing the email or password after a step-up challenge started cancels it
+  // (the code was tied to those credentials).
+  useEffect(() => {
+    setPwEmailOtpStep(false);
+    setPwEmailOtp('');
+    setPwOtpNotice('');
+    setNeeds2fa(false);
+  }, [email, password]);
 
   // ---- Google OAuth state ----
   const [googleLoading, setGoogleLoading] = useState(false);
@@ -366,7 +383,11 @@ export default function LoginPage() {
         !otpSent
         ? emailValid && !loading && !otpSending
         : emailValid && otpCode.length === 6 && !loading && (!needs2fa || totp.length === 6)
-      : emailValid && password.length >= 1 && !loading && (!needs2fa || totp.length === 6);
+      : emailValid &&
+        password.length >= 1 &&
+        !loading &&
+        (!needs2fa || totp.length === 6) &&
+        (!pwEmailOtpStep || pwEmailOtp.length === 6);
 
   // ---- Send / resend the email OTP code ----
   const requestOtp = async () => {
@@ -437,11 +458,15 @@ export default function LoginPage() {
     if (!password) return setError(t('auth.enterPassword'));
     if (needs2fa && !/^\d{6}$/.test(totp))
       return setError(t('auth.totpDigits') || 'Enter 6-digit code');
+    // Email-OTP step-up: once the challenge is showing, require a full code.
+    if (pwEmailOtpStep && !/^\d{6}$/.test(pwEmailOtp))
+      return setError(t('auth.otpDigits'));
 
     setLoading(true);
     try {
       const payload: any = { email, password };
       if (needs2fa) payload.totp_code = totp;
+      if (pwEmailOtpStep && pwEmailOtp) payload.email_otp = pwEmailOtp;
       if (turnstileToken) payload.turnstile_token = turnstileToken;
       const res = await api.post('/auth/login', payload);
       setAuth(res.data.user, res.data.token);
@@ -454,6 +479,21 @@ export default function LoginPage() {
         setNeeds2fa(true);
         setTotp('');
         setError('');
+      } else if (data?.requires_email_otp) {
+        // Password was accepted; now the emailed code is required.
+        setPwEmailOtpStep(true);
+        setPwEmailOtp('');
+        if (data?.error) {
+          // A code-validation error (wrong/expired) — show it.
+          setError(data.error);
+        } else {
+          setError('');
+          setPwOtpNotice(
+            data?.dev_code
+              ? `${t('auth.otpSent')} (dev: ${data.dev_code})`
+              : t('auth.otpSent'),
+          );
+        }
       } else {
         setError(data?.error || t('auth.loginFailed'));
       }
@@ -498,6 +538,34 @@ export default function LoginPage() {
       navigate(redirect);
     } catch (err: any) {
       setError(err.response?.data?.error || t('auth.loginFailed'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Auto-submit the password login once the emailed step-up code is complete.
+  const submitPwEmailOtp = async (code?: string) => {
+    const otpVal = code ?? pwEmailOtp;
+    if (!/^\d{6}$/.test(otpVal) || loading) return;
+    setLoading(true);
+    setError('');
+    try {
+      const payload: any = { email, password, email_otp: otpVal };
+      if (needs2fa && totp) payload.totp_code = totp;
+      if (turnstileToken) payload.turnstile_token = turnstileToken;
+      const res = await api.post('/auth/login', payload);
+      setAuth(res.data.user, res.data.token);
+      if (remember) localStorage.setItem('quantaex_last_email', email);
+      else localStorage.removeItem('quantaex_last_email');
+      navigate(redirect);
+    } catch (err: any) {
+      const data = err.response?.data;
+      if (data?.requires_email_otp) {
+        setPwEmailOtp('');
+        setError(data?.error || t('auth.loginFailed'));
+      } else {
+        setError(data?.error || t('auth.loginFailed'));
+      }
     } finally {
       setLoading(false);
     }
@@ -777,6 +845,42 @@ export default function LoginPage() {
             <p className="mt-3 text-[12px] text-exchange-text-third">
               {t('auth.twoFactorDesc') ||
                 'Enter the 6-digit code from your authenticator app.'}
+            </p>
+          </div>
+        )}
+
+        {/* Email-OTP step-up for PASSWORD logins — Bybit-style. Shown after
+             the server responds { requires_email_otp: true }, i.e. the password
+             was correct but the account has no authenticator app, so ownership
+             of the inbox must still be confirmed with a one-time code. */}
+        {authMethod === 'password' && pwEmailOtpStep && (
+          <div className="bg-exchange-card border border-exchange-border/70 rounded-xl p-4 sm:p-5">
+            <div className="flex items-center gap-2 mb-1">
+              <ShieldCheck size={18} className="text-exchange-yellow" />
+              <p className="text-[15px] font-semibold text-exchange-text">
+                {t('auth.securityVerification') || 'Security Verification'}
+              </p>
+            </div>
+            <div className="flex items-center gap-1.5 mb-4 text-exchange-text-secondary">
+              <Mail size={14} />
+              <span className="text-[13px]">
+                {t('auth.emailCodeLabel') || 'Email verification code'}
+              </span>
+            </div>
+            <OtpBoxes
+              value={pwEmailOtp}
+              onChange={setPwEmailOtp}
+              onComplete={(code) => submitPwEmailOtp(code)}
+              autoFocus
+              disabled={loading}
+            />
+            {pwOtpNotice && (
+              <p className="mt-3 text-[12px] text-exchange-buy flex items-center gap-1">
+                <Check size={12} /> {pwOtpNotice}
+              </p>
+            )}
+            <p className="mt-2 text-[12px] text-exchange-text-third">
+              {t('auth.otpHint')}
             </p>
           </div>
         )}

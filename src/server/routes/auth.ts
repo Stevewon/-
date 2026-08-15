@@ -495,6 +495,7 @@ app.post('/login', rlLogin, turnstile, async (c) => {
   const email = (body.email || '').toString().trim().toLowerCase();
   const password = (body.password || '').toString();
   const totpCode = (body.totp_code || '').toString().trim();
+  const emailOtp = (body.email_otp || '').toString().trim();
   if (!email || !password) return c.json({ error: 'Email and password required' }, 400);
 
   const user = await c.env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(email).first() as any;
@@ -508,8 +509,10 @@ app.post('/login', rlLogin, turnstile, async (c) => {
     return c.json({ error: 'Account disabled' }, 403);
   }
 
-  // ---- 2FA challenge ----
-  if (user.two_factor_enabled && user.two_factor_secret) {
+  const hasAuthenticator = !!(user.two_factor_enabled && user.two_factor_secret);
+
+  if (hasAuthenticator) {
+    // ---- Authenticator (TOTP) 2FA challenge ----
     if (!totpCode) {
       // Client should re-submit with totp_code
       return c.json({ requires_2fa: true, message: '2FA code required' }, 401);
@@ -520,6 +523,71 @@ app.post('/login', rlLogin, turnstile, async (c) => {
       await recordLogin(c, user.id, 'failed', 'bad_totp');
       return c.json({ error: 'Invalid 2FA code' }, 401);
     }
+  } else {
+    // ---- Email OTP step-up (Bybit-style) ----
+    // Accounts without an authenticator app must still confirm ownership of
+    // the inbox with a one-time email code. Password alone is NOT enough.
+    if (!emailOtp) {
+      // First submit: password is correct → issue an email code and ask the
+      // client to collect it. Never reveal whether the password was right via
+      // a different status: we already validated it above.
+      let issue: { sent: boolean; cooldown?: boolean; dev_code?: string };
+      try {
+        issue = await issueLoginOtp(c, { id: user.id, email: user.email });
+      } catch (e) {
+        console.error('[login] email-otp issue failed:', e);
+        return c.json({ error: 'Service temporarily unavailable' }, 500);
+      }
+      return c.json(
+        {
+          requires_email_otp: true,
+          message: 'Enter the code we emailed you',
+          sent: issue.sent,
+          ...(issue.cooldown ? { cooldown: true } : {}),
+          ...(issue.dev_code ? { dev_code: issue.dev_code } : {}),
+        },
+        401,
+      );
+    }
+
+    // Second submit: validate the email code (mirrors /login-otp/verify).
+    if (!/^\d{6}$/.test(emailOtp)) {
+      return c.json({ requires_email_otp: true, error: 'Enter the 6-digit code' }, 401);
+    }
+    await ensureLoginOtpTable(c);
+    const row = await c.env.DB.prepare(
+      `SELECT id, code_hash, expires_at, used_at, attempts
+       FROM login_otps WHERE email = ? AND used_at IS NULL
+       ORDER BY created_at DESC LIMIT 1`
+    ).bind(email).first<any>();
+
+    if (!row) {
+      return c.json({ requires_email_otp: true, error: 'Code expired. Please request a new one.' }, 401);
+    }
+    if (new Date(row.expires_at + 'Z').getTime() < Date.now()) {
+      return c.json({ requires_email_otp: true, error: 'Code expired. Please request a new one.' }, 401);
+    }
+    if (row.attempts >= 5) {
+      try {
+        await c.env.DB.prepare(`UPDATE login_otps SET used_at = CURRENT_TIMESTAMP WHERE id = ?`)
+          .bind(row.id).run();
+      } catch { /* ignore */ }
+      return c.json({ requires_email_otp: true, error: 'Too many attempts. Please request a new code.' }, 429);
+    }
+    const emailOtpHash = await sha256Hex(emailOtp);
+    if (emailOtpHash !== row.code_hash) {
+      try {
+        await c.env.DB.prepare(`UPDATE login_otps SET attempts = attempts + 1 WHERE id = ?`)
+          .bind(row.id).run();
+      } catch { /* ignore */ }
+      await recordLogin(c, user.id, 'failed', 'bad_otp');
+      return c.json({ requires_email_otp: true, error: 'Invalid or expired code' }, 401);
+    }
+    // Consume the code (single-use).
+    try {
+      await c.env.DB.prepare(`UPDATE login_otps SET used_at = CURRENT_TIMESTAMP WHERE id = ?`)
+        .bind(row.id).run();
+    } catch { /* ignore */ }
   }
 
   await recordLogin(c, user.id, 'success');
@@ -595,6 +663,69 @@ function randomOtpCode(): string {
   return (buf[0] % 1_000_000).toString().padStart(6, '0');
 }
 
+/**
+ * Issue (and email) a fresh 6-digit login OTP for an active user.
+ * Shared by /login-otp/request (passwordless) and the /login email-OTP
+ * step-up. Applies the same 30s anti-spam throttle and single-active-code
+ * invalidation. Returns whether a code was sent and, in dev/preview (no mail
+ * provider), the raw code so the flow is still testable.
+ */
+async function issueLoginOtp(
+  c: any,
+  user: { id: string; email: string },
+): Promise<{ sent: boolean; cooldown?: boolean; dev_code?: string }> {
+  await ensureLoginOtpTable(c);
+
+  // Throttle: reuse the still-valid code if one was issued < 30s ago.
+  try {
+    const recent = await c.env.DB.prepare(
+      `SELECT created_at FROM login_otps
+       WHERE email = ? AND used_at IS NULL
+       ORDER BY created_at DESC LIMIT 1`
+    ).bind(user.email).first<{ created_at: string }>();
+    if (recent && Date.now() - new Date(recent.created_at + 'Z').getTime() < 30 * 1000) {
+      return { sent: true, cooldown: true };
+    }
+  } catch { /* table brand new — no rows yet */ }
+
+  const code = randomOtpCode();
+  const codeHash = await sha256Hex(code);
+  const expires = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 min
+  const ip =
+    c.req.header('cf-connecting-ip') ||
+    c.req.header('x-forwarded-for') ||
+    'unknown';
+
+  // Invalidate any older unused codes so only the newest works.
+  try {
+    await c.env.DB.prepare(
+      `UPDATE login_otps SET used_at = CURRENT_TIMESTAMP
+       WHERE email = ? AND used_at IS NULL`
+    ).bind(user.email).run();
+  } catch { /* ignore */ }
+
+  await c.env.DB.prepare(
+    `INSERT INTO login_otps (id, user_id, email, code_hash, expires_at, ip_address)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).bind(uuid(), user.id, user.email, codeHash, expires, ip).run();
+
+  const mail = await sendMail(c.env as any, {
+    to: user.email,
+    subject: `${code} is your QuantaEX login code`,
+    html: templateBasic(
+      'Your login code',
+      `Use the one-time code below to sign in to QuantaEX. It expires in 10 minutes.
+       <div style="margin:20px 0;text-align:center">
+         <span style="display:inline-block;font-size:34px;font-weight:700;letter-spacing:10px;color:#f0b90b;font-family:monospace">${code}</span>
+       </div>
+       Never share this code with anyone. QuantaEX staff will never ask for it.`,
+    ),
+    text: `Your QuantaEX login code is ${code}. It expires in 10 minutes. Never share this code.`,
+  });
+
+  return { sent: mail.sent, ...(mail.sent ? {} : { dev_code: code }) };
+}
+
 app.post('/login-otp/request', rlOtpReq, turnstile, async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const email = (body.email || '').toString().trim().toLowerCase();
@@ -611,65 +742,20 @@ app.post('/login-otp/request', rlOtpReq, turnstile, async (c) => {
   // Always 200 to avoid user-enumeration. Only send when the account exists
   // and is active.
   if (user && user.is_active) {
-    // Throttle: refuse if a still-valid code was issued < 30s ago (anti-spam).
     try {
-      const recent = await c.env.DB.prepare(
-        `SELECT created_at FROM login_otps
-         WHERE email = ? AND used_at IS NULL
-         ORDER BY created_at DESC LIMIT 1`
-      ).bind(email).first<{ created_at: string }>();
-      if (recent && Date.now() - new Date(recent.created_at + 'Z').getTime() < 30 * 1000) {
-        return c.json({ ok: true, message: 'Code already sent', sent: true, cooldown: true });
-      }
-    } catch { /* table brand new — no rows yet */ }
-
-    const code = randomOtpCode();
-    const codeHash = await sha256Hex(code);
-    const expires = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 min
-    const ip =
-      c.req.header('cf-connecting-ip') ||
-      c.req.header('x-forwarded-for') ||
-      'unknown';
-
-    // Invalidate any older unused codes for this email so only the newest works.
-    try {
-      await c.env.DB.prepare(
-        `UPDATE login_otps SET used_at = CURRENT_TIMESTAMP
-         WHERE email = ? AND used_at IS NULL`
-      ).bind(email).run();
-    } catch { /* ignore */ }
-
-    try {
-      await c.env.DB.prepare(
-        `INSERT INTO login_otps (id, user_id, email, code_hash, expires_at, ip_address)
-         VALUES (?, ?, ?, ?, ?, ?)`
-      ).bind(uuid(), user.id, user.email, codeHash, expires, ip).run();
+      const r = await issueLoginOtp(c, user);
+      return c.json({
+        ok: true,
+        message: r.cooldown ? 'Code already sent' : 'Login code sent',
+        sent: r.sent,
+        ...(r.cooldown ? { cooldown: true } : {}),
+        // Only surface the code when the mail provider isn't wired up (dev/preview).
+        ...(r.dev_code ? { dev_code: r.dev_code } : {}),
+      });
     } catch (e) {
-      console.error('[login-otp/request] insert failed:', e);
+      console.error('[login-otp/request] issue failed:', e);
       return c.json({ error: 'Service temporarily unavailable' }, 500);
     }
-
-    const mail = await sendMail(c.env as any, {
-      to: user.email,
-      subject: `${code} is your QuantaEX login code`,
-      html: templateBasic(
-        'Your login code',
-        `Use the one-time code below to sign in to QuantaEX. It expires in 10 minutes.
-         <div style="margin:20px 0;text-align:center">
-           <span style="display:inline-block;font-size:34px;font-weight:700;letter-spacing:10px;color:#f0b90b;font-family:monospace">${code}</span>
-         </div>
-         Never share this code with anyone. QuantaEX staff will never ask for it.`,
-      ),
-      text: `Your QuantaEX login code is ${code}. It expires in 10 minutes. Never share this code.`,
-    });
-
-    return c.json({
-      ok: true,
-      message: 'Login code sent',
-      sent: mail.sent,
-      // Only surface the code when the mail provider isn't wired up (dev/preview).
-      ...(mail.sent ? {} : { dev_code: code }),
-    });
   }
 
   return c.json({ ok: true, message: 'If the account exists, a login code was sent.' });

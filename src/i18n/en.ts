@@ -1101,6 +1101,7 @@ const en = {
   'auth.otpDigits': 'Please enter the 6-digit code',
   'auth.securityVerification': 'Security Verification',
   'auth.googleAuthenticator': 'Google Authenticator',
+  'auth.emailCodeLabel': 'Email verification code',
   'auth.botCheck': 'Security check (bot protection)',
   'auth.bonusHeadline': 'Welcome Bonus: 100 QX',
   'auth.bonusSubline': 'Credited to your wallet instantly on sign-up',
