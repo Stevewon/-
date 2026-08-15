@@ -30,8 +30,14 @@ import {
   suggestFees,
   encodeErc20Transfer,
   sendRawTransaction,
+  getBlockNumber,
   type EvmRpcConfig,
 } from './lib/qta-evm';
+import {
+  listInboundNativeTxs,
+  listInboundTokenTransfers,
+  type ExplorerConfig,
+} from './lib/qta-explorer';
 
 export interface Env {
   DB: D1Database;
@@ -48,6 +54,10 @@ export interface Env {
   QTA_CHAIN_ID?: string;
   QTA_HOT_WALLET_ADDRESS?: string;
   QTA_HD_WALLET_MNEMONIC?: string;
+  // Blockscout v2 explorer base URL (deposit scanner reads normalised tx lists
+  // from here rather than parsing SPHINCS+ blocks directly). Defaults to
+  // https://scan.quantarium.io if unset.
+  QTA_EXPLORER_URL?: string;
   QTA_TOKEN_QX_ADDRESS?: string;
   QTA_TOKEN_QX_DECIMALS?: string;
   QTA_TOKEN_QKEY_ADDRESS?: string;
@@ -327,11 +337,23 @@ export default {
         headers: { 'content-type': 'application/json' },
       });
     }
+    if (url.pathname === '/qta/scan') {
+      const result = await scanQtaDeposits(env);
+      return new Response(JSON.stringify(result), {
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    if (url.pathname === '/qta/tick') {
+      const result = await qtaChainTick(env);
+      return new Response(JSON.stringify(result), {
+        headers: { 'content-type': 'application/json' },
+      });
+    }
     return new Response(
       JSON.stringify({
         service: 'quantaex-cron',
         schedules: ['*/5 * * * * (price-alert tick)', '0 3 * * * (daily D1 backup)'],
-        endpoints: ['/run', '/backup', '/backup/prune', '/qta/withdrawals'],
+        endpoints: ['/run', '/backup', '/backup/prune', '/qta/withdrawals', '/qta/scan', '/qta/tick'],
       }),
       { headers: { 'content-type': 'application/json' } }
     );
@@ -363,6 +385,15 @@ export default {
       checkPriceAlerts(env)
         .then((r) => console.log('[cron] price-alert check:', r))
         .catch((e) => console.error('[cron] price-alert check failed:', e))
+    );
+    // Deposit scanner FIRST (detect new inbound transfers → qta_deposits rows),
+    // then the confirmation tick advances/credits them. They're independent
+    // waitUntil tasks; even if scan and tick interleave across ticks, the
+    // UNIQUE(tx_hash,address) + status-guarded credit keep everything idempotent.
+    ctx.waitUntil(
+      scanQtaDeposits(env)
+        .then((r) => console.log('[cron] qta deposit scan:', r))
+        .catch((e) => console.error('[cron] qta deposit scan failed:', e))
     );
     ctx.waitUntil(
       qtaChainTick(env)
@@ -402,6 +433,158 @@ interface QtaChainState {
   block_time_ms: number;
 }
 
+// ============================================================================
+// Deposit scanner — detect inbound on-chain transfers to user addresses.
+// ----------------------------------------------------------------------------
+// qtaChainTick() only ADVANCES deposits that already exist in qta_deposits
+// (bumping confirmations and crediting the wallet once confirmed). Something
+// has to CREATE those rows in the first place — that's this function.
+//
+// Approach: for every active per-user deposit address (qta_addresses), ask the
+// Blockscout v2 explorer for inbound transfers (native QTA + ERC-20 QX/QKEY)
+// and INSERT any we haven't seen yet as status='detected'. The UNIQUE(tx_hash,
+// address) constraint on qta_deposits makes re-inserts a harmless no-op, so we
+// can safely re-scan recent history every tick without double-crediting.
+//
+// We deliberately do NOT parse SPHINCS+ blocks ourselves — the explorer already
+// normalises every tx (including 0x7f typed txs) into a stable JSON shape.
+//
+// amount is stored as a human-readable decimal string (e.g. "100000"), which
+// is what qtaChainTick adds to wallets.available (a REAL column).
+// ============================================================================
+
+const DEPOSIT_SCAN_ADDRESS_LIMIT = 200; // addresses scanned per tick (bounded)
+
+function weiToDecimalString(wei: string, decimals: number): string {
+  let v: bigint;
+  try {
+    v = BigInt(wei);
+  } catch {
+    return '0';
+  }
+  if (v <= 0n) return '0';
+  const base = 10n ** BigInt(decimals);
+  const intPart = v / base;
+  const frac = v % base;
+  if (frac === 0n) return intPart.toString();
+  const fracStr = frac.toString().padStart(decimals, '0').replace(/0+$/, '');
+  return `${intPart.toString()}.${fracStr}`;
+}
+
+async function scanQtaDeposits(env: Env): Promise<{
+  ok: boolean;
+  addresses: number;
+  detected: number;
+  reason?: string;
+}> {
+  const driver = (env.QTA_CHAIN_DRIVER || 'mock').toLowerCase();
+  if (driver !== 'real') {
+    return { ok: true, addresses: 0, detected: 0, reason: 'driver_not_real' };
+  }
+
+  const network = env.QTA_NETWORK === 'qta-testnet' ? 'qta-testnet' : 'qta-mainnet';
+  const explorerUrl = (env.QTA_EXPLORER_URL || 'https://scan.quantarium.io').replace(/\/+$/, '');
+  const cfg: ExplorerConfig = { baseUrl: explorerUrl };
+
+  // Which ERC-20 contracts we credit, keyed by lowercase contract address.
+  const tokenMap = new Map<string, { symbol: string; decimals: number }>();
+  if (env.QTA_TOKEN_QX_ADDRESS && /^0x[0-9a-fA-F]{40}$/.test(env.QTA_TOKEN_QX_ADDRESS)) {
+    tokenMap.set(env.QTA_TOKEN_QX_ADDRESS.toLowerCase(), {
+      symbol: 'QX',
+      decimals: Number(env.QTA_TOKEN_QX_DECIMALS || '18') || 18,
+    });
+  }
+  if (env.QTA_TOKEN_QKEY_ADDRESS && /^0x[0-9a-fA-F]{40}$/.test(env.QTA_TOKEN_QKEY_ADDRESS)) {
+    tokenMap.set(env.QTA_TOKEN_QKEY_ADDRESS.toLowerCase(), {
+      symbol: 'QKEY',
+      decimals: Number(env.QTA_TOKEN_QKEY_DECIMALS || '18') || 18,
+    });
+  }
+
+  // Load active per-user deposit addresses on this network.
+  const { results: addrs } = await env.DB.prepare(
+    `SELECT user_id, address
+     FROM qta_addresses
+     WHERE network = ? AND is_active = 1
+     LIMIT ?`
+  ).bind(network, DEPOSIT_SCAN_ADDRESS_LIMIT).all<{ user_id: string; address: string }>();
+
+  if (!addrs || addrs.length === 0) {
+    return { ok: true, addresses: 0, detected: 0 };
+  }
+
+  const requiredConfs = network === 'qta-testnet' ? 6 : 12;
+  const nowIso = new Date().toISOString();
+  let detected = 0;
+
+  for (const a of addrs) {
+    const userId = a.user_id;
+    const address = a.address;
+
+    // Gather all inbound transfers (native + tokens) for this address.
+    let inbound: Awaited<ReturnType<typeof listInboundNativeTxs>> = [];
+    try {
+      const [nat, tok] = await Promise.all([
+        listInboundNativeTxs(cfg, address),
+        tokenMap.size > 0
+          ? listInboundTokenTransfers(cfg, address, tokenMap)
+          : Promise.resolve([]),
+      ]);
+      inbound = [...nat, ...tok];
+    } catch (e) {
+      console.warn(`[qta-scan] explorer read failed for ${address}:`, (e as any)?.message || e);
+      continue; // skip this address this tick; retry next tick
+    }
+
+    const stmts: D1PreparedStatement[] = [];
+    for (const t of inbound) {
+      if (!t.ok) continue;             // skip reverted txs
+      if (!t.hash) continue;
+      const amountStr = weiToDecimalString(t.valueWei, t.decimals);
+      if (amountStr === '0') continue; // dust / zero-value
+
+      // INSERT OR IGNORE against UNIQUE(tx_hash, address) — re-scanning the
+      // same tx on later ticks is a harmless no-op (no double credit).
+      stmts.push(
+        env.DB.prepare(
+          `INSERT OR IGNORE INTO qta_deposits
+             (id, user_id, address, tx_hash, block_height, amount, asset,
+              confirmations, required_confs, status, network, raw_meta,
+              created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, 'detected', ?, ?, ?, ?)`
+        ).bind(
+          crypto.randomUUID(),
+          userId,
+          address,
+          t.hash,
+          t.blockNumber,
+          amountStr,
+          t.symbol,
+          requiredConfs,
+          network,
+          JSON.stringify({ from: t.from, symbol: t.symbol, contract: t.tokenContract, ts: t.timestamp }),
+          nowIso,
+          nowIso,
+        ),
+      );
+    }
+
+    if (stmts.length > 0) {
+      const CHUNK = 30;
+      for (let i = 0; i < stmts.length; i += CHUNK) {
+        const res = await env.DB.batch(stmts.slice(i, i + CHUNK));
+        // Count rows that actually inserted (changes>0 means it was new).
+        for (const r of res) {
+          const changes = (r as any)?.meta?.changes ?? 0;
+          if (changes > 0) detected++;
+        }
+      }
+    }
+  }
+
+  return { ok: true, addresses: addrs.length, detected };
+}
+
 async function qtaChainTick(env: Env): Promise<{
   network: string;
   head: number;
@@ -424,19 +607,45 @@ async function qtaChainTick(env: Env): Promise<{
     return { network, head: 0, pending: 0, credited: 0, ok: false };
   }
 
-  // Mock head = floor(now/2s). Real adapter replaces with RPC.
+  // Head block: real driver pulls the live chain head over RPC; mock derives a
+  // synthetic head from wall-clock time (2s block time).
   const driver = (env.QTA_CHAIN_DRIVER || 'mock').toLowerCase();
-  const head =
-    driver === 'real'
-      ? state.head_block /* TODO: real RPC call */
-      : Math.floor(Date.now() / 1000 / 2);
+  let head: number;
+  if (driver === 'real') {
+    const rpcUrl = env.QTA_RPC_URL;
+    if (!rpcUrl) {
+      console.warn('[qta] real driver but QTA_RPC_URL missing — keeping stale head');
+      head = state.head_block;
+    } else {
+      try {
+        const chainId = Number(env.QTA_CHAIN_ID || '60000') || 60000;
+        head = await getBlockNumber({ rpcUrl, chainId });
+      } catch (e) {
+        console.error('[qta] getBlockNumber failed, keeping stale head:', e);
+        head = state.head_block;
+      }
+    }
+  } else {
+    head = Math.floor(Date.now() / 1000 / 2);
+  }
 
-  // Bump confirmation counts on pending/confirming deposits.
+  // Bump confirmation counts on pending/confirming deposits. We also pull the
+  // amount + user + asset so we can credit the wallet on the SAME tick a
+  // deposit reaches the required confirmation count (a single atomic batch per
+  // deposit: mark credited + increment wallet.available).
   const { results: pending } = await env.DB.prepare(
-    `SELECT id, block_height, required_confs
+    `SELECT id, user_id, address, amount, asset, block_height, required_confs
      FROM qta_deposits
      WHERE network = ? AND status IN ('detected', 'confirming')`
-  ).bind(network).all<{ id: string; block_height: number | null; required_confs: number }>();
+  ).bind(network).all<{
+    id: string;
+    user_id: string;
+    address: string;
+    amount: string;
+    asset: string | null;
+    block_height: number | null;
+    required_confs: number;
+  }>();
 
   let credited = 0;
   const stmts: D1PreparedStatement[] = [];
@@ -448,6 +657,13 @@ async function qtaChainTick(env: Env): Promise<{
     const need = d.required_confs || state.required_confs || 12;
 
     if (confs >= need) {
+      // Atomically flip to 'credited' AND increase the user's spendable
+      // balance. The WHERE guard on status makes the credit idempotent — even
+      // if two ticks race, only the one that actually transitions the row
+      // 'detected/confirming' -> 'credited' will have its wallet update paired
+      // with a real state change (the second UPDATE matches 0 rows).
+      const asset = String(d.asset || 'QTA').toUpperCase();
+      const amt = Number(d.amount || '0');
       stmts.push(
         env.DB.prepare(
           `UPDATE qta_deposits
@@ -455,6 +671,22 @@ async function qtaChainTick(env: Env): Promise<{
            WHERE id = ? AND status IN ('detected', 'confirming')`
         ).bind(confs, nowIso, nowIso, d.id),
       );
+      if (amt > 0) {
+        // Ensure a wallet row exists, then credit available.
+        stmts.push(
+          env.DB.prepare(
+            `INSERT INTO wallets (user_id, coin_symbol, available, locked)
+             VALUES (?, ?, 0, 0)
+             ON CONFLICT(user_id, coin_symbol) DO NOTHING`
+          ).bind(d.user_id, asset),
+        );
+        stmts.push(
+          env.DB.prepare(
+            `UPDATE wallets SET available = available + ?
+             WHERE user_id = ? AND coin_symbol = ?`
+          ).bind(amt, d.user_id, asset),
+        );
+      }
       credited++;
     } else {
       stmts.push(

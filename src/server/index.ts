@@ -226,6 +226,7 @@ let qtaHdIndexesBootstrapDone = false;
 //   the cron broadcaster needs to know native-vs-ERC20 per row. Existing rows
 //   default to 'QTA'.
 let qtaWithdrawalsAssetBootstrapDone = false;
+let qtaDepositsAssetBootstrapDone = false;
 let coinPricePolicyBootstrapDone = false;
 let adminPasswordRotateBootstrapDone = false;
 
@@ -1395,6 +1396,54 @@ app.use('/api/*', async (c, next) => {
             console.log('[bootstrap] qta_withdrawals.asset (0037) applied to production D1');
           } catch (e) {
             captureError(c as any, e, { where: 'qta-withdrawals-asset-bootstrap' });
+          }
+        })()
+      );
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Self-bootstrap: migration 0041 — add qta_deposits.asset so the on-chain
+  //   deposit scanner (cron-worker scanQtaDeposits) can record WHICH
+  //   Quantarium-native asset (QTA / QX / QKEY) each detected inbound transfer
+  //   credits, and qtaChainTick can increment the matching wallet on confirm.
+  //   ALTER TABLE … ADD COLUMN is wrapped in try/catch (throws if it exists).
+  // ------------------------------------------------------------------
+  if (!qtaDepositsAssetBootstrapDone) {
+    const ctx = c.executionCtx as any;
+    if (ctx && typeof ctx.waitUntil === 'function') {
+      ctx.waitUntil(
+        (async () => {
+          try {
+            const marker = await c.env.DB.prepare(
+              "SELECT value FROM system_state WHERE key = 'qta_deposits_asset_2026_08_15'"
+            ).first<{ value: string }>().catch(() => null);
+            if (marker && marker.value === 'migrated_v1') {
+              qtaDepositsAssetBootstrapDone = true;
+              return;
+            }
+
+            try {
+              await c.env.DB.prepare(
+                `ALTER TABLE qta_deposits ADD COLUMN asset TEXT NOT NULL DEFAULT 'QTA'`
+              ).run();
+            } catch (_e) { /* column already exists — ignore */ }
+
+            try {
+              await c.env.DB.prepare(
+                `CREATE INDEX IF NOT EXISTS idx_qta_deposits_asset ON qta_deposits(asset, status)`
+              ).run();
+            } catch (_e) { /* ignore */ }
+
+            await c.env.DB.prepare(
+              `INSERT OR REPLACE INTO system_state (key, value, updated_at)
+               VALUES ('qta_deposits_asset_2026_08_15', 'migrated_v1', CURRENT_TIMESTAMP)`
+            ).run();
+
+            qtaDepositsAssetBootstrapDone = true;
+            console.log('[bootstrap] qta_deposits.asset (0041) applied to production D1');
+          } catch (e) {
+            captureError(c as any, e, { where: 'qta-deposits-asset-bootstrap' });
           }
         })()
       );
