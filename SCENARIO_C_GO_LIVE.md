@@ -24,7 +24,8 @@
 핵심 온체인 값:
 - RPC `https://rpc.quantarium.io` / Explorer `https://scan.quantarium.io`
 - chainId `60000` (0xea60)
-- 핫월렛 `0x496EEaCE6Cf759C95e9eFea5d4C16A35D0524E97` (owner-controlled, mnemonic in QTA_HD_WALLET_MNEMONIC)
+- 핫월렛 `0xdeB6BFE50EeE8D753313988c6d1E77f95322527b` (owner-controlled, index-0 검증됨, mnemonic in QTA_HD_WALLET_MNEMONIC)
+  - ⚠️ 이전 `0x496EEaCE…24E97` 는 니모닉 index-0 불일치(index-0 = 0xF4aE…47c87)로 폐기됨 — 재사용 금지
   - ⚠️ 이전 `0x4B35…938Cb` 는 니모닉 유실로 폐기됨 — 재사용 금지
 - QX `0xad447d42fB065a5b505772235F0c96d27501e6Fb` (ERC-20, 18dec)
 - QKEY `0x216621D3b3dB600F35DBf6c5709486dDC8882a16` (ERC-20, 18dec)

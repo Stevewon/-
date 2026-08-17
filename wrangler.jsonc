@@ -25,10 +25,10 @@
     // defaults to 'mock' (safe: 503 CHAIN_INTEGRATION_PENDING gate stays on).
     "QTA_NETWORK": "qta-mainnet",
     // Exchange hot wallet — dedicated EOA (separate from Master/Treasury).
-    // Rotated 2026-08-13: replaces the legacy Telegram-bot-derived wallet
-    // 0x496EEaCE…4E97 with a QuantaEX-controlled SPHINCS+ HD account (index 0).
-    // The matching mnemonic lives ONLY in the QTA_HD_WALLET_MNEMONIC secret.
-    "QTA_HOT_WALLET_ADDRESS": "0x496EEaCE6Cf759C95e9eFea5d4C16A35D0524E97",
+    // Rotated 2026-08-17: owner-controlled SPHINCS+ HD account, verified
+    // index-0 == this address. Replaces 0x496EE…4E97 (mnemonic mismatch) and
+    // 0x4B35…938Cb (mnemonic lost). Mnemonic lives ONLY in QTA_HD_WALLET_MNEMONIC.
+    "QTA_HOT_WALLET_ADDRESS": "0xdeB6BFE50EeE8D753313988c6d1E77f95322527b",
     // On-chain ERC-20 contracts on Quantarium.
     "QTA_TOKEN_QX_ADDRESS": "0xad447d42fB065a5b505772235F0c96d27501e6Fb",
     "QTA_TOKEN_QX_DECIMALS": "18",

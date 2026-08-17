@@ -39,7 +39,7 @@
     // Blockscout v2 explorer — the deposit scanner (scanQtaDeposits) reads
     // normalised inbound tx lists from here instead of parsing SPHINCS+ blocks.
     "QTA_EXPLORER_URL": "https://scan.quantarium.io",
-    "QTA_HOT_WALLET_ADDRESS": "0x496EEaCE6Cf759C95e9eFea5d4C16A35D0524E97",
+    "QTA_HOT_WALLET_ADDRESS": "0xdeB6BFE50EeE8D753313988c6d1E77f95322527b",
     "QTA_TOKEN_QX_ADDRESS": "0xad447d42fB065a5b505772235F0c96d27501e6Fb",
     "QTA_TOKEN_QX_DECIMALS": "18",
     "QTA_TOKEN_QKEY_ADDRESS": "0x216621D3b3dB600F35DBf6c5709486dDC8882a16",
