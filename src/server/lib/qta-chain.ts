@@ -16,9 +16,11 @@
  *   - RPC:      https://rpc.quantarium.io
  *
  * Exchange hot wallet (dedicated account derived from HD index 0):
- *   0x4B35C55652E9831b9D3b5f3456d276E553B938Cb
- *   (rotated 2026-08-13 — replaces the legacy Telegram-bot-derived
- *    0x496EEaCE…4E97; QuantaEX now controls the mnemonic end-to-end)
+ *   0x496EEaCE6Cf759C95e9eFea5d4C16A35D0524E97
+ *   (adopted 2026-08-16 — the owner-controlled Quantarium Wallet account
+ *    whose 12-word mnemonic lives ONLY in the QTA_HD_WALLET_MNEMONIC secret.
+ *    Replaces the previous 0x4B35…938Cb, whose mnemonic was lost and is
+ *    therefore unspendable — do NOT reuse it.)
  *
  * Custody model (Option 2 — server-held HD mnemonic, no bot dependency):
  *   Server holds a single 12-word BIP-39 mnemonic (Cloudflare Pages secret
@@ -51,7 +53,7 @@ export const QUANTARIUM_CHAIN = {
   nativeDecimals: 18,
   requiredConfirmations: 12,
   // Exchange hot wallet (SPHINCS+ HD account index 0).
-  exchangeHotWallet: '0x4B35C55652E9831b9D3b5f3456d276E553B938Cb',
+  exchangeHotWallet: '0x496EEaCE6Cf759C95e9eFea5d4C16A35D0524E97',
   tokens: {
     QX:   { address: '0xad447d42fB065a5b505772235F0c96d27501e6Fb', decimals: 18 },
     QKEY: { address: '0x216621D3b3dB600F35DBf6c5709486dDC8882a16', decimals: 18 },

@@ -180,7 +180,7 @@ export default function WalletPage() {
         Quantarium native + ERC-20 (QTA / QX / QKEY) on-chain deposit &
         withdrawal notice — the chain is live (chain_id 60000), but the
         exchange-side adapter is being finalized against the dedicated
-        hot wallet (0x4B35C556...938Cb). Internal balances and trading
+        hot wallet (0x496EEaCE...24E97). Internal balances and trading
         are unaffected.
       */}
       <div

@@ -28,7 +28,7 @@
     // Rotated 2026-08-13: replaces the legacy Telegram-bot-derived wallet
     // 0x496EEaCE…4E97 with a QuantaEX-controlled SPHINCS+ HD account (index 0).
     // The matching mnemonic lives ONLY in the QTA_HD_WALLET_MNEMONIC secret.
-    "QTA_HOT_WALLET_ADDRESS": "0x4B35C55652E9831b9D3b5f3456d276E553B938Cb",
+    "QTA_HOT_WALLET_ADDRESS": "0x496EEaCE6Cf759C95e9eFea5d4C16A35D0524E97",
     // On-chain ERC-20 contracts on Quantarium.
     "QTA_TOKEN_QX_ADDRESS": "0xad447d42fB065a5b505772235F0c96d27501e6Fb",
     "QTA_TOKEN_QX_DECIMALS": "18",

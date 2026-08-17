@@ -46,7 +46,7 @@ chain.get('/qta/state', async (c) => {
   const driver = String((c.env as any).QTA_CHAIN_DRIVER || 'mock').toLowerCase();
   const hotWallet = String(
     (c.env as any).QTA_HOT_WALLET_ADDRESS ||
-      '0x4B35C55652E9831b9D3b5f3456d276E553B938Cb',
+      '0x496EEaCE6Cf759C95e9eFea5d4C16A35D0524E97',
   );
 
   return c.json({
