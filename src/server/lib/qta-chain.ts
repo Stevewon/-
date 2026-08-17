@@ -248,6 +248,9 @@ export class SphincsQtaChainClient implements QtaChainClient {
   private readonly hotAccount: SphincsAccount; // cached — 32-byte pubkey + 64-byte secret
   private readonly db?: D1Database;
 
+  /** True when payouts are manual (server must never sign). */
+  readonly manualWithdrawals: boolean;
+
   constructor(params: {
     rpcUrl: string;
     chainId: number;
@@ -255,19 +258,34 @@ export class SphincsQtaChainClient implements QtaChainClient {
     hotWalletAddress: string;
     network?: QtaNetwork;
     db?: D1Database;
+    manualWithdrawals?: boolean;
   }) {
     if (!isValidMnemonic(params.mnemonic)) {
       throw new Error('SphincsQtaChainClient: QTA_HD_WALLET_MNEMONIC missing/invalid');
     }
+    this.manualWithdrawals = params.manualWithdrawals !== false;
+
     // Construct-time keypair verification: index-0 derived from the mnemonic
-    // MUST match the declared exchange hot wallet. If not, the operator has
-    // registered the wrong mnemonic and every withdrawal would fail; fail
-    // FAST at construction so the safety gate stays engaged.
+    // vs the declared exchange hot wallet.
+    //   • AUTO mode (manualWithdrawals=false): a mismatch means every
+    //     withdrawal would sign with the wrong key, so fail FAST at
+    //     construction to keep the safety gate engaged.
+    //   • MANUAL mode (default): the server never signs — deposit-address
+    //     issuance and deposit detection don't need the hot-wallet key — so a
+    //     mismatch is tolerated (the Quantarium wallet app derives addresses
+    //     with a different scheme). Log a warning but continue.
     const check = verifyMnemonicMatchesHotWallet(params.mnemonic, params.hotWalletAddress);
     if (!check.ok) {
-      throw new Error(
-        `SphincsQtaChainClient: mnemonic index-0 does not match hot wallet ` +
-        `(derived=${check.derived}, expected=${check.expected})`,
+      if (!this.manualWithdrawals) {
+        throw new Error(
+          `SphincsQtaChainClient: mnemonic index-0 does not match hot wallet ` +
+          `(derived=${check.derived}, expected=${check.expected})`,
+        );
+      }
+      console.warn(
+        `[qta-chain] mnemonic index-0 (${check.derived}) != hot wallet ` +
+        `(${check.expected}) — tolerated in MANUAL withdrawal mode ` +
+        `(server does not sign; deposits unaffected).`,
       );
     }
 
@@ -329,6 +347,13 @@ export class SphincsQtaChainClient implements QtaChainClient {
     amount: string;
     memo?: string;
   }): Promise<QtaBroadcastResult> {
+    if (this.manualWithdrawals) {
+      throw new Error(
+        'QTA withdrawals are in MANUAL mode — server-side signing is disabled. ' +
+        'Pay out from the Quantarium wallet app and settle via the admin ' +
+        'manual-complete endpoint.',
+      );
+    }
     if (!/^0x[0-9a-fA-F]{40}$/.test(params.to)) {
       throw new Error('to must be a 20-byte 0x-address');
     }
@@ -369,6 +394,13 @@ export class SphincsQtaChainClient implements QtaChainClient {
     to: string;
     amountWei: bigint;
   }): Promise<QtaBroadcastResult> {
+    if (this.manualWithdrawals) {
+      throw new Error(
+        'QTA/ERC-20 withdrawals are in MANUAL mode — server-side signing is ' +
+        'disabled. Pay out from the Quantarium wallet app and settle via the ' +
+        'admin manual-complete endpoint.',
+      );
+    }
     if (!/^0x[0-9a-fA-F]{40}$/.test(params.tokenContract)) {
       throw new Error('tokenContract must be a 20-byte 0x-address');
     }
@@ -489,6 +521,14 @@ export interface QtaChainEnv {
   QTA_HOT_WALLET_ADDRESS?: string;
   QTA_HD_WALLET_MNEMONIC?: string;
   /**
+   * Manual withdrawal mode. When not 'false', the server NEVER signs/broadcasts
+   * withdrawals (a human operator pays out from the Quantarium wallet app), so
+   * the mnemonic's index-0 is NOT required to equal QTA_HOT_WALLET_ADDRESS.
+   * Deposit-address issuance + deposit detection do not need the hot-wallet key
+   * and work regardless. Default: manual (true).
+   */
+  QTA_MANUAL_WITHDRAWALS?: string;
+  /**
    * @deprecated SPHINCS+ has no 32-byte ECDSA private key equivalent. Hot
    * wallet secret key (64 bytes) is derived from the mnemonic at index 0.
    * Kept in the type for backwards-compat with the diagnostic env-check
@@ -519,6 +559,11 @@ export function getQtaChainClient(env: QtaChainEnv): QtaChainClient {
       hotWalletAddress: env.QTA_HOT_WALLET_ADDRESS,
       network,
       db: env.DB,
+      // Manual mode (default) tolerates an index-0/hot-wallet mismatch because
+      // the server never signs. Set QTA_MANUAL_WITHDRAWALS='false' to require a
+      // matching key for server-side auto-signing.
+      manualWithdrawals:
+        String(env.QTA_MANUAL_WITHDRAWALS ?? 'true').toLowerCase() !== 'false',
     });
   }
   return new MockQtaChainClient(network);
