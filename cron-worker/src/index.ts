@@ -385,10 +385,14 @@ export default {
             const reqUrl = new URL(url.toString());
             let n = parseInt(reqUrl.searchParams.get('scan') || '20', 10);
             if (!Number.isFinite(n) || n < 1) n = 20;
-            if (n > 512) n = 512;
+            if (n > 30) n = 30; // SPHINCS+ keygen is CPU-heavy; >30/req hits 1102
+            let offset = parseInt(reqUrl.searchParams.get('offset') || '0', 10);
+            if (!Number.isFinite(offset) || offset < 0) offset = 0;
+            if (offset > 5000) offset = 5000;
             const scan: Array<{ index: number; address: string }> = [];
             let foundAt: number | null = null;
-            for (let i = 0; i < n; i++) {
+            for (let k = 0; k < n; k++) {
+              const i = offset + k;
               const a = deriveAccountFromMnemonic(mnemonic, i);
               if (n <= 50) scan.push({ index: i, address: a.address });
               if (a.address.toLowerCase() === hotWallet.toLowerCase()) {
@@ -396,6 +400,7 @@ export default {
                 break;
               }
             }
+            out.scan_offset = offset;
             out.scan_range = n;
             if (n <= 50) out.scan_indices = scan;
             out.hot_wallet_found_at_index = foundAt;
