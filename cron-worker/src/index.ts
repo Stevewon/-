@@ -38,6 +38,23 @@ import {
   listInboundTokenTransfers,
   type ExplorerConfig,
 } from './lib/qta-explorer';
+// Standard Ethereum BIP-32/BIP-44 (secp256k1) derivation — used ONLY by the
+// /qta/env-check diagnostic to test whether the Quantarium wallet app derives
+// addresses the standard EVM way (m/44'/60'/0'/0/i) rather than our SPHINCS+ HD.
+import { HDKey } from '@scure/bip32';
+import { mnemonicToSeedSync } from '@scure/bip39';
+import { secp256k1 } from '@noble/curves/secp256k1.js';
+import { keccak_256 as _keccak256 } from '@noble/hashes/sha3.js';
+
+function ethAddressFromBip44(mnemonic: string, index: number, account = 0, change = 0): string {
+  const seed = mnemonicToSeedSync(mnemonic.trim());
+  const master = HDKey.fromMasterSeed(seed);
+  const node = master.derive(`m/44'/60'/${account}'/${change}/${index}`);
+  if (!node.privateKey) throw new Error('no privkey');
+  const pub = secp256k1.getPublicKey(node.privateKey, false); // uncompressed 65B
+  const hash = _keccak256(pub.slice(1)); // drop 0x04
+  return toChecksumAddress('0x' + Array.from(hash.slice(-20)).map((b) => b.toString(16).padStart(2, '0')).join(''));
+}
 
 export interface Env {
   DB: D1Database;
@@ -404,6 +421,47 @@ export default {
             out.scan_range = n;
             if (n <= 50) out.scan_indices = scan;
             out.hot_wallet_found_at_index = foundAt;
+
+            // ALSO test the STANDARD Ethereum BIP-44 (secp256k1/ECDSA) path.
+            // If the Quantarium wallet app derives addresses the normal EVM
+            // way, the hot wallet will appear here even though it never shows
+            // up in our SPHINCS+ HD tree. Try common path variants, i=0..9.
+            try {
+              const ecdsa: Array<{ path: string; index: number; address: string }> = [];
+              let ecdsaFoundPath: string | null = null;
+              const variants: Array<[number, number, string]> = [
+                [0, 0, "m/44'/60'/0'/0/{i}"],   // standard MetaMask
+                [0, 1, "m/44'/60'/0'/1/{i}"],   // change chain
+              ];
+              // Also account-indexed: m/44'/60'/{i}'/0/0 (Ledger-style)
+              for (let i = 0; i < 10; i++) {
+                for (const [acct, change, tmpl] of variants) {
+                  const addr = ethAddressFromBip44(mnemonic, i, acct, change);
+                  if (i < 5) ecdsa.push({ path: tmpl.replace('{i}', String(i)), index: i, address: addr });
+                  if (addr.toLowerCase() === hotWallet.toLowerCase()) {
+                    ecdsaFoundPath = tmpl.replace('{i}', String(i));
+                    break;
+                  }
+                }
+                if (ecdsaFoundPath) break;
+              }
+              // Ledger-style account index
+              if (!ecdsaFoundPath) {
+                for (let a = 0; a < 10; a++) {
+                  const addr = ethAddressFromBip44(mnemonic, 0, a, 0);
+                  if (addr.toLowerCase() === hotWallet.toLowerCase()) {
+                    ecdsaFoundPath = `m/44'/60'/${a}'/0/0`;
+                    break;
+                  }
+                }
+              }
+              out.ecdsa_bip44_samples = ecdsa;
+              out.ecdsa_bip44_index0 = ethAddressFromBip44(mnemonic, 0);
+              out.ecdsa_bip44_found_path = ecdsaFoundPath;
+              out.ecdsa_bip44_matches = Boolean(ecdsaFoundPath);
+            } catch (ee: any) {
+              out.ecdsa_error = String(ee?.message || ee);
+            }
           }
         } catch (e: any) {
           out.derive_error = String(e?.message || e);
