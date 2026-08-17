@@ -375,6 +375,23 @@ export default {
           out.matches_hot_wallet = hotWallet
             ? acct.address.toLowerCase() === hotWallet.toLowerCase()
             : false;
+          // Diagnostic scan: if index-0 does NOT match the configured hot
+          // wallet, derive indices 0..19 and report at which index (if any)
+          // the hot wallet appears. Returns ONLY public addresses.
+          if (!out.matches_hot_wallet && hotWallet) {
+            const scan: Array<{ index: number; address: string }> = [];
+            let foundAt: number | null = null;
+            for (let i = 0; i < 20; i++) {
+              const a = deriveAccountFromMnemonic(mnemonic, i);
+              scan.push({ index: i, address: a.address });
+              if (a.address.toLowerCase() === hotWallet.toLowerCase()) {
+                foundAt = i;
+                break;
+              }
+            }
+            out.scan_indices = scan;
+            out.hot_wallet_found_at_index = foundAt;
+          }
         } catch (e: any) {
           out.derive_error = String(e?.message || e);
         }
