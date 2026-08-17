@@ -304,6 +304,64 @@ chain.post('/qta/admin/withdrawals/:id/approve', authMiddleware, adminMiddleware
   });
 });
 
+// Manual withdrawal completion (boss decision 2026-08-17): while payouts are
+// sent by a human operator directly from the Quantarium wallet app, the admin
+// records the real on-chain tx_hash here and marks the row 'confirmed'. This
+// finalizes the user's locked balance (the amount+fee locked at request time
+// is consumed — NOT refunded). Works on 'broadcasting' or 'pending' rows so a
+// payout can be settled whether or not it went through the approve step.
+chain.post('/qta/admin/withdrawals/:id/manual-complete', authMiddleware, adminMiddleware, async (c) => {
+  const id = c.req.param('id');
+  const admin = c.get('user') as { id: string; email: string };
+  let body: any = {};
+  try { body = await c.req.json(); } catch {}
+  const txHash = String(body.tx_hash || '').trim();
+  if (!/^0x[0-9a-fA-F]{64}$/.test(txHash)) {
+    return c.json({ ok: false, error: 'invalid_tx_hash', hint: 'expected 0x + 64 hex chars' }, 400);
+  }
+
+  const row = await c.env.DB.prepare(
+    `SELECT id, user_id, to_address, amount, fee, asset, status, network
+     FROM qta_withdrawals WHERE id = ?`
+  ).bind(id).first<any>();
+  if (!row) return c.json({ ok: false, error: 'not_found' }, 404);
+  if (row.status !== 'broadcasting' && row.status !== 'pending') {
+    return c.json({ ok: false, error: 'invalid_status', status: row.status }, 409);
+  }
+
+  const now = new Date().toISOString();
+  // Consume the locked balance (payout actually left the exchange). The amount
+  // + fee was moved available -> locked when the user requested the withdrawal;
+  // on completion we simply drop it from locked (do NOT return to available).
+  const asset = String(row.asset || 'QTA').toUpperCase();
+  const lockedDelta = Number(row.amount || 0) + Number(row.fee || 0);
+  await c.env.DB.batch([
+    c.env.DB.prepare(
+      `UPDATE qta_withdrawals
+       SET status = 'confirmed', tx_hash = ?, broadcast_at = ?, confirmed_at = ?,
+           approved_by = COALESCE(approved_by, ?), updated_at = ?
+       WHERE id = ? AND status IN ('broadcasting','pending')`
+    ).bind(txHash, now, now, admin.id, now, id),
+    c.env.DB.prepare(
+      `UPDATE wallets SET locked = MAX(0, locked - ?)
+       WHERE user_id = ? AND coin_symbol = ?`
+    ).bind(lockedDelta, row.user_id, asset),
+  ]);
+
+  await logAdminAction(c, {
+    action: 'qta.withdraw.manual_complete',
+    targetType: 'withdrawal',
+    targetId: id,
+    payload: {
+      amount: row.amount, fee: row.fee, asset,
+      to: row.to_address, network: row.network, tx_hash: txHash,
+      note: 'manually paid out from Quantarium wallet app by operator',
+    },
+  });
+
+  return c.json({ ok: true, id, status: 'confirmed', tx_hash: txHash });
+});
+
 chain.post('/qta/admin/withdrawals/:id/reject', authMiddleware, adminMiddleware, async (c) => {
   const id = c.req.param('id');
   const admin = c.get('user') as { id: string; email: string };

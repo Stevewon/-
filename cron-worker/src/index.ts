@@ -71,6 +71,9 @@ export interface Env {
   QTA_CHAIN_ID?: string;
   QTA_HOT_WALLET_ADDRESS?: string;
   QTA_HD_WALLET_MNEMONIC?: string;
+  // Manual withdrawal mode: when not 'false', the cron worker does NOT
+  // auto-sign/broadcast withdrawals — a human operator pays out by hand.
+  QTA_MANUAL_WITHDRAWALS?: string;
   // Blockscout v2 explorer base URL (deposit scanner reads normalised tx lists
   // from here rather than parsing SPHINCS+ blocks directly). Defaults to
   // https://scan.quantarium.io if unset.
@@ -384,6 +387,8 @@ export default {
         matches_hot_wallet: false,
         explorer_url: env.QTA_EXPLORER_URL || null,
         rpc_configured: Boolean(env.QTA_RPC_URL),
+        manual_withdrawal_mode:
+          String(env.QTA_MANUAL_WITHDRAWALS ?? 'true').toLowerCase() !== 'false',
       };
       if (mnemonic && isValidMnemonic(mnemonic)) {
         try {
@@ -900,6 +905,20 @@ async function processQtaWithdrawals(env: Env): Promise<{
   const driver = (env.QTA_CHAIN_DRIVER || 'mock').toLowerCase();
   if (driver !== 'real') {
     return { ok: true, picked: 0, reason: 'driver_not_real' };
+  }
+
+  // MANUAL WITHDRAWAL MODE (boss decision 2026-08-17): while withdrawals are
+  // paid out by a human operator sending from the Quantarium wallet app
+  // directly, the cron worker MUST NOT auto-sign/broadcast. It leaves
+  // 'broadcasting' rows untouched so an admin can process + mark them done
+  // by hand. This also sidesteps the hot-wallet/mnemonic index-0 match
+  // requirement (the app derives addresses differently than our HD scheme),
+  // which is irrelevant when the server never signs. Default: ON.
+  // Set QTA_MANUAL_WITHDRAWALS='false' to re-enable server-side auto-signing
+  // (only valid once the mnemonic's index-0 == QTA_HOT_WALLET_ADDRESS).
+  const manualMode = String(env.QTA_MANUAL_WITHDRAWALS ?? 'true').toLowerCase() !== 'false';
+  if (manualMode) {
+    return { ok: true, picked: 0, reason: 'manual_withdrawal_mode' };
   }
 
   const rpcUrl = env.QTA_RPC_URL;

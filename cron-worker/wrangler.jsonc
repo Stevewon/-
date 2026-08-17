@@ -40,6 +40,11 @@
     // normalised inbound tx lists from here instead of parsing SPHINCS+ blocks.
     "QTA_EXPLORER_URL": "https://scan.quantarium.io",
     "QTA_HOT_WALLET_ADDRESS": "0xdeB6BFE50EeE8D753313988c6d1E77f95322527b",
+    // Manual withdrawal mode ON: withdrawals are paid out by a human operator
+    // from the Quantarium wallet app. The cron worker does NOT auto-sign, so
+    // the hot wallet address does NOT need to match the mnemonic's index-0.
+    // Set to "false" only after wiring server-side signing with a matching key.
+    "QTA_MANUAL_WITHDRAWALS": "true",
     "QTA_TOKEN_QX_ADDRESS": "0xad447d42fB065a5b505772235F0c96d27501e6Fb",
     "QTA_TOKEN_QX_DECIMALS": "18",
     "QTA_TOKEN_QKEY_ADDRESS": "0x216621D3b3dB600F35DBf6c5709486dDC8882a16",
