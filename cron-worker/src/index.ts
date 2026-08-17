@@ -349,11 +349,45 @@ export default {
         headers: { 'content-type': 'application/json' },
       });
     }
+    if (url.pathname === '/qta/env-check') {
+      // Read-only diagnostic: confirms the mnemonic secret is present and that
+      // its index-0 derived address matches the configured hot wallet.
+      // NEVER returns the mnemonic itself (or any private key material).
+      const driver = (env.QTA_CHAIN_DRIVER || 'mock').toLowerCase();
+      const mnemonic = env.QTA_HD_WALLET_MNEMONIC;
+      const hotWallet = env.QTA_HOT_WALLET_ADDRESS
+        ? toChecksumAddress(env.QTA_HOT_WALLET_ADDRESS)
+        : null;
+      const out: Record<string, unknown> = {
+        driver,
+        mnemonic_present: Boolean(mnemonic),
+        mnemonic_valid: mnemonic ? isValidMnemonic(mnemonic) : false,
+        hot_wallet_configured: hotWallet,
+        index0_address: null as string | null,
+        matches_hot_wallet: false,
+        explorer_url: env.QTA_EXPLORER_URL || null,
+        rpc_configured: Boolean(env.QTA_RPC_URL),
+      };
+      if (mnemonic && isValidMnemonic(mnemonic)) {
+        try {
+          const acct = deriveAccountFromMnemonic(mnemonic, 0);
+          out.index0_address = acct.address;
+          out.matches_hot_wallet = hotWallet
+            ? acct.address.toLowerCase() === hotWallet.toLowerCase()
+            : false;
+        } catch (e: any) {
+          out.derive_error = String(e?.message || e);
+        }
+      }
+      return new Response(JSON.stringify(out, null, 2), {
+        headers: { 'content-type': 'application/json' },
+      });
+    }
     return new Response(
       JSON.stringify({
         service: 'quantaex-cron',
         schedules: ['*/5 * * * * (price-alert tick)', '0 3 * * * (daily D1 backup)'],
-        endpoints: ['/run', '/backup', '/backup/prune', '/qta/withdrawals', '/qta/scan', '/qta/tick'],
+        endpoints: ['/run', '/backup', '/backup/prune', '/qta/withdrawals', '/qta/scan', '/qta/tick', '/qta/env-check'],
       }),
       { headers: { 'content-type': 'application/json' } }
     );
