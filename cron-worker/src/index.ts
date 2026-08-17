@@ -376,20 +376,28 @@ export default {
             ? acct.address.toLowerCase() === hotWallet.toLowerCase()
             : false;
           // Diagnostic scan: if index-0 does NOT match the configured hot
-          // wallet, derive indices 0..19 and report at which index (if any)
+          // wallet, derive indices 0..N and report at which index (if any)
           // the hot wallet appears. Returns ONLY public addresses.
+          // ?scan=<N> widens the range (default 20, capped 512). When N>50 we
+          // omit the full address list and return only found/index to keep the
+          // response small and the derivation fast.
           if (!out.matches_hot_wallet && hotWallet) {
+            const reqUrl = new URL(url.toString());
+            let n = parseInt(reqUrl.searchParams.get('scan') || '20', 10);
+            if (!Number.isFinite(n) || n < 1) n = 20;
+            if (n > 512) n = 512;
             const scan: Array<{ index: number; address: string }> = [];
             let foundAt: number | null = null;
-            for (let i = 0; i < 20; i++) {
+            for (let i = 0; i < n; i++) {
               const a = deriveAccountFromMnemonic(mnemonic, i);
-              scan.push({ index: i, address: a.address });
+              if (n <= 50) scan.push({ index: i, address: a.address });
               if (a.address.toLowerCase() === hotWallet.toLowerCase()) {
                 foundAt = i;
                 break;
               }
             }
-            out.scan_indices = scan;
+            out.scan_range = n;
+            if (n <= 50) out.scan_indices = scan;
             out.hot_wallet_found_at_index = foundAt;
           }
         } catch (e: any) {
