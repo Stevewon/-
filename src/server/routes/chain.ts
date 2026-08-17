@@ -731,6 +731,14 @@ async function envCheckHandler(c: any) {
     mnemonicMatch = { checked: false, reason: 'mnemonic shape invalid — cannot verify' };
   }
 
+  // MANUAL WITHDRAWAL MODE: when QTA_MANUAL_WITHDRAWALS is on (default true),
+  // the server NEVER signs withdrawals — a human operator pays them out from
+  // the wallet app. In that mode the mnemonic index-0 does NOT need to match
+  // the hot wallet (deposits still auto-credit; withdrawals stay pending for
+  // manual payout). So the mismatch must NOT block "live" status.
+  const manualWithdrawals =
+    String(env.QTA_MANUAL_WITHDRAWALS ?? 'true').toLowerCase() !== 'false';
+
   // Diagnose why integration_status is still 'pending'.
   const reasons: string[] = [];
   if (driverInfo.effective !== 'real') {
@@ -743,7 +751,12 @@ async function envCheckHandler(c: any) {
   } else if (!(mnemonicInfo as any).shape_ok) {
     reasons.push(`QTA_HD_WALLET_MNEMONIC shape: ${(mnemonicInfo as any).shape_reason}`);
   }
-  if ((mnemonicMatch as any).checked && (mnemonicMatch as any).ok === false) {
+  // The mnemonic/hot-wallet mismatch only blocks activation when the server
+  // is expected to sign (auto mode). In manual mode it is tolerated.
+  if (
+    !manualWithdrawals &&
+    (mnemonicMatch as any).checked && (mnemonicMatch as any).ok === false
+  ) {
     const detail = (mnemonicMatch as any).derived_address
       ? ` (derived=${(mnemonicMatch as any).derived_address}, expected=${(mnemonicMatch as any).expected_address})`
       : ` (${(mnemonicMatch as any).reason || (mnemonicMatch as any).error})`;
@@ -755,14 +768,18 @@ async function envCheckHandler(c: any) {
     !!env.QTA_RPC_URL &&
     !!env.QTA_HOT_WALLET_ADDRESS &&
     (mnemonicInfo as any).shape_ok === true &&
-    ((mnemonicMatch as any).ok === true);
+    // In manual mode, index-0 match is not required (server never signs).
+    (manualWithdrawals || (mnemonicMatch as any).ok === true);
 
   return c.json({
     ok: true,
     signature_scheme: 'SPHINCS+-SHA2-128s (SLH-DSA, typed tx 0x7f)',
     integration_status: willRouteToRealAdapter ? 'live' : 'pending',
+    manual_withdrawal_mode: manualWithdrawals,
     verdict: reasons.length === 0
-      ? 'All required env vars are set, mnemonic shape is valid, and mnemonic index-0 matches the declared hot wallet. Real SPHINCS+ adapter should route on next request.'
+      ? (manualWithdrawals
+          ? 'MANUAL withdrawal mode: real driver is LIVE. Deposits auto-credit on-chain; withdrawals are paid out manually by an operator (server never signs), so the mnemonic index-0 does not need to match the hot wallet.'
+          : 'All required env vars are set, mnemonic shape is valid, and mnemonic index-0 matches the declared hot wallet. Real SPHINCS+ adapter should route on next request.')
       : `Real adapter is NOT active because: ${reasons.join(' | ')}`,
     reasons_pending: reasons,
     env: {
