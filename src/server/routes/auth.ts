@@ -361,17 +361,20 @@ app.post('/register', rlRegister, turnstile, async (c) => {
     } catch { /* table may not exist yet; ignore */ }
   }
 
-  // Default wallets. QX sign-up bonus (100 QX) is credited to `locked`
-  // so it cannot be traded or withdrawn until the user verifies their
-  // email. This prevents multi-account abuse where throwaway addresses
-  // farm the bonus. Unlock happens in POST /verify-email below.
+  // Default wallets. IMPORTANT (owner directive, 2026-08-18): the QX sign-up
+  // bonus is NOT credited at registration — not even as `locked`. A brand-new
+  // account starts with ZERO QX so nothing appears in the balance until the
+  // user verifies their email. The full 100 QX is credited (to `available`)
+  // ONLY in POST /verify-email on first verification. This prevents the bonus
+  // from showing in the wallet total before the email is confirmed and blocks
+  // throwaway-address bonus farming.
   const defaults = [
     { symbol: 'USDT', available: 0, locked: 0 },
     { symbol: 'USDC', available: 0, locked: 0 },
     { symbol: 'BTC',  available: 0, locked: 0 },
     { symbol: 'ETH',  available: 0, locked: 0 },
     { symbol: 'QTA',  available: 0, locked: 0 },
-    { symbol: 'QX',   available: 0, locked: REFERRED_WELCOME_QX },
+    { symbol: 'QX',   available: 0, locked: 0 }, // credited on email verify
     { symbol: 'QKEY', available: 0, locked: 0 },
   ];
 
@@ -506,10 +509,15 @@ app.post('/register', rlRegister, turnstile, async (c) => {
       code: myReferralCode,
       // Field names kept QTA-suffixed for legacy clients; values are QX amounts.
       referrer_credited_qta: referrerCreditedQx,
-      welcome_qta_locked:    REFERRED_WELCOME_QX, // unlocks on email verify
+      // Welcome bonus is NOT credited at signup anymore — it is granted only
+      // after email verification. These fields report the amount the user
+      // WILL receive on verify (0 is now held in the wallet).
+      welcome_qta_locked:    0,
+      welcome_qta_on_verify: REFERRED_WELCOME_QX,
       reward_coin:           REWARD_COIN,
       referrer_credited_qx:  referrerCreditedQx,
-      welcome_qx_locked:     REFERRED_WELCOME_QX,
+      welcome_qx_locked:     0,
+      welcome_qx_on_verify:  REFERRED_WELCOME_QX,
       // Multi-level breakdown (L1=50, L2=30, L3=20 by policy).
       levels: {
         l1_credited_qx: l1Credited,
@@ -1498,10 +1506,14 @@ app.post('/verify-email', async (c) => {
     ).bind(row.id),
   ]);
 
-  // Unlock the QX sign-up bonus: move any `locked` QX (up to 100)
-  // into `available`. Idempotent because we run it only on first verify.
-  // Also unlock any legacy QTA bonus still sitting in `locked` from before
-  // the QX migration so existing accounts don't lose access to old credits.
+  // Credit the QX sign-up bonus ON FIRST EMAIL VERIFICATION. New accounts are
+  // created with ZERO QX (owner directive 2026-08-18), so the bonus is GRANTED
+  // here — not merely unlocked. We run this only on the first verify so a later
+  // re-verification cannot mint the bonus twice.
+  //
+  // Backward compat: accounts registered under the OLD rule already hold the
+  // bonus in `locked`. For those we move the existing locked amount into
+  // `available` instead of adding another 100 on top (so they don't get 200).
   let bonusUnlocked = 0;
   if (firstVerification) {
     try {
@@ -1510,6 +1522,7 @@ app.post('/verify-email', async (c) => {
          WHERE user_id = ? AND coin_symbol = 'QX'`
       ).bind(row.user_id).first<any>();
       if (qx && qx.locked > 0) {
+        // Legacy account: unlock the pre-credited locked bonus.
         const unlock = Math.min(qx.locked, REFERRED_WELCOME_QX);
         bonusUnlocked = unlock;
         // ★★★★★★★ Welcome bonus is COMPANY-ISSUED → bump available_initial
@@ -1521,6 +1534,24 @@ app.post('/verify-email', async (c) => {
                available_initial = COALESCE(available_initial, 0) + ?
            WHERE id = ?`
         ).bind(unlock, unlock, unlock, qx.id).run();
+      } else if (qx) {
+        // New account (0 QX at signup): GRANT the full welcome bonus now.
+        // Company-issued → available_initial is bumped so it is tradable but
+        // NOT externally withdrawable.
+        bonusUnlocked = REFERRED_WELCOME_QX;
+        await c.env.DB.prepare(
+          `UPDATE wallets
+           SET available = available + ?,
+               available_initial = COALESCE(available_initial, 0) + ?
+           WHERE id = ?`
+        ).bind(REFERRED_WELCOME_QX, REFERRED_WELCOME_QX, qx.id).run();
+      } else {
+        // Defensive: QX wallet row missing (shouldn't happen) → create it.
+        bonusUnlocked = REFERRED_WELCOME_QX;
+        await c.env.DB.prepare(
+          `INSERT INTO wallets (id, user_id, coin_symbol, available, locked, available_initial)
+           VALUES (?, ?, 'QX', ?, 0, ?)`
+        ).bind(uuid(), row.user_id, REFERRED_WELCOME_QX, REFERRED_WELCOME_QX).run();
       }
       // Legacy QTA locked bonus (pre-QX migration) — also unlock so users
       // who registered under the old rule still get their credit.
