@@ -15,6 +15,7 @@ import bridgeRoutes from './routes/bridge';
 import futuresRoutes from './routes/futures';
 import marginRoutes from './routes/margin';
 import v1Routes from './routes/v1';
+import earnRoutes from './routes/earn';
 import { installObservability, captureError } from './utils/observability';
 import { geoBlock, geoStatusHandler } from './middleware/geo-block';
 import { isQuantariumAsset } from './lib/asset-routing';
@@ -1516,6 +1517,7 @@ app.route('/api/bridge', bridgeRoutes);
 app.route('/api/futures', futuresRoutes);
 app.route('/api/margin', marginRoutes);
 app.route('/api/v1', v1Routes);
+app.route('/api/earn', earnRoutes);
 
 // ============================================================================
 // Health checks (Sprint 3+ #3)
