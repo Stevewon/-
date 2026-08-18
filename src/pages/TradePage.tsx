@@ -14,7 +14,7 @@ import CoinIcon from '../components/common/CoinIcon';
 import SkeletonLoader from '../components/common/SkeletonLoader';
 import { ChevronDown, X, TrendingUp, TrendingDown, BarChart3, BookOpen, ArrowLeftRight } from 'lucide-react';
 
-type MobileView = 'chart' | 'orderbook' | 'trades';
+type MobileView = 'chart' | 'orderbook' | 'book' | 'trades';
 
 export default function TradePage() {
   const { symbol = 'BTC-USDT' } = useParams();
@@ -223,17 +223,18 @@ export default function TradePage() {
           </div>
         )}
 
-        {/* Mobile view switch — Order form (default) vs Chart, Binance-style */}
-        <div className="flex items-center gap-4 px-3 border-b border-exchange-border bg-exchange-card">
+        {/* Mobile view switch — Order form (default) vs Order book vs Chart */}
+        <div className="flex items-center gap-5 px-3 border-b border-exchange-border bg-exchange-card overflow-x-auto">
           {([
             { key: 'orderbook' as MobileView, label: t('trade.placeOrder'), icon: BookOpen },
+            { key: 'book' as MobileView, label: t('trade.orderbookTab'), icon: BookOpen },
             { key: 'chart' as MobileView, label: t('trade.chart'), icon: BarChart3 },
             { key: 'trades' as MobileView, label: t('trade.tradesTab'), icon: ArrowLeftRight },
           ]).map(({ key, label, icon: Icon }) => (
             <button
               key={key}
               onClick={() => setMobileView(key)}
-              className={`flex items-center gap-1.5 py-2.5 text-[14px] font-semibold border-b-2 transition-colors ${
+              className={`flex items-center gap-1.5 py-2.5 text-[14px] font-semibold border-b-2 transition-colors whitespace-nowrap shrink-0 ${
                 mobileView === key
                   ? 'border-exchange-yellow text-exchange-text'
                   : 'border-transparent text-exchange-text-third'
@@ -247,21 +248,21 @@ export default function TradePage() {
 
         {/* Mobile Content */}
         <div className="flex-1 min-h-0 overflow-y-auto">
-          {/* DEFAULT: Order form (left) + Order book (right), side by side — the Binance layout */}
+          {/* DEFAULT: Order form full-width (Bybit mobile style). */}
           {mobileView === 'orderbook' && (
-            <div className="flex min-h-0">
-              {/* Left: order form */}
-              <div className="flex-1 min-w-0 border-r border-exchange-border">
-                <TradePanel symbol={symbol} initialPrice={selectedPrice} />
-              </div>
-              {/* Right: order book */}
-              <div className="w-[42%] shrink-0 min-h-0">
-                {isLoadingOrderbook && useStore.getState().orderbook.bids.length === 0 ? (
-                  <SkeletonLoader type="orderbook" />
-                ) : (
-                  <Orderbook onPriceClick={(p) => setSelectedPrice(p)} />
-                )}
-              </div>
+            <div className="min-h-0">
+              <TradePanel symbol={symbol} initialPrice={selectedPrice} />
+            </div>
+          )}
+
+          {/* Order book — its own tab, full width */}
+          {mobileView === 'book' && (
+            <div className="min-h-0">
+              {isLoadingOrderbook && useStore.getState().orderbook.bids.length === 0 ? (
+                <SkeletonLoader type="orderbook" />
+              ) : (
+                <Orderbook onPriceClick={(p) => setSelectedPrice(p)} />
+              )}
             </div>
           )}
 
