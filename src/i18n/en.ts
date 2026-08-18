@@ -286,6 +286,13 @@ const en = {
   'wallet.optional': 'Optional',
   'wallet.warnWithdrawFinal': 'Withdrawals on {network} are irreversible. Double-check the address before submitting.',
   'wallet.warnFinalConfirm': 'Once submitted, this withdrawal cannot be cancelled.',
+  // ── Quantarium-native asset (QTA / QX / QKEY) withdrawal warnings ──
+  'wallet.qtaOnlyTitle': 'Quantarium Network only',
+  'wallet.qtaOnlyWarn': '{coin} can ONLY be sent to a Quantarium Network (chain_id 60000) wallet address. Sending it to any other network — Ethereum (ERC20), BSC (BEP20), Tron, or an exchange address that does not support the Quantarium Network — will result in PERMANENT LOSS of your assets. We cannot recover them.',
+  'wallet.qtaOnlyAddrHint': 'Enter a Quantarium Network address (0x + 40 hex). Other-network / exchange addresses are not allowed.',
+  'wallet.qtaOnlyConfirm': 'I understand {coin} can only be withdrawn to a Quantarium Network address.',
+  'wallet.qtaNotQuantariumAddr': 'This is not a valid Quantarium Network address (must be 0x followed by 40 hex characters).',
+  'wallet.qtaConfirmBanner': 'Destination network: Quantarium Network only. Wrong-network withdrawals are unrecoverable.',
   'wallet.withdrawPendingDesc': 'Your withdrawal is being processed. This typically takes 1-30 minutes depending on network congestion.',
   'wallet.amount': 'Amount',
   'wallet.actions': 'Actions',

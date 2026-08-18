@@ -4,7 +4,7 @@ import {
   Check, Info,
 } from 'lucide-react';
 import { useI18n } from '../../i18n';
-import { getNetworks } from '../../utils/networks';
+import { getNetworks, isQuantariumAsset } from '../../utils/networks';
 import CoinIcon from '../common/CoinIcon';
 import { showToast } from '../common/Toast';
 import api from '../../utils/api';
@@ -30,6 +30,10 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
   const [step, setStep] = useState<Step>('form');
   const [loading, setLoading] = useState(false);
   const [twoFA, setTwoFA] = useState('');
+  // ★ Quantarium-native assets (QTA / QX / QKEY) can ONLY be withdrawn to a
+  //   Quantarium Network address. The user must explicitly acknowledge this
+  //   before they can proceed (wrong-network sends are unrecoverable).
+  const [qtaAck, setQtaAck] = useState(false);
 
   useEffect(() => {
     if (open) {
@@ -39,8 +43,14 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
       setAmount('');
       setStep('form');
       setTwoFA('');
+      setQtaAck(false);
     }
   }, [open, initialCoin]);
+
+  // Reset the acknowledgement whenever the coin changes.
+  useEffect(() => {
+    setQtaAck(false);
+  }, [coin]);
 
   const networks = useMemo(() => getNetworks(coin), [coin]);
   const network = useMemo(
@@ -72,11 +82,20 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
   const priceUsd = wallet?.price_usd || 0;
   const valueUsd = numAmount * priceUsd;
 
+  // ★ Quantarium-native asset flag. QTA / QX / QKEY live only on the
+  //   Quantarium chain (chain_id 60000) and must go to a Quantarium address.
+  const isQta = useMemo(() => isQuantariumAsset(coin), [coin]);
+  const QTA_ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
+
   const addressValid = useMemo(() => {
     if (!address) return null;
+    if (isQta) {
+      // Strict: Quantarium Network address only (0x + 40 hex).
+      return QTA_ADDR_RE.test(address);
+    }
     if (!network) return null;
     return network.addressRegex.test(address);
-  }, [address, network]);
+  }, [address, network, isQta]);
 
   const amountValid = useMemo(() => {
     if (!numAmount) return null;
@@ -86,7 +105,11 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
     return true;
   }, [numAmount, network, withdrawable, fee]);
 
-  const canProceed = addressValid === true && amountValid === true && (!network?.memoRequired || memo.trim());
+  const canProceed =
+    addressValid === true &&
+    amountValid === true &&
+    (!network?.memoRequired || memo.trim()) &&
+    (!isQta || qtaAck); // Quantarium assets require the acknowledgement
 
   const setPercent = (p: number) => {
     const v = (withdrawable * p) / 100;
@@ -94,6 +117,13 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
   };
 
   const submitWithdraw = async () => {
+    // ★ Final client-side safety net for Quantarium-native assets: the
+    //   destination MUST be a Quantarium Network address (0x + 40 hex).
+    if (isQta && !QTA_ADDR_RE.test(address)) {
+      showToast('error', t('wallet.qtaOnlyTitle'), t('wallet.qtaNotQuantariumAddr'));
+      setStep('form');
+      return;
+    }
     setLoading(true);
     try {
       await api.post('/wallet/withdraw', {
@@ -222,23 +252,62 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
               </div>
             </div>
 
+            {/* ★ Quantarium-only warning banner (QTA / QX / QKEY) */}
+            {isQta && (
+              <div className="bg-exchange-sell/10 border-2 border-exchange-sell/40 rounded-lg p-3.5 space-y-2">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle size={16} className="text-exchange-sell shrink-0" />
+                  <span className="text-sm font-bold text-exchange-sell">
+                    {t('wallet.qtaOnlyTitle')}
+                  </span>
+                </div>
+                <p className="text-[11px] leading-relaxed text-exchange-text-secondary">
+                  {t('wallet.qtaOnlyWarn', { coin })}
+                </p>
+                <label className="flex items-start gap-2 cursor-pointer pt-1 select-none">
+                  <input
+                    type="checkbox"
+                    checked={qtaAck}
+                    onChange={e => setQtaAck(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--color-exchange-sell)] cursor-pointer"
+                  />
+                  <span className="text-[11px] font-medium text-exchange-text">
+                    {t('wallet.qtaOnlyConfirm', { coin })}
+                  </span>
+                </label>
+              </div>
+            )}
+
             {/* Address */}
             <div>
               <label className="text-xs text-exchange-text-third mb-1.5 block font-medium">
                 {t('wallet.withdrawAddress')}
+                {isQta && (
+                  <span className="ml-1 text-exchange-yellow">
+                    · {t('wallet.qtaOnlyTitle')}
+                  </span>
+                )}
               </label>
               <input
                 type="text"
                 value={address}
                 onChange={e => setAddress(e.target.value.trim())}
-                placeholder={network?.addressExample}
+                placeholder={isQta ? '0x...' : network?.addressExample}
+                disabled={isQta && !qtaAck}
                 className={`input-field w-full text-xs font-mono ${
                   addressValid === false ? 'border-exchange-sell/50' : ''
-                }`}
+                } ${isQta && !qtaAck ? 'opacity-50 cursor-not-allowed' : ''}`}
               />
+              {isQta && (
+                <p className="text-[10px] text-exchange-text-third mt-1 flex items-start gap-1">
+                  <Info size={11} className="shrink-0 mt-0.5" />
+                  {t('wallet.qtaOnlyAddrHint')}
+                </p>
+              )}
               {addressValid === false && (
                 <p className="text-[11px] text-exchange-sell mt-1 flex items-center gap-1">
-                  <AlertTriangle size={11} /> {t('wallet.invalidAddress')}
+                  <AlertTriangle size={11} />{' '}
+                  {isQta ? t('wallet.qtaNotQuantariumAddr') : t('wallet.invalidAddress')}
                 </p>
               )}
               {addressValid === true && (
@@ -412,6 +481,16 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
               />
               <p className="text-[10px] text-exchange-text-third mt-1">{t('wallet.twoFactorDesc')}</p>
             </div>
+
+            {/* ★ Quantarium-only re-warning on final confirm */}
+            {isQta && (
+              <div className="bg-exchange-sell/10 border-2 border-exchange-sell/40 rounded-lg p-3 text-[11px] text-exchange-text-secondary flex items-start gap-2">
+                <AlertTriangle size={14} className="text-exchange-sell shrink-0 mt-0.5" />
+                <span className="font-medium text-exchange-text">
+                  {t('wallet.qtaConfirmBanner')}
+                </span>
+              </div>
+            )}
 
             <div className="bg-exchange-sell/5 border border-exchange-sell/20 rounded-lg p-3 text-[11px] text-exchange-text-secondary flex items-start gap-2">
               <AlertTriangle size={13} className="text-exchange-sell shrink-0 mt-0.5" />

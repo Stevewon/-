@@ -286,6 +286,13 @@ const ko = {
   'wallet.optional': '\uc120\ud0dd',
   'wallet.warnWithdrawFinal': '{network} \ub124\ud2b8\uc6cc\ud06c\uc758 \ucd9c\uae08\uc740 \ub418\ub3cc\ub9b4 \uc218 \uc5c6\uc2b5\ub2c8\ub2e4. \uc2e0\uccad \uc804 \uc8fc\uc18c\ub97c \ubc18\ub4dc\uc2dc \ud655\uc778\ud574\uc8fc\uc138\uc694.',
   'wallet.warnFinalConfirm': '\uc2e0\uccad \uc774\ud6c4\uc5d0\ub294 \ucd9c\uae08\uc744 \ucde8\uc18c\ud560 \uc218 \uc5c6\uc2b5\ub2c8\ub2e4.',
+  // ── 퀀타리움 자체 자산(QTA / QX / QKEY) 출금 경고 ──
+  'wallet.qtaOnlyTitle': '퀀타리움 네트워크 전용',
+  'wallet.qtaOnlyWarn': '{coin}은(는) 반드시 퀀타리움 네트워크(chain_id 60000) 지갑주소로만 출금됩니다. 이더리움(ERC20)·BSC(BEP20)·트론 등 다른 네트워크 주소나, 퀀타리움 네트워크를 지원하지 않는 거래소 주소로 보내면 자산이 영구히 사라지며 절대 복구할 수 없습니다.',
+  'wallet.qtaOnlyAddrHint': '퀀타리움 네트워크 주소(0x + 40자리 16진수)를 입력하세요. 다른 네트워크·거래소 주소는 넣을 수 없습니다.',
+  'wallet.qtaOnlyConfirm': '{coin}은(는) 퀀타리움 네트워크 주소로만 출금된다는 것을 이해했습니다.',
+  'wallet.qtaNotQuantariumAddr': '올바른 퀀타리움 네트워크 주소가 아닙니다. (0x 뒤에 16진수 40자리여야 합니다.)',
+  'wallet.qtaConfirmBanner': '출금 네트워크: 퀀타리움 네트워크 전용. 다른 네트워크로 출금하면 복구가 불가능합니다.',
   'wallet.withdrawPendingDesc': '\ucd9c\uae08\uc774 \ucc98\ub9ac \uc911\uc785\ub2c8\ub2e4. \ub124\ud2b8\uc6cc\ud06c \uc0c1\ud0dc\uc5d0 \ub530\ub77c \ubcf4\ud1b5 1~30\ubd84 \uc815\ub3c4 \uc18c\uc694\ub429\ub2c8\ub2e4.',
   'wallet.amount': '\uc218\ub7c9',
   'wallet.actions': '\ub3d9\uc791',
