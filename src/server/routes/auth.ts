@@ -1350,13 +1350,14 @@ app.get('/referrals/check/:code', async (c) => {
     return c.json({ valid: false }, 200);
   }
   const owner = await c.env.DB.prepare(
-    `SELECT nickname FROM users WHERE referral_code = ?`
-  ).bind(code).first<{ nickname: string } | null>();
+    `SELECT id FROM users WHERE referral_code = ?`
+  ).bind(code).first<{ id: string } | null>();
+  // Privacy (2026-08-18, owner directive): NEVER leak the referrer's identity.
+  // We only confirm whether the code is valid — no nickname, no masked hint,
+  // nothing that could identify who owns the code. The signup UI shows a
+  // generic "valid code" confirmation only.
   if (!owner) return c.json({ valid: false });
-  // Mask: show first 2 chars + "*"
-  const nick = owner.nickname || '';
-  const masked = nick.length <= 2 ? nick : nick.slice(0, 2) + '*'.repeat(Math.max(1, nick.length - 2));
-  return c.json({ valid: true, masked_nickname: masked });
+  return c.json({ valid: true });
 });
 
 // ============================================================================

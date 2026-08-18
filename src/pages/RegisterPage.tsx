@@ -130,7 +130,6 @@ export default function RegisterPage() {
   const [showRef, setShowRef] = useState(false);
   const [refCheck, setRefCheck] = useState<{
     state: 'idle' | 'checking' | 'valid' | 'invalid';
-    masked?: string;
   }>({ state: 'idle' });
   const [searchParams] = useSearchParams();
   const [showPw, setShowPw] = useState(false);
@@ -319,7 +318,9 @@ export default function RegisterPage() {
       try {
         const r = await api.get(`/auth/referrals/check/${encodeURIComponent(code)}`);
         if (r.data?.valid) {
-          setRefCheck({ state: 'valid', masked: r.data.masked_nickname });
+          // Privacy: the API no longer returns the referrer's identity; we
+          // only confirm the code is valid.
+          setRefCheck({ state: 'valid' });
         } else {
           setRefCheck({ state: 'invalid' });
         }
@@ -649,7 +650,7 @@ export default function RegisterPage() {
               {refCheck.state === 'valid' && (
                 <p className="mt-2 text-[13px] text-exchange-buy flex items-center gap-1.5">
                   <Gift size={14} />
-                  Referred by <b>{refCheck.masked}</b> — you'll both get a QTA bonus!
+                  Valid referral code — you'll both get a QTA bonus!
                 </p>
               )}
               {refCheck.state === 'invalid' && refCode.length >= 4 && (

@@ -143,7 +143,6 @@ export default function LoginPage() {
   const [showRef, setShowRef] = useState(false);
   const [refCheck, setRefCheck] = useState<{
     state: 'idle' | 'checking' | 'valid' | 'invalid';
-    masked?: string;
   }>({ state: 'idle' });
 
   const [mode, setMode] = useState<'email' | 'phone'>('email');
@@ -250,7 +249,8 @@ export default function LoginPage() {
       try {
         const r = await api.get(`/auth/referrals/check/${encodeURIComponent(code)}`);
         if (r.data?.valid) {
-          setRefCheck({ state: 'valid', masked: r.data.masked_nickname });
+          // Privacy: API no longer returns the referrer's identity.
+          setRefCheck({ state: 'valid' });
         } else {
           setRefCheck({ state: 'invalid' });
         }
@@ -1005,9 +1005,9 @@ export default function LoginPage() {
                     ({t('auth.optional') || '선택'})
                   </span>
                 </label>
-                {refCheck.state === 'valid' && refCheck.masked && (
+                {refCheck.state === 'valid' && (
                   <span className="flex items-center gap-1 text-[12px] sm:text-[13px] text-exchange-buy">
-                    <Check size={13} /> {refCheck.masked}
+                    <Check size={13} /> {t('auth.refCodeValid') || '유효한 코드'}
                   </span>
                 )}
                 {refCheck.state === 'invalid' && (
