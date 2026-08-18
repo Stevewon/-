@@ -478,6 +478,19 @@ const ko = {
   'profile.logoutMsg': '\ub85c\uadf8\uc544\uc6c3',
   'profile.logoutDesc': '\uc548\uc804\ud558\uac8c \ub85c\uadf8\uc544\uc6c3\ub418\uc5c8\uc2b5\ub2c8\ub2e4',
 
+  // Language / Country selection
+  'lang.title': '\uc5b8\uc5b4',
+  'lang.desc': '\uc0ac\uc6a9\ud560 \uc5b8\uc5b4\ub97c \uc120\ud0dd\ud558\uc138\uc694',
+  'lang.select': '\uc5b8\uc5b4 \uc120\ud0dd',
+  'lang.saved': '\uc5b8\uc5b4\uac00 \ubcc0\uacbd\ub418\uc5c8\uc2b5\ub2c8\ub2e4',
+  'country.title': '\uac70\uc8fc \uad6d\uac00\ub97c \uc120\ud0dd\ud558\uc138\uc694',
+  'country.select': '\uc9c0\uc5ed',
+  'country.placeholder': '\uad6d\uac00/\uc9c0\uc5ed\uc744 \uc120\ud0dd\ud558\uc138\uc694',
+  'country.search': '\uad6d\uac00 \uac80\uc0c9',
+  'country.desc': '\uac70\uc8fc \uad6d\uac00 \ub610\ub294 \uc9c0\uc5ed\uc744 \uc120\ud0dd\ud558\uc138\uc694',
+  'auth.refCodeValid': '\uc720\ud6a8\ud55c \ucf54\ub4dc',
+  // NOTE: 'auth.optional' already defined below in the Register form section.
+
   // Order History
   'orderHistory.title': '\uc8fc\ubb38 \ub0b4\uc5ed',
   'orderHistory.tradeTitle': '\uccb4\uacb0 \ub0b4\uc5ed',

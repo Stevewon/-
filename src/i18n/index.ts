@@ -1,26 +1,53 @@
 import { create } from 'zustand';
 import ko from './ko';
 import en from './en';
+import { LANGUAGE_CODES, RTL_LANGS, isSelectableLang } from './languages';
 
-type Lang = 'ko' | 'en';
+/**
+ * Supported language codes.
+ *   - The full user-selectable set lives in ./languages.ts (English default,
+ *     major-country languages, NO Korean).
+ *   - Korean ('ko') still exists as an internal/operator locale, unlocked only
+ *     via ?lang=ko / localStorage / window.QUANTAEX_KO_UNLOCK. It is NEVER
+ *     shown in the language selector.
+ */
+type Lang = string;
 type TranslationKey = keyof typeof en;
 
-const translations: Record<Lang, Record<string, string>> = { ko, en };
+/**
+ * Translation bundles. English and Korean have full bundles. Every other
+ * selectable language currently maps to the English bundle as its base — the
+ * `t()` lookup already falls back to English for any missing key, so adding a
+ * partial bundle later (e.g. `ja`) will progressively localize without any
+ * code change: just add `import ja from './ja'` and a `ja` entry here.
+ */
+const translations: Record<string, Record<string, string>> = {
+  en,
+  ko,
+  // Major-country languages fall back to English until dedicated bundles are
+  // added. They are listed so `t()` resolves and the selector works today.
+  zh: en,
+  'zh-TW': en,
+  ja: en,
+  es: en,
+  pt: en,
+  fr: en,
+  de: en,
+  ru: en,
+  tr: en,
+  vi: en,
+  id: en,
+  th: en,
+  ar: en,
+};
 
 interface I18nStore {
   lang: Lang;
   /**
-   * Whether the Korean locale is exposed in user-facing UI (LangSwitch button,
-   * settings menus). True only when the current session was opened with
-   * `?lang=ko`, when localStorage already has a Korean preference, or when
-   * the operator opted in via window.QUANTAEX_KO_UNLOCK = true.
-   *
-   * Sprint 5 Phase G2 (offshore-exchange compliance, option A):
-   *   - Default users see English-only UI; Korean stays present in the bundle
-   *     for operators / internal use but is not advertised.
-   *   - The query parameter unlocks the LangSwitch widget for the current
-   *     session and persists the choice in localStorage so refreshes don't
-   *     bounce the operator back to English.
+   * Whether the Korean locale is exposed in user-facing UI. True only when the
+   * session was opened with `?lang=ko`, localStorage already has a Korean
+   * preference, or the operator opted in via window.QUANTAEX_KO_UNLOCK = true.
+   * Korean is NEVER shown in the standard language selector regardless.
    */
   koUnlocked: boolean;
   setLang: (lang: Lang) => void;
@@ -28,13 +55,13 @@ interface I18nStore {
 }
 
 /**
- * Resolve the initial UI language without leaking Korean to default visitors
- * coming from blocked / restricted regions. Selection priority:
- *   1. URL query parameter `?lang=ko` or `?lang=en` (operator unlock)
- *   2. localStorage `quantaex_lang` (returning visitor / persisted unlock)
- *   3. Hard-coded English default — IMPORTANT: we DO NOT use
- *      navigator.language so Korean residents are not auto-served Korean,
- *      which would contradict the offshore-exchange policy.
+ * Resolve the initial UI language. English is the hard default. We DO NOT use
+ * navigator.language so Korean residents are not auto-served Korean (offshore
+ * policy). Selection priority:
+ *   1. URL query `?lang=<code>` (must be a selectable language, or `ko` for
+ *      the operator unlock)
+ *   2. localStorage `quantaex_lang`
+ *   3. English default.
  */
 const getSavedLang = (): Lang => {
   if (typeof window === 'undefined') return 'en';
@@ -42,10 +69,7 @@ const getSavedLang = (): Lang => {
   try {
     const params = new URLSearchParams(window.location.search);
     const queryLang = params.get('lang');
-    if (queryLang === 'ko' || queryLang === 'en') {
-      // Persist immediately so the operator doesn't have to re-pass ?lang=ko
-      // on every navigation. Wrapped in try because some sandboxed iframes
-      // disable storage.
+    if (queryLang && (isSelectableLang(queryLang) || queryLang === 'ko')) {
       try { localStorage.setItem('quantaex_lang', queryLang); } catch (_) { /* ignore */ }
       return queryLang;
     }
@@ -53,22 +77,16 @@ const getSavedLang = (): Lang => {
 
   try {
     const saved = localStorage.getItem('quantaex_lang');
-    if (saved === 'ko' || saved === 'en') return saved;
+    if (saved && (isSelectableLang(saved) || saved === 'ko')) return saved;
   } catch (_) { /* storage disabled — fall through */ }
 
   return 'en';
 };
 
 /**
- * The Korean LangSwitch widget is exposed only when one of the following is
- * true (kept in lock-step with getSavedLang above):
- *   - Current visit explicitly carries `?lang=ko` (operator unlocking)
- *   - localStorage already has 'quantaex_lang' = 'ko' (persisted unlock)
- *   - window.QUANTAEX_KO_UNLOCK === true (debug / e2e override)
- *
- * Sprint 5 Phase G2: hides the Korean toggle from default global users so
- * the SPA presents an English-only surface unless the operator deliberately
- * opted in.
+ * The Korean locale is "unlocked" (usable) only when explicitly requested by
+ * an operator; it never appears in the selector. Kept in lock-step with
+ * getSavedLang.
  */
 const detectKoUnlocked = (): boolean => {
   if (typeof window === 'undefined') return false;
@@ -83,18 +101,22 @@ const detectKoUnlocked = (): boolean => {
   return false;
 };
 
+const applyDocumentLang = (lang: Lang) => {
+  if (typeof document === 'undefined') return;
+  document.documentElement.lang = lang;
+  document.documentElement.dir = RTL_LANGS.has(lang) ? 'rtl' : 'ltr';
+};
+
 export const useI18n = create<I18nStore>((set, get) => ({
   lang: getSavedLang(),
   koUnlocked: detectKoUnlocked(),
   setLang: (lang: Lang) => {
-    try { localStorage.setItem('quantaex_lang', lang); } catch (_) { /* ignore */ }
-    if (typeof document !== 'undefined') {
-      document.documentElement.lang = lang;
-    }
-    // Switching to Korean implicitly unlocks the toggle for the rest of the
-    // session; switching to English keeps the toggle visible if it was
-    // already unlocked, so the operator can flip back.
-    set({ lang, koUnlocked: lang === 'ko' ? true : get().koUnlocked });
+    // Only accept a known bundle. Unknown codes fall back to English so a bad
+    // value can never blank the UI.
+    const next = translations[lang] ? lang : 'en';
+    try { localStorage.setItem('quantaex_lang', next); } catch (_) { /* ignore */ }
+    applyDocumentLang(next);
+    set({ lang: next, koUnlocked: next === 'ko' ? true : get().koUnlocked });
   },
   t: (key: string, params?: Record<string, string | number>) => {
     const { lang } = get();
@@ -108,4 +130,10 @@ export const useI18n = create<I18nStore>((set, get) => ({
   },
 }));
 
+// Apply the initial document lang/dir on module load (client only).
+if (typeof window !== 'undefined') {
+  applyDocumentLang(getSavedLang());
+}
+
+export { LANGUAGE_CODES };
 export type { Lang, TranslationKey };

@@ -6,6 +6,7 @@ import { useI18n } from '../i18n';
 import api from '../utils/api';
 import AuthLayout from '../components/common/AuthLayout';
 import Turnstile from '../components/Turnstile';
+import CountrySelect from '../components/common/CountrySelect';
 
 // ----------------------------------------------------------------------------
 // Google Identity Services (GIS) SDK loader — mirrors LoginPage.tsx.
@@ -124,6 +125,9 @@ export default function RegisterPage() {
   const [mode, setMode] = useState<'email' | 'phone'>('email');
   const [email, setEmail] = useState('');
   const [nickname, setNickname] = useState('');
+  // "Where do you live?" residency self-declaration (Bybit-style). Stored on
+  // the profile; does NOT change the UI language (English default).
+  const [country, setCountry] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPw, setConfirmPw] = useState('');
   const [refCode, setRefCode] = useState('');
@@ -182,6 +186,7 @@ export default function RegisterPage() {
       const payload: any = { idToken };
       const code = refCode.trim().toUpperCase();
       if (code && refCheck.state === 'valid') payload.refCode = code;
+      if (country) payload.country = country;
 
       const res = await api.post('/auth/google', payload);
       setAuth(res.data.user, res.data.token);
@@ -343,6 +348,7 @@ export default function RegisterPage() {
     rules.letter &&
     rules.number &&
     rules.match &&
+    !!country &&
     agreeTerms;
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -354,6 +360,7 @@ export default function RegisterPage() {
     if (!rules.length || !rules.letter || !rules.number)
       return setError(t('auth.passwordRulesFail'));
     if (!rules.match) return setError(t('auth.passwordMismatch'));
+    if (!country) return setError(t('country.desc'));
     if (!agreeTerms) return setError(t('auth.mustAgreeTerms'));
     // Block submit if a referral code is entered but is invalid.
     if (refCode && refCheck.state === 'invalid') {
@@ -366,6 +373,7 @@ export default function RegisterPage() {
         email,
         password,
         nickname,
+        country: country || undefined,
         ref_code: refCode || undefined,
         agree_marketing: agreeMarketing,
         agree_terms: agreeTerms,
@@ -602,6 +610,15 @@ export default function RegisterPage() {
             </button>
           </div>
         </FieldWrap>
+
+        {/* Where do you live? — residency self-declaration (Bybit-style).
+            Stored on the profile; does NOT change the UI language. */}
+        <div>
+          <label className="block text-[14px] font-medium text-exchange-text-secondary mb-2">
+            {t('country.title')}
+          </label>
+          <CountrySelect value={country} onChange={setCountry} />
+        </div>
 
         {/* Referral code */}
         <div>

@@ -478,6 +478,20 @@ const en = {
   'profile.logoutMsg': 'Logged out',
   'profile.logoutDesc': 'You have been safely logged out',
 
+  // Language / Country selection
+  'lang.title': 'Language',
+  'lang.desc': 'Choose your preferred language',
+  'lang.select': 'Select language',
+  'lang.saved': 'Language updated',
+  'country.title': 'Where do you live?',
+  'country.select': 'Location',
+  'country.placeholder': 'Select your country / region',
+  'country.search': 'Search country',
+  'country.desc': 'Select your country or region of residence',
+  'auth.refCodeValid': 'Valid code',
+  // NOTE: 'auth.optional' already exists further below in the Register form
+  // section — do not redefine here to avoid a duplicate-key warning.
+
   // Order History
   'orderHistory.title': 'Order History',
   'orderHistory.tradeTitle': 'Trade History',

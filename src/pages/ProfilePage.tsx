@@ -4,10 +4,11 @@ import useStore from '../store/useStore';
 import { useI18n } from '../i18n';
 import api from '../utils/api';
 import { showToast } from '../components/common/Toast';
+import LanguageSelector from '../components/common/LanguageSelector';
 import {
   User, Shield, Mail, Clock, CheckCircle2, AlertCircle, XCircle,
   ChevronRight, LogOut, Lock, Smartphone, FileText, Key, Edit2,
-  CheckCircle, Eye, EyeOff, Bell, DollarSign, Gift,
+  CheckCircle, Eye, EyeOff, Bell, DollarSign, Gift, Globe,
 } from 'lucide-react';
 
 export default function ProfilePage() {
@@ -220,6 +221,21 @@ export default function ProfilePage() {
             <ChevronRight size={16} className="text-exchange-text-third" />
           </Link>
         ))}
+      </div>
+
+      {/* Language settings — major-country languages, English default.
+          Korean is intentionally not offered (browser Google Translate only). */}
+      <div className="bg-exchange-card rounded-xl border border-exchange-border p-4 mb-4">
+        <div className="flex items-center gap-3 mb-3">
+          <div className="w-9 h-9 bg-exchange-yellow/10 rounded-lg flex items-center justify-center">
+            <Globe size={17} className="text-exchange-yellow" />
+          </div>
+          <div className="flex-1">
+            <div className="text-sm font-medium text-exchange-text">{t('lang.title')}</div>
+            <div className="text-[11px] text-exchange-text-third">{t('lang.desc')}</div>
+          </div>
+        </div>
+        <LanguageSelector variant="full" />
       </div>
 
       {/* Logout */}

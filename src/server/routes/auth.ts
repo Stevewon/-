@@ -266,6 +266,12 @@ app.post('/register', rlRegister, turnstile, async (c) => {
   const password = (body.password || '').toString();
   const nickname = (body.nickname || '').toString().trim();
   const refCode = body.ref_code ? String(body.ref_code).trim().toUpperCase() : null;
+  // Residency self-declaration ("Where do you live?" step, Bybit-style).
+  // ISO-3166-1 alpha-2. Stored on the profile for compliance/analytics; does
+  // NOT affect UI language. Optional for backward-compat with older clients.
+  const country = body.country
+    ? String(body.country).trim().toUpperCase().slice(0, 2)
+    : null;
   // Date-of-birth / 18+ age gate REMOVED 2026-08-13 by boss directive.
   // The users.date_of_birth column is kept for historical rows so migrations
   // still work, but new signups leave it NULL. If date_of_birth is submitted
@@ -342,6 +348,16 @@ app.post('/register', rlRegister, turnstile, async (c) => {
       await c.env.DB.prepare(
         "INSERT INTO user_meta (user_id, key, value) VALUES (?, 'ref_code', ?) ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value"
       ).bind(id, refCode).run();
+    } catch { /* table may not exist yet; ignore */ }
+  }
+
+  // Persist residency country (from the "Where do you live?" step) to
+  // user_meta. Kept out of a schema migration so it can't break signup.
+  if (country && /^[A-Z]{2}$/.test(country)) {
+    try {
+      await c.env.DB.prepare(
+        "INSERT INTO user_meta (user_id, key, value) VALUES (?, 'residency_country', ?) ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value"
+      ).bind(id, country).run();
     } catch { /* table may not exist yet; ignore */ }
   }
 
@@ -918,6 +934,11 @@ app.post('/google', rlLogin, async (c) => {
   const refCode = body?.refCode || body?.ref_code
     ? String(body.refCode || body.ref_code).trim().toUpperCase()
     : null;
+  // Optional residency country for brand-new Google signups (Bybit-style
+  // "Where do you live?"). Ignored on existing-user flows.
+  const gCountry = body?.country
+    ? String(body.country).trim().toUpperCase().slice(0, 2)
+    : null;
   if (!idToken) return c.json({ error: 'idToken required' }, 400);
 
   const expectedAud = (c.env as any).GOOGLE_OAUTH_CLIENT_ID;
@@ -1076,6 +1097,15 @@ app.post('/google', rlLogin, async (c) => {
     let myReferralCode = '';
     try { myReferralCode = await allocateReferralCode(c.env.DB, id); }
     catch (e) { console.warn('[google] referral code alloc failed:', e); }
+
+    // Persist residency country from the "Where do you live?" step.
+    if (gCountry && /^[A-Z]{2}$/.test(gCountry)) {
+      try {
+        await c.env.DB.prepare(
+          "INSERT INTO user_meta (user_id, key, value) VALUES (?, 'residency_country', ?) ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value"
+        ).bind(id, gCountry).run();
+      } catch { /* table may not exist yet; ignore */ }
+    }
 
     // Default wallets. Email is verified by Google → QX welcome bonus
     // goes straight to AVAILABLE (not locked) since we already trust the
