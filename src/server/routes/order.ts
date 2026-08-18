@@ -162,19 +162,23 @@ app.post('/', authMiddleware, rlPlaceOrder, requireKyc('approved'), async (c) =>
       lockAmount = estPrice * amount * 1.2 * (1 + takerTier.taker_fee);
     }
 
-    const wallet = await c.env.DB.prepare('SELECT available FROM wallets WHERE user_id = ? AND coin_symbol = ?').bind(user.id, quote).first() as any;
-    if (!wallet || wallet.available < lockAmount) return c.json({ error: 'Insufficient balance' }, 400);
-
-    await c.env.DB.prepare('UPDATE wallets SET available = available - ?, locked = locked + ? WHERE user_id = ? AND coin_symbol = ?')
-      .bind(lockAmount, lockAmount, user.id, quote).run();
+    // ★ A1 fix: atomic conditional debit. The `AND available >= ?` guard makes
+    //   the balance check + debit a single indivisible operation, so two
+    //   concurrent orders can never both pass and over-commit the wallet.
+    const res = await c.env.DB.prepare(
+      'UPDATE wallets SET available = available - ?, locked = locked + ? ' +
+      'WHERE user_id = ? AND coin_symbol = ? AND available >= ?'
+    ).bind(lockAmount, lockAmount, user.id, quote, lockAmount).run();
+    if (!res.meta || res.meta.changes === 0) return c.json({ error: 'Insufficient balance' }, 400);
   } else {
     lockSymbol = base;
     lockAmount = amount;
-    const wallet = await c.env.DB.prepare('SELECT available FROM wallets WHERE user_id = ? AND coin_symbol = ?').bind(user.id, base).first() as any;
-    if (!wallet || wallet.available < amount) return c.json({ error: 'Insufficient balance' }, 400);
-
-    await c.env.DB.prepare('UPDATE wallets SET available = available - ?, locked = locked + ? WHERE user_id = ? AND coin_symbol = ?')
-      .bind(amount, amount, user.id, base).run();
+    // ★ A1 fix: atomic conditional debit (see buy-side note above).
+    const res = await c.env.DB.prepare(
+      'UPDATE wallets SET available = available - ?, locked = locked + ? ' +
+      'WHERE user_id = ? AND coin_symbol = ? AND available >= ?'
+    ).bind(amount, amount, user.id, base, amount).run();
+    if (!res.meta || res.meta.changes === 0) return c.json({ error: 'Insufficient balance' }, 400);
   }
 
   const orderId = uuid();

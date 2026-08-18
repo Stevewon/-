@@ -275,11 +275,17 @@ chain.post('/qta/admin/withdrawals/:id/approve', authMiddleware, adminMiddleware
   // the real tx_hash) or back to 'failed'. See cron-worker/src/index.ts →
   // processQtaWithdrawals().
   const now = new Date().toISOString();
-  await c.env.DB.prepare(
+  // ★ A2 fix: only transition rows still in 'pending' (atomic claim). A
+  //   duplicate/concurrent approve sees changes === 0 and is rejected, so a
+  //   row can't be double-queued for the cron signer.
+  const claim = await c.env.DB.prepare(
     `UPDATE qta_withdrawals
      SET status = 'broadcasting', approved_by = ?, approved_at = ?, updated_at = ?
-     WHERE id = ?`
+     WHERE id = ? AND status = 'pending'`
   ).bind(admin.id, now, now, id).run();
+  if (!claim.meta || claim.meta.changes === 0) {
+    return c.json({ ok: false, error: 'invalid_status' }, 409);
+  }
 
   await logAdminAction(c, {
     action: 'qta.withdraw.approve',
@@ -335,18 +341,23 @@ chain.post('/qta/admin/withdrawals/:id/manual-complete', authMiddleware, adminMi
   // on completion we simply drop it from locked (do NOT return to available).
   const asset = String(row.asset || 'QTA').toUpperCase();
   const lockedDelta = Number(row.amount || 0) + Number(row.fee || 0);
-  await c.env.DB.batch([
-    c.env.DB.prepare(
-      `UPDATE qta_withdrawals
-       SET status = 'confirmed', tx_hash = ?, broadcast_at = ?, confirmed_at = ?,
-           approved_by = COALESCE(approved_by, ?), updated_at = ?
-       WHERE id = ? AND status IN ('broadcasting','pending')`
-    ).bind(txHash, now, now, admin.id, now, id),
-    c.env.DB.prepare(
-      `UPDATE wallets SET locked = MAX(0, locked - ?)
-       WHERE user_id = ? AND coin_symbol = ?`
-    ).bind(lockedDelta, row.user_id, asset),
-  ]);
+  // ★ A2 fix: claim the transition FIRST; only debit locked funds if THIS
+  //   call flipped the row to 'confirmed' (changes === 1). Previously the
+  //   wallet debit ran unconditionally in the same batch, so a duplicate
+  //   manual-complete on an already-confirmed row would drop `locked` twice.
+  const claim = await c.env.DB.prepare(
+    `UPDATE qta_withdrawals
+     SET status = 'confirmed', tx_hash = ?, broadcast_at = ?, confirmed_at = ?,
+         approved_by = COALESCE(approved_by, ?), updated_at = ?
+     WHERE id = ? AND status IN ('broadcasting','pending')`
+  ).bind(txHash, now, now, admin.id, now, id).run();
+  if (!claim.meta || claim.meta.changes === 0) {
+    return c.json({ ok: false, error: 'invalid_status' }, 409);
+  }
+  await c.env.DB.prepare(
+    `UPDATE wallets SET locked = MAX(0, locked - ?)
+     WHERE user_id = ? AND coin_symbol = ?`
+  ).bind(lockedDelta, row.user_id, asset).run();
 
   await logAdminAction(c, {
     action: 'qta.withdraw.manual_complete',
@@ -370,19 +381,33 @@ chain.post('/qta/admin/withdrawals/:id/reject', authMiddleware, adminMiddleware,
   const reason = String(body.reason || 'rejected by admin').slice(0, 200);
 
   const row = await c.env.DB.prepare(
-    `SELECT status FROM qta_withdrawals WHERE id = ?`
+    `SELECT user_id, amount, fee, asset, status FROM qta_withdrawals WHERE id = ?`
   ).bind(id).first<any>();
   if (!row) return c.json({ ok: false, error: 'not_found' }, 404);
-  if (row.status !== 'pending') {
+  if (row.status !== 'pending' && row.status !== 'broadcasting') {
     return c.json({ ok: false, error: 'invalid_status', status: row.status }, 409);
   }
 
   const now = new Date().toISOString();
-  await c.env.DB.prepare(
+  // ★ A2 fix: claim the state transition atomically. Only the call that
+  //   actually flipped the row to 'rejected' (changes === 1) performs the
+  //   refund, so a duplicate/concurrent reject cannot refund twice.
+  const claim = await c.env.DB.prepare(
     `UPDATE qta_withdrawals
      SET status = 'rejected', rejected_reason = ?, approved_by = ?, approved_at = ?, updated_at = ?
-     WHERE id = ?`
+     WHERE id = ? AND status IN ('pending','broadcasting')`
   ).bind(reason, admin.id, now, now, id).run();
+  if (!claim.meta || claim.meta.changes === 0) {
+    return c.json({ ok: false, error: 'invalid_status' }, 409);
+  }
+  // Refund the locked funds back to available (amount+fee was moved
+  // available -> locked when the user requested the withdrawal).
+  const asset = String(row.asset || 'QTA').toUpperCase();
+  const refund = Number(row.amount || 0) + Number(row.fee || 0);
+  await c.env.DB.prepare(
+    `UPDATE wallets SET available = available + ?, locked = MAX(0, locked - ?)
+     WHERE user_id = ? AND coin_symbol = ?`
+  ).bind(refund, refund, row.user_id, asset).run();
 
   await logAdminAction(c, {
     action: 'qta.withdraw.reject',

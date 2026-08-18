@@ -9,10 +9,10 @@
 
 | # | 심각도 | 위치 | 문제 | 상태 |
 |---|--------|------|------|------|
-| A1 | 🔴 CRITICAL | order.ts, wallet.ts | 잔액 차감이 원자적이지 않음 → 동시 요청 시 **초과 인출/초과 주문** 가능 (race condition) | 미수정 |
-| A2 | 🔴 CRITICAL | admin.ts 출금 승인/거부 | check-then-act → 관리자 **이중 승인/이중 환불** 가능 | 미수정 |
-| A3 | 🟠 HIGH | wallet.ts deposit, admin credit | 입금/크레딧 승인 **멱등성(idempotency) 부재** → 재시도 시 이중 크레딧 가능 | 확인 필요 |
-| A4 | 🟠 HIGH | 전반 | 잔액 이동에 **DB 트랜잭션(원자성)** 미보장 — D1 batch는 트랜잭션이지만 SELECT→UPDATE 구간은 밖 | 미수정 |
+| A1 | 🔴 CRITICAL | order.ts, wallet.ts | 잔액 차감이 원자적이지 않음 → 동시 요청 시 **초과 인출/초과 주문** 가능 (race condition) | ✅ 수정완료 (조건부 UPDATE + changes 판정) |
+| A2 | 🔴 CRITICAL | admin.ts, chain.ts 출금 승인/거부/완료 | check-then-act → 관리자 **이중 승인/이중 환불** 가능 | ✅ 수정완료 (상태전이 먼저 claim, 성공 시에만 잔액이동). QTA 거부 시 환불 누락 버그도 함께 수정 |
+| A3 | 🟠 HIGH | cron 입금 크레딧, admin 수동크레딧 | 입금/크레딧 **멱등성(idempotency) 부재** → 재시도 시 이중 크레딧 가능 | ✅ 수정완료 (크론 credit을 EXISTS 가드로 종속, 수동크레딧 idempotency_key + tx_hash UNIQUE 인덱스 0042) |
+| A4 | 🟠 HIGH | 전반 | 잔액 이동에 **DB 트랜잭션(원자성)** 미보장 — D1 batch는 트랜잭션이지만 SELECT→UPDATE 구간은 밖 | ✅ 해소 (A1 조건부 UPDATE로 SELECT 의존 제거) |
 | B1 | 🟢 OK | wallet.ts 출금 회계 | gross/net/fee 계산 일관 (lock=amount, 저장=net+fee) | 정상 |
 | B2 | 🟢 OK | 회사지급분 출금차단 | available_initial 2중 방어 (유저단 + admin approve단) | 정상 |
 | B3 | 🟢 OK | QTA/QX/QKEY 주소검증 | 서버 `0x+40hex` 강제 + UI 경고/체크박스 | 정상 |

@@ -368,29 +368,53 @@ app.post('/withdraw', authMiddleware, rlWithdraw, requireKyc('approved'), async 
   //   • Quantarium-native assets → `qta_withdrawals` (cron SPHINCS+ signer).
   //     The destination must be a 0x EVM address on the Quantarium chain.
   //   • Standard coins → legacy `withdrawals` table (admin approval).
+  // ★ A1 fix: perform the balance lock as a single atomic conditional UPDATE.
+  //   The WHERE guard folds BOTH invariants into the debit so two concurrent
+  //   withdrawals can never both pass:
+  //     • available >= amount                          (enough balance)
+  //     • (available - available_initial) >= amount    (enough WITHDRAWABLE,
+  //       i.e. does not dip into company-issued funds — boss's rule)
+  //   Only when the lock actually happened (changes === 1) do we insert the
+  //   pending withdrawal row. If it didn't, the wallet is untouched and we
+  //   return without creating any queue entry.
   if (routeQuantarium) {
     if (!/^0x[0-9a-fA-F]{40}$/.test(String(address))) {
       return c.json({ error: 'Invalid Quantarium address (expected 0x + 40 hex)' }, 400);
     }
-    await c.env.DB.batch([
-      c.env.DB.prepare(
-        'UPDATE wallets SET available = available - ?, locked = locked + ? WHERE id = ?'
-      ).bind(amount, amount, wallet.id),
-      c.env.DB.prepare(
-        `INSERT INTO qta_withdrawals (id, user_id, to_address, amount, fee, asset, status, network)
-         VALUES (?, ?, ?, ?, ?, ?, 'pending', 'qta-mainnet')`
-      ).bind(withdrawalId, user.id, String(address), String(amount - fee), String(fee), assetSymbol),
-    ]);
+  }
+  const lockRes = await c.env.DB.prepare(
+    'UPDATE wallets SET available = available - ?, locked = locked + ? ' +
+    'WHERE id = ? AND available >= ? AND (available - COALESCE(available_initial, 0)) >= ?'
+  ).bind(amount, amount, wallet.id, amount, amount).run();
+  if (!lockRes.meta || lockRes.meta.changes === 0) {
+    // Balance moved by a concurrent request in the meantime, or would dip into
+    // company-issued funds. Re-read to return an accurate error.
+    const fresh = await c.env.DB.prepare(
+      'SELECT available, COALESCE(available_initial, 0) AS available_initial FROM wallets WHERE id = ?'
+    ).bind(wallet.id).first<any>();
+    const av = Number(fresh?.available || 0);
+    const init = Number(fresh?.available_initial || 0);
+    const wd = Math.max(0, av - init);
+    if (amount > wd && amount <= av) {
+      return c.json({
+        error: 'Insufficient withdrawable balance. Company-issued amounts (sign-up bonus, referral rewards, daily rewards) cannot be withdrawn externally — they can only be used for internal trading.',
+        code: 'WITHDRAWAL_BLOCKED_COMPANY_ISSUED',
+        available: av, available_initial: init, withdrawable: wd, requested: amount,
+      }, 400);
+    }
+    return c.json({ error: 'Insufficient balance' }, 400);
+  }
+
+  if (routeQuantarium) {
+    await c.env.DB.prepare(
+      `INSERT INTO qta_withdrawals (id, user_id, to_address, amount, fee, asset, status, network)
+       VALUES (?, ?, ?, ?, ?, ?, 'pending', 'qta-mainnet')`
+    ).bind(withdrawalId, user.id, String(address), String(amount - fee), String(fee), assetSymbol).run();
   } else {
-    await c.env.DB.batch([
-      c.env.DB.prepare(
-        'UPDATE wallets SET available = available - ?, locked = locked + ? WHERE id = ?'
-      ).bind(amount, amount, wallet.id),
-      c.env.DB.prepare(
-        `INSERT INTO withdrawals (id, user_id, coin_symbol, amount, fee, address, network, memo, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')`
-      ).bind(withdrawalId, user.id, coin_symbol, amount - fee, fee, address, network || null, memo || null),
-    ]);
+    await c.env.DB.prepare(
+      `INSERT INTO withdrawals (id, user_id, coin_symbol, amount, fee, address, network, memo, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')`
+    ).bind(withdrawalId, user.id, coin_symbol, amount - fee, fee, address, network || null, memo || null).run();
   }
 
   // S3-6: withdrawal-submitted confirmation email

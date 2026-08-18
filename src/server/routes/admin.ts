@@ -580,12 +580,19 @@ app.post('/withdrawals/:id/approve', async (c) => {
   }
 
   const tx = `0x${Date.now().toString(16)}${Math.random().toString(16).slice(2, 10)}`;
-  await db.batch([
-    db.prepare(
-      `UPDATE wallets SET locked = MAX(0, locked - ?) WHERE user_id = ? AND coin_symbol = ?`
-    ).bind(gross, w.user_id, w.coin_symbol),
-    db.prepare("UPDATE withdrawals SET status = 'completed', tx_hash = ? WHERE id = ?").bind(tx, w.id),
-  ]);
+  // ★ A2 fix: claim the state transition FIRST with a conditional UPDATE.
+  //   Only if THIS call flipped the row pending→completed (changes === 1) do
+  //   we deduct the locked funds. A duplicate/concurrent approve will see
+  //   changes === 0 and abort without touching the wallet (no double debit).
+  const claim = await db.prepare(
+    "UPDATE withdrawals SET status = 'completed', tx_hash = ? WHERE id = ? AND status = 'pending'"
+  ).bind(tx, w.id).run();
+  if (!claim.meta || claim.meta.changes === 0) {
+    return c.json({ error: 'Withdrawal already processed' }, 409);
+  }
+  await db.prepare(
+    `UPDATE wallets SET locked = MAX(0, locked - ?) WHERE user_id = ? AND coin_symbol = ?`
+  ).bind(gross, w.user_id, w.coin_symbol).run();
 
   try {
     await createNotification(db, w.user_id, {
@@ -636,14 +643,20 @@ app.post('/withdrawals/:id/reject', async (c) => {
 
   // Refund: gross = net (w.amount) + fee. Move from `locked` back to `available`.
   const gross = Number(w.amount) + Number(w.fee || 0);
-  await db.batch([
-    db.prepare(
-      `UPDATE wallets
-       SET available = available + ?, locked = MAX(0, locked - ?)
-       WHERE user_id = ? AND coin_symbol = ?`
-    ).bind(gross, gross, w.user_id, w.coin_symbol),
-    db.prepare("UPDATE withdrawals SET status = 'rejected' WHERE id = ?").bind(w.id),
-  ]);
+  // ★ A2 fix: claim the state transition FIRST. Only the call that actually
+  //   flipped pending→rejected (changes === 1) performs the refund, so a
+  //   duplicate/concurrent reject cannot refund the funds twice.
+  const claim = await db.prepare(
+    "UPDATE withdrawals SET status = 'rejected' WHERE id = ? AND status = 'pending'"
+  ).bind(w.id).run();
+  if (!claim.meta || claim.meta.changes === 0) {
+    return c.json({ error: 'Withdrawal already processed' }, 409);
+  }
+  await db.prepare(
+    `UPDATE wallets
+     SET available = available + ?, locked = MAX(0, locked - ?)
+     WHERE user_id = ? AND coin_symbol = ?`
+  ).bind(gross, gross, w.user_id, w.coin_symbol).run();
 
   try {
     await createNotification(db, w.user_id, {
@@ -732,41 +745,61 @@ app.post('/deposits/manual', async (c) => {
   if (!coin) return c.json({ error: 'Unknown coin' }, 400);
 
   const id = uuid();
-  const tx = `MANUAL-${Date.now().toString(36)}`;
+  // ★ A3 fix: optional idempotency. If the caller supplies idempotency_key,
+  //   it becomes the deposit tx_hash and a duplicate submit (same key) is a
+  //   no-op — the credit runs only if THIS insert actually created the row.
+  //   Without a key the behavior is unchanged (unique MANUAL-<ts> tx).
+  const idemKey = typeof body.idempotency_key === 'string' && body.idempotency_key.trim()
+    ? `MANUAL-${body.idempotency_key.trim().slice(0, 64)}`
+    : '';
+  if (idemKey) {
+    const dup = await db.prepare('SELECT id FROM deposits WHERE tx_hash = ?').bind(idemKey).first<any>();
+    if (dup) {
+      return c.json({ ok: true, id: dup.id, duplicate: true, message: 'Already credited (idempotent no-op)' });
+    }
+  }
+  const tx = idemKey || `MANUAL-${Date.now().toString(36)}`;
   const nowIso = new Date().toISOString();
 
-  // D1 batch (atomic)
+  // D1 batch (atomic). INSERT OR IGNORE + the wallet credit guarded by
+  // EXISTS(this deposit) makes the whole batch a no-op on a duplicate key.
   const statements = [
     db.prepare(`
-      INSERT INTO deposits (id, user_id, coin_symbol, amount, tx_hash, status, network, memo, created_at)
+      INSERT OR IGNORE INTO deposits (id, user_id, coin_symbol, amount, tx_hash, status, network, memo, created_at)
       VALUES (?, ?, ?, ?, ?, 'completed', 'MANUAL', ?, ?)
     `).bind(id, user_id, coin_symbol, amt, tx, note || null, nowIso),
   ];
 
+  // The credit UPDATEs are guarded by EXISTS(this deposit id): when an
+  // idempotency_key duplicate made the INSERT OR IGNORE a no-op, the deposit
+  // row (with this `id`) does not exist, so the credit matches 0 rows and the
+  // balance is untouched. Fresh (non-duplicate) inserts always match.
   const existing = await db.prepare('SELECT id FROM wallets WHERE user_id = ? AND coin_symbol = ?')
     .bind(user_id, coin_symbol).first();
+  const guard = 'AND EXISTS (SELECT 1 FROM deposits WHERE id = ?)';
   if (existing) {
     if (isWithdrawable) {
       statements.push(
-        db.prepare('UPDATE wallets SET available = available + ? WHERE user_id = ? AND coin_symbol = ?')
-          .bind(amt, user_id, coin_symbol)
+        db.prepare(`UPDATE wallets SET available = available + ? WHERE user_id = ? AND coin_symbol = ? ${guard}`)
+          .bind(amt, user_id, coin_symbol, id)
       );
     } else {
       statements.push(
-        db.prepare('UPDATE wallets SET available = available + ?, available_initial = COALESCE(available_initial, 0) + ? WHERE user_id = ? AND coin_symbol = ?')
-          .bind(amt, amt, user_id, coin_symbol)
+        db.prepare(`UPDATE wallets SET available = available + ?, available_initial = COALESCE(available_initial, 0) + ? WHERE user_id = ? AND coin_symbol = ? ${guard}`)
+          .bind(amt, amt, user_id, coin_symbol, id)
       );
     }
   } else {
+    // New wallet row: only create it if the deposit insert actually happened.
     if (isWithdrawable) {
       statements.push(
-        db.prepare('INSERT INTO wallets (id, user_id, coin_symbol, available, locked, available_initial) VALUES (?, ?, ?, ?, 0, 0)')
-          .bind(uuid(), user_id, coin_symbol, amt)
+        db.prepare('INSERT INTO wallets (id, user_id, coin_symbol, available, locked, available_initial) SELECT ?, ?, ?, ?, 0, 0 WHERE EXISTS (SELECT 1 FROM deposits WHERE id = ?)')
+          .bind(uuid(), user_id, coin_symbol, amt, id)
       );
     } else {
       statements.push(
-        db.prepare('INSERT INTO wallets (id, user_id, coin_symbol, available, locked, available_initial) VALUES (?, ?, ?, ?, 0, ?)')
-          .bind(uuid(), user_id, coin_symbol, amt, amt)
+        db.prepare('INSERT INTO wallets (id, user_id, coin_symbol, available, locked, available_initial) SELECT ?, ?, ?, ?, 0, ? WHERE EXISTS (SELECT 1 FROM deposits WHERE id = ?)')
+          .bind(uuid(), user_id, coin_symbol, amt, amt, id)
       );
     }
   }

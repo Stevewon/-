@@ -791,15 +791,8 @@ async function qtaChainTick(env: Env): Promise<{
       // with a real state change (the second UPDATE matches 0 rows).
       const asset = String(d.asset || 'QTA').toUpperCase();
       const amt = Number(d.amount || '0');
-      stmts.push(
-        env.DB.prepare(
-          `UPDATE qta_deposits
-           SET status = 'credited', confirmations = ?, credited_at = ?, updated_at = ?
-           WHERE id = ? AND status IN ('detected', 'confirming')`
-        ).bind(confs, nowIso, nowIso, d.id),
-      );
       if (amt > 0) {
-        // Ensure a wallet row exists, then credit available.
+        // Ensure a wallet row exists FIRST (harmless no-op if present).
         stmts.push(
           env.DB.prepare(
             `INSERT INTO wallets (user_id, coin_symbol, available, locked)
@@ -807,13 +800,33 @@ async function qtaChainTick(env: Env): Promise<{
              ON CONFLICT(user_id, coin_symbol) DO NOTHING`
           ).bind(d.user_id, asset),
         );
+        // ★ A3 fix: credit ONLY while this deposit row is still un-credited.
+        //   The wallet UPDATE is now GUARDED by a correlated EXISTS on the
+        //   deposit's status, so a duplicate/racing tick (deposit already
+        //   'credited') matches 0 rows and cannot double-credit. Previously
+        //   the wallet UPDATE had no status guard, so a second batch would
+        //   re-add the amount even though the status flip itself no-op'd.
         stmts.push(
           env.DB.prepare(
             `UPDATE wallets SET available = available + ?
-             WHERE user_id = ? AND coin_symbol = ?`
-          ).bind(amt, d.user_id, asset),
+             WHERE user_id = ? AND coin_symbol = ?
+               AND EXISTS (
+                 SELECT 1 FROM qta_deposits
+                 WHERE id = ? AND status IN ('detected','confirming')
+               )`
+          ).bind(amt, d.user_id, asset, d.id),
         );
       }
+      // Flip status AFTER the guarded credit (statements in a D1 batch run
+      // sequentially, so the EXISTS above still sees the pre-flip status). The
+      // flip then closes the row so any later batch/tick is a safe no-op.
+      stmts.push(
+        env.DB.prepare(
+          `UPDATE qta_deposits
+           SET status = 'credited', confirmations = ?, credited_at = ?, updated_at = ?
+           WHERE id = ? AND status IN ('detected', 'confirming')`
+        ).bind(confs, nowIso, nowIso, d.id),
+      );
       credited++;
     } else {
       stmts.push(
