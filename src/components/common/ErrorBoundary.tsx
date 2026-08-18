@@ -14,6 +14,12 @@ export default class ErrorBoundary extends Component<Props, State> {
     return { hasError: true, error };
   }
 
+  componentDidCatch(error: Error, info: unknown) {
+    // Surface the real error so we can diagnose crashes in production
+    // (visible in the browser console / remote logs).
+    console.error('[ErrorBoundary] captured render error:', error, info);
+  }
+
   handleReset = () => {
     this.setState({ hasError: false, error: undefined });
   };
@@ -44,6 +50,16 @@ export default class ErrorBoundary extends Component<Props, State> {
             >
               <RefreshCw size={16} /> {isKo ? '\uc0c8\ub85c\uace0\uce68' : 'Refresh'}
             </button>
+            {this.state.error && (
+              <details className="mt-6 text-left">
+                <summary className="text-xs text-exchange-text-third cursor-pointer select-none">
+                  {isKo ? '\uc624\ub958 \uc0c1\uc138 (\uac1c\ubc1c\uc790\uc6a9)' : 'Error details (for support)'}
+                </summary>
+                <pre className="mt-2 text-[11px] leading-snug text-exchange-sell whitespace-pre-wrap break-words max-h-48 overflow-auto p-2 rounded bg-exchange-input">
+                  {String(this.state.error?.message || this.state.error)}
+                </pre>
+              </details>
+            )}
           </div>
         </div>
       );

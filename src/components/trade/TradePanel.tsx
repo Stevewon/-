@@ -120,10 +120,10 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
   };
 
   return (
-    <div className="flex flex-col h-full p-3">
+    <div className="flex flex-col h-full p-4">
       {/* Buy/Sell toggle — Bybit-style rounded segment */}
       {!forceSide && (
-        <div className="flex gap-1.5 p-1 rounded-xl mb-3 bg-exchange-input">
+        <div className="flex gap-1.5 p-1 rounded-xl mb-4 bg-exchange-input">
           <button
             onClick={() => setSide('buy')}
             className={`flex-1 py-2.5 text-sm font-bold rounded-lg transition-all ${
@@ -144,7 +144,7 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
       )}
 
       {/* Order type + fee tier badge */}
-      <div className="flex items-center justify-between mb-3 border-b border-exchange-border pb-2">
+      <div className="flex items-center justify-between mb-4 border-b border-exchange-border pb-3">
         <div className="flex gap-3">
           {([
             { key: 'limit' as const, label: t('trade.limit') },
@@ -168,7 +168,7 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
       </div>
 
       {/* Available */}
-      <div className="flex justify-between text-xs mb-3">
+      <div className="flex justify-between text-xs mb-4">
         <span className="text-exchange-text-third">{t('trade.available')}</span>
         <span className="text-exchange-text-secondary font-mono tabular-nums">
           {formatPrice(available)} {side === 'buy' ? quote : base}
@@ -177,8 +177,8 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
 
       {/* Stop price input (stop-limit only) */}
       {orderType === 'stop_limit' && (
-        <div className="mb-2">
-          <label className="text-xs text-exchange-text-third mb-1 block">
+        <div className="mb-3.5">
+          <label className="text-xs text-exchange-text-secondary mb-1.5 block">
             {t('trade.stopPrice')} ({quote})
           </label>
           <input
@@ -195,8 +195,8 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
 
       {/* Price input */}
       {hasPrice && (
-        <div className="mb-2">
-          <label className="text-xs text-exchange-text-third mb-1 block">{t('trade.price')} ({quote})</label>
+        <div className="mb-3.5">
+          <label className="text-xs text-exchange-text-secondary mb-1.5 block">{t('trade.price')} ({quote})</label>
           <input
             type="number"
             value={price}
@@ -209,8 +209,8 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
       )}
 
       {/* Amount input */}
-      <div className="mb-2">
-        <label className="text-xs text-exchange-text-third mb-1 block">{t('trade.amount')} ({base})</label>
+      <div className="mb-3.5">
+        <label className="text-xs text-exchange-text-secondary mb-1.5 block">{t('trade.amount')} ({base})</label>
         <input
           type="number"
           value={amount}
@@ -222,7 +222,7 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
       </div>
 
       {/* Percentage slider */}
-      <div className="mb-3">
+      <div className="mb-4">
         <input
           type="range"
           min="0"
@@ -232,12 +232,12 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
           onChange={(e) => setPercentage(parseInt(e.target.value))}
           className="w-full h-1 accent-exchange-yellow cursor-pointer"
         />
-        <div className="flex justify-between mt-1">
+        <div className="flex justify-between mt-2">
           {[0, 25, 50, 75, 100].map((pct) => (
             <button
               key={pct}
               onClick={() => setPercentage(pct)}
-              className={`text-[11px] font-medium w-10 py-1 rounded-full transition-colors ${
+              className={`text-[11px] font-medium w-11 py-1.5 rounded-full transition-colors ${
                 sliderPct >= pct ? 'bg-exchange-yellow/20 text-exchange-yellow' : 'bg-exchange-input text-exchange-text-secondary'
               }`}
             >
@@ -291,7 +291,7 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
 
       {/* Total & Fee */}
       {hasPrice && (
-        <div className="space-y-1 mb-3 text-xs">
+        <div className="space-y-1.5 mb-4 text-xs">
           <div className="flex justify-between">
             <span className="text-exchange-text-third">{t('trade.total')}</span>
             <span className="text-exchange-text-secondary font-mono tabular-nums">{formatPrice(total)} {quote}</span>
