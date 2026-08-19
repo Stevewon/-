@@ -104,8 +104,11 @@ export default function EarnPage() {
     try {
       const res = await api.post('/earn/redeem', { position_id: p.id });
       if (res.data.early) {
+        const netQtaNote = res.data.already_paid_qta_value_usd > 0
+          ? ` − ${formatAmount(res.data.already_paid_qta_value_usd)} (${t('earn.paidQtaOffset')})`
+          : '';
         showToast('success', t('earn.redeemed'),
-          `${t('earn.returned')}: ${formatAmount(res.data.returned_usdt)} USDT (${t('earn.penalty')} ${formatAmount(res.data.penalty_usdt)})`);
+          `${t('earn.returned')}: ${formatAmount(res.data.returned_usdt)} USDT (${t('earn.penalty')} ${formatAmount(res.data.penalty_usdt)}${netQtaNote})`);
       } else {
         showToast('success', t('earn.redeemed'),
           `${formatAmount(res.data.returned_usdt)} USDT + ${formatAmount(res.data.dividend_qta)} QTA`);

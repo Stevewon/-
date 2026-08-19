@@ -286,9 +286,13 @@ app.post('/claim', authMiddleware, async (c) => {
 
 // --------------------------------------------------------------------------
 // POST /redeem { position_id }
-// Closes a position. Before 90 days: forfeit dividend + 30% principal penalty
-// (70% USDT returned). After 90 days: pay remaining dividend as QTA + return
-// full USDT principal.
+// Closes a position.
+//   Before 90 days (early): base = principal_usd + TOTAL accrued dividend (USD,
+//     whether or not any QTA was already claimed); deduct 30% of that base and
+//     return the remaining 70% ALL AS USDT. Any QTA already claimed stays with
+//     the user (accounted separately, not clawed back).
+//   After 90 days: pay remaining (unpaid) dividend as QTA + return full USDT
+//     principal (no penalty).
 // --------------------------------------------------------------------------
 app.post('/redeem', authMiddleware, async (c) => {
   const user = c.get('user');
@@ -320,11 +324,24 @@ app.post('/redeem', authMiddleware, async (c) => {
   let returnedUsd: number;
   let dividendQta = 0;
   let penaltyUsd = 0;
+  let baseUsd = 0;
+  let alreadyPaidQtaValueUsd = 0;
 
   if (isEarly) {
-    // Forfeit all dividend, 30% principal penalty.
-    penaltyUsd = principalUsd * EARLY_PENALTY;
-    returnedUsd = principalUsd - penaltyUsd;
+    // Early exit settlement:
+    //   base    = (principal + TOTAL accrued dividend USD)
+    //   payout  = base * 70%  (i.e. 30% penalty on the whole base)
+    //   minus   = QTA already claimed/withdrawn (QUANTITY) valued at TODAY's
+    //             QTA price — netted off so we don't pay that portion twice.
+    //   result  = payout - minus, paid ALL as USDT.
+    const totalDivUsd = accruedUsd(pos, now);
+    baseUsd = principalUsd + totalDivUsd;
+    penaltyUsd = baseUsd * EARLY_PENALTY;                 // 30% of base
+    const grossReturnUsd = baseUsd - penaltyUsd;          // 70% of base
+    // Value the QTA the user already took, at the redeem-day price.
+    const paidQta = pos.paid_dividend_qta || 0;
+    alreadyPaidQtaValueUsd = paidQta * price;             // (가) quantity × today's price
+    returnedUsd = Math.max(0, grossReturnUsd - alreadyPaidQtaValueUsd);
   } else {
     // Pay remaining unpaid dividend as QTA + full principal back.
     const totalUsd = accruedUsd(pos, now);
@@ -363,6 +380,8 @@ app.post('/redeem', authMiddleware, async (c) => {
   return c.json({
     ok: true, early: isEarly,
     returned_usdt: returnedUsd, penalty_usdt: penaltyUsd,
+    penalty_base_usd: baseUsd,                      // principal + accrued dividend (early only)
+    already_paid_qta_value_usd: alreadyPaidQtaValueUsd, // QTA already taken, valued today (early only)
     dividend_qta: dividendQta, qta_price: price,
   });
 });
