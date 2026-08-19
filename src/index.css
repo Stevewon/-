@@ -117,10 +117,10 @@ input[type="range"]::-moz-range-thumb {
   background: var(--color-exchange-input);
   border: 1px solid var(--color-exchange-border);
   color: var(--color-exchange-text);
-  border-radius: 0.75rem;
-  padding: 1.125rem 1rem;
+  border-radius: 0.625rem;
+  padding: 0.875rem 1rem;
   width: 100%;
-  font-size: 1rem;
+  font-size: 0.9375rem;
   line-height: 1.5;
   outline: none;
   transition: border-color 0.15s, box-shadow 0.15s;
