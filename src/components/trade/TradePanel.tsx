@@ -123,10 +123,10 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
     <div className="flex flex-col h-full p-4">
       {/* Buy/Sell toggle — Bybit-style rounded segment */}
       {!forceSide && (
-        <div className="flex gap-1.5 p-1 rounded-xl mb-4 bg-exchange-input">
+        <div className="flex gap-1.5 p-1 rounded-xl mb-5 bg-exchange-input">
           <button
             onClick={() => setSide('buy')}
-            className={`flex-1 py-2.5 text-sm font-bold rounded-lg transition-all ${
+            className={`flex-1 py-3 text-[15px] font-bold rounded-lg transition-all ${
               side === 'buy' ? 'bg-exchange-buy text-white' : 'text-exchange-text-secondary hover:text-exchange-text'
             }`}
           >
@@ -134,7 +134,7 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
           </button>
           <button
             onClick={() => setSide('sell')}
-            className={`flex-1 py-2.5 text-sm font-bold rounded-lg transition-all ${
+            className={`flex-1 py-3 text-[15px] font-bold rounded-lg transition-all ${
               side === 'sell' ? 'bg-exchange-sell text-white' : 'text-exchange-text-secondary hover:text-exchange-text'
             }`}
           >
@@ -144,8 +144,8 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
       )}
 
       {/* Order type + fee tier badge */}
-      <div className="flex items-center justify-between mb-4 border-b border-exchange-border pb-3">
-        <div className="flex gap-3">
+      <div className="flex items-center justify-between mb-5 border-b border-exchange-border pb-3.5">
+        <div className="flex gap-4">
           {([
             { key: 'limit' as const, label: t('trade.limit') },
             { key: 'market' as const, label: t('trade.market') },
@@ -154,7 +154,7 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
             <button
               key={key}
               onClick={() => setOrderType(key)}
-              className={`text-xs font-medium pb-1 border-b-2 transition-colors ${
+              className={`text-[13px] font-medium pb-1.5 border-b-2 transition-colors ${
                 orderType === key
                   ? 'border-exchange-yellow text-exchange-yellow'
                   : 'border-transparent text-exchange-text-secondary hover:text-exchange-text'
@@ -168,7 +168,7 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
       </div>
 
       {/* Available */}
-      <div className="flex justify-between text-xs mb-4">
+      <div className="flex justify-between text-[13px] mb-5">
         <span className="text-exchange-text-third">{t('trade.available')}</span>
         <span className="text-exchange-text-secondary font-mono tabular-nums">
           {formatPrice(available)} {side === 'buy' ? quote : base}
@@ -177,8 +177,8 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
 
       {/* Stop price input (stop-limit only) */}
       {orderType === 'stop_limit' && (
-        <div className="mb-3.5">
-          <label className="text-xs text-exchange-text-secondary mb-1.5 block">
+        <div className="mb-5">
+          <label className="text-[13px] text-exchange-text-secondary mb-2 block">
             {t('trade.stopPrice')} ({quote})
           </label>
           <input
@@ -189,14 +189,14 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
             placeholder="0.00"
             step="any"
           />
-          <p className="text-[10px] text-exchange-text-third mt-1">{t('trade.stopPriceHint')}</p>
+          <p className="text-[11px] text-exchange-text-third mt-1.5">{t('trade.stopPriceHint')}</p>
         </div>
       )}
 
       {/* Price input */}
       {hasPrice && (
-        <div className="mb-3.5">
-          <label className="text-xs text-exchange-text-secondary mb-1.5 block">{t('trade.price')} ({quote})</label>
+        <div className="mb-5">
+          <label className="text-[13px] text-exchange-text-secondary mb-2 block">{t('trade.price')} ({quote})</label>
           <input
             type="number"
             value={price}
@@ -209,8 +209,8 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
       )}
 
       {/* Amount input */}
-      <div className="mb-3.5">
-        <label className="text-xs text-exchange-text-secondary mb-1.5 block">{t('trade.amount')} ({base})</label>
+      <div className="mb-5">
+        <label className="text-[13px] text-exchange-text-secondary mb-2 block">{t('trade.amount')} ({base})</label>
         <input
           type="number"
           value={amount}
@@ -222,7 +222,7 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
       </div>
 
       {/* Percentage slider */}
-      <div className="mb-4">
+      <div className="mb-6">
         <input
           type="range"
           min="0"
@@ -230,14 +230,14 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
           step="1"
           value={sliderPct}
           onChange={(e) => setPercentage(parseInt(e.target.value))}
-          className="w-full h-1 accent-exchange-yellow cursor-pointer"
+          className="w-full h-1.5 accent-exchange-yellow cursor-pointer"
         />
-        <div className="flex justify-between mt-2">
+        <div className="flex justify-between mt-3">
           {[0, 25, 50, 75, 100].map((pct) => (
             <button
               key={pct}
               onClick={() => setPercentage(pct)}
-              className={`text-[11px] font-medium w-11 py-1.5 rounded-full transition-colors ${
+              className={`text-[12px] font-medium w-12 py-2 rounded-full transition-colors ${
                 sliderPct >= pct ? 'bg-exchange-yellow/20 text-exchange-yellow' : 'bg-exchange-input text-exchange-text-secondary'
               }`}
             >
@@ -289,9 +289,12 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
         </div>
       )}
 
+      {/* spacer pushes summary + submit to the bottom for an airy Bybit layout */}
+      <div className="flex-1 min-h-3" />
+
       {/* Total & Fee */}
       {hasPrice && (
-        <div className="space-y-1.5 mb-4 text-xs">
+        <div className="space-y-2.5 mb-5 text-[13px]">
           <div className="flex justify-between">
             <span className="text-exchange-text-third">{t('trade.total')}</span>
             <span className="text-exchange-text-secondary font-mono tabular-nums">{formatPrice(total)} {quote}</span>
@@ -307,7 +310,7 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
       <button
         onClick={handleSubmit}
         disabled={loading}
-        className={`w-full !py-3.5 !rounded-full font-bold text-[15px] transition-all disabled:opacity-50 ${
+        className={`w-full !py-4 !rounded-full font-bold text-[16px] transition-all disabled:opacity-50 ${
           side === 'buy' ? 'btn-buy' : 'btn-sell'
         }`}
       >
