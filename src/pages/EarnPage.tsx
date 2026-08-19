@@ -206,15 +206,14 @@ export default function EarnPage() {
                     <div className="text-[11px] text-exchange-text-third">{t('earn.status')}</div>
                     <div className="text-[13px] text-exchange-text">
                       {p.matured ? t('earn.matured')
-                        : p.can_redeem ? t('earn.unlocked')
-                        : `${t('earn.lockedUntil')} ${p.lock_end_at ? new Date(p.lock_end_at).toLocaleDateString() : ''}`}
+                        : `${t('earn.maturesOn')} ${p.term_end_at ? new Date(p.term_end_at).toLocaleDateString() : ''}`}
                     </div>
                   </div>
                 </div>
                 <div className="flex gap-2">
                   <button
                     onClick={() => handleClaim(p)}
-                    disabled={busy || !p.can_redeem}
+                    disabled={busy || p.accrued_dividend_qta <= 0}
                     className="flex-1 py-2.5 rounded-full border border-exchange-border text-exchange-text text-[13px] font-bold hover:border-exchange-buy/50 hover:text-exchange-buy transition-colors disabled:opacity-40"
                   >
                     {t('earn.claimDividend')}
@@ -424,7 +423,7 @@ function SubscribeModal({ product, usdtBalance, qtaPrice, onClose, onDone }: {
 
           <div className="rounded-xl bg-exchange-yellow/10 border border-exchange-yellow/30 p-3 text-[11px] text-exchange-text-secondary flex items-start gap-2">
             <Lock size={13} className="text-exchange-yellow mt-0.5 shrink-0" />
-            <span>{t('earn.lockWarn')}</span>
+            <span>{t('earn.lockWarn', { months: months(product.term_days) })}</span>
           </div>
 
           <button

@@ -10,9 +10,12 @@ import { authMiddleware } from '../middleware/auth';
 //              by USDT band + term. Principal (USDT) is locked out of wallet.
 //   Dividend:  denominated in USD = principal_usd * daily_rate * elapsed_days
 //              (simple interest, no compounding), accrued daily, paid AS QTA.
-//   Lock:      hard 90-day minimum lock. Early exit (< 90d) forfeits all
-//              accrued dividend AND pays a 30% principal penalty (70% USDT
-//              returned). After 90 days: keep dividend + full principal.
+//   Lock:      each position matures on its OWN start date + the product term
+//              (180/360d). Redeeming before that position's maturity is an
+//              early exit: 30% penalty on (principal + accrued dividend), then
+//              net off already-taken QTA at today's price, remainder as USDT.
+//              At/after maturity: keep dividend + full principal, no penalty.
+//              Positions never merge — each stake is settled independently.
 //   Payout:    dividend QTA credited on redeem/claim; company-issued
 //              (available_initial bumped so it stays internal).
 //   Withdraw:  a dedicated staking-dividend withdrawal (QTA), 100-QTA
@@ -28,8 +31,7 @@ const app = new Hono<AppEnv>();
 
 const uuid = () => crypto.randomUUID();
 const MS_PER_DAY = 86_400_000;
-const MIN_LOCK_DAYS = 90;
-const EARLY_PENALTY = 0.30;          // 30% principal penalty on early exit
+const EARLY_PENALTY = 0.30;          // 30% penalty on (principal + dividend) for early exit
 const WITHDRAW_FEE = 0.05;           // 5% flat fee on dividend withdrawal
 const WITHDRAW_UNIT_QTA = 100;       // 100-QTA increments
 const MATCH_L1 = 0.10;               // 1st-level referral match
@@ -143,15 +145,17 @@ app.get('/positions', authMiddleware, async (c) => {
 
   const positions = ((results || []) as any[]).map((p) => {
     const divUsd = accruedUsd(p, now);
-    const lockEnd = p.lock_end_at ? Date.parse(p.lock_end_at) : now;
     const termEnd = p.term_end_at ? Date.parse(p.term_end_at) : now;
+    const matured = now >= termEnd;          // this position's own term reached
     return {
       ...p,
       accrued_dividend_usd: divUsd,
       accrued_dividend_qta: divUsd / price,
-      can_redeem: now >= lockEnd,            // 90-day min lock passed
-      matured: now >= termEnd,               // full term done
-      lock_end_at: p.lock_end_at,
+      // Normal (penalty-free) redeem is allowed only once THIS position's own
+      // term (180/360d from its own start date) has been reached. Before that
+      // it is an early exit. Each position has its own term_end_at.
+      can_redeem: matured,
+      matured,
       term_end_at: p.term_end_at,
     };
   });
@@ -203,8 +207,10 @@ app.post('/subscribe', authMiddleware, async (c) => {
 
   const now = Date.now();
   const nowIso = new Date(now).toISOString();
-  const lockEndIso = new Date(now + MIN_LOCK_DAYS * MS_PER_DAY).toISOString();
+  // Each position matures on its OWN start date + the product term (180/360d).
+  // There is no global fixed lock — the maturity date is per-position.
   const termEndIso = new Date(now + product.term_days * MS_PER_DAY).toISOString();
+  const lockEndIso = termEndIso; // legacy column kept in sync with term end
   const posId = uuid();
 
   await c.env.DB.batch([
@@ -232,8 +238,10 @@ app.post('/subscribe', authMiddleware, async (c) => {
 
 // --------------------------------------------------------------------------
 // POST /claim { position_id }
-// Credits accrued QTA dividend WITHOUT closing the position (allowed anytime
-// after the 90-day lock). Pays referral match on the credited amount.
+// Credits accrued QTA dividend WITHOUT closing the position. Dividends accrue
+// daily in real time, so a claim is allowed anytime there is unclaimed
+// dividend (the principal stays staked until maturity or early exit). Pays
+// referral match on the credited amount.
 // --------------------------------------------------------------------------
 app.post('/claim', authMiddleware, async (c) => {
   const user = c.get('user');
@@ -248,10 +256,6 @@ app.post('/claim', authMiddleware, async (c) => {
   if (pos.status !== 'active') return c.json({ error: 'Position not active' }, 409);
 
   const now = Date.now();
-  if (pos.lock_end_at && Date.parse(pos.lock_end_at) > now) {
-    return c.json({ error: 'Dividend is locked for the first 90 days', lock_end_at: pos.lock_end_at }, 400);
-  }
-
   const price = await qtaPrice(c);
   const totalUsd = accruedUsd(pos, now);
   // accrued_dividend_usd holds the USD value already credited so far.
@@ -286,13 +290,15 @@ app.post('/claim', authMiddleware, async (c) => {
 
 // --------------------------------------------------------------------------
 // POST /redeem { position_id }
-// Closes a position.
-//   Before 90 days (early): base = principal_usd + TOTAL accrued dividend (USD,
-//     whether or not any QTA was already claimed); deduct 30% of that base and
-//     return the remaining 70% ALL AS USDT. Any QTA already claimed stays with
-//     the user (accounted separately, not clawed back).
-//   After 90 days: pay remaining (unpaid) dividend as QTA + return full USDT
-//     principal (no penalty).
+// Closes a position. "Early" is measured against THIS position's own maturity
+// date (term_end_at = its own start + the product term, 180/360d) — there is
+// no global fixed lock, and each position is settled independently.
+//   Before maturity (early): base = principal_usd + TOTAL accrued dividend
+//     (USD, whether or not any QTA was already claimed); deduct 30% of that
+//     base, then net off any QTA already taken valued at today's price; pay the
+//     remainder ALL AS USDT.
+//   At/after maturity: pay remaining (unpaid) dividend as QTA + return full
+//     USDT principal (no penalty).
 // --------------------------------------------------------------------------
 app.post('/redeem', authMiddleware, async (c) => {
   const user = c.get('user');
@@ -310,7 +316,9 @@ app.post('/redeem', authMiddleware, async (c) => {
   const nowIso = new Date(now).toISOString();
   const price = await qtaPrice(c);
   const principalUsd = pos.principal_usd || 0;
-  const isEarly = pos.lock_end_at ? Date.parse(pos.lock_end_at) > now : false;
+  // Early == before this position's own maturity date (per-position, not a
+  // global fixed number of days).
+  const isEarly = pos.term_end_at ? Date.parse(pos.term_end_at) > now : false;
 
   // Claim-first status flip.
   const claim = await c.env.DB.prepare(
