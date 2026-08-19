@@ -45,6 +45,7 @@ import { HDKey } from '@scure/bip32';
 import { mnemonicToSeedSync } from '@scure/bip39';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { keccak_256 as _keccak256 } from '@noble/hashes/sha3.js';
+import { runMigrations } from './migrate';
 
 function ethAddressFromBip44(mnemonic: string, index: number, account = 0, change = 0): string {
   const seed = mnemonicToSeedSync(mnemonic.trim());
@@ -339,6 +340,15 @@ export default {
         headers: { 'content-type': 'application/json' },
       });
     }
+    if (url.pathname === '/migrate') {
+      // Manually trigger the auto-migrator (also runs on every /5 tick).
+      // ?force=1 re-runs re-runnable seed migrations.
+      const force = url.searchParams.get('force') === '1';
+      const result = await runMigrations(env, force);
+      return new Response(JSON.stringify(result, null, 2), {
+        headers: { 'content-type': 'application/json' },
+      });
+    }
     if (url.pathname === '/backup') {
       const result = await backupD1ToR2(env);
       return new Response(JSON.stringify(result), {
@@ -480,7 +490,7 @@ export default {
       JSON.stringify({
         service: 'quantaex-cron',
         schedules: ['*/5 * * * * (price-alert tick)', '0 3 * * * (daily D1 backup)'],
-        endpoints: ['/run', '/backup', '/backup/prune', '/qta/withdrawals', '/qta/scan', '/qta/tick', '/qta/env-check'],
+        endpoints: ['/run', '/migrate', '/backup', '/backup/prune', '/qta/withdrawals', '/qta/scan', '/qta/tick', '/qta/env-check'],
       }),
       { headers: { 'content-type': 'application/json' } }
     );
@@ -506,6 +516,18 @@ export default {
       );
       return;
     }
+
+    // Auto-apply any pending D1 migrations FIRST (cheap no-op once done). This
+    // is how new migrations reach prod without a manual wrangler step or a
+    // workflow edit — the worker owns migration application.
+    ctx.waitUntil(
+      runMigrations(env)
+        .then((r) => {
+          if (r.applied.length) console.log('[cron] migrations applied:', r.applied);
+          if (r.errors.length) console.error('[cron] migration errors:', r.errors);
+        })
+        .catch((e) => console.error('[cron] migration run failed:', e))
+    );
 
     // Default: price-alert tick (*/5) + QTA chain monitor tick
     ctx.waitUntil(

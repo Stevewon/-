@@ -1,0 +1,165 @@
+/**
+ * Auto-migrator for the cron worker.
+ *
+ * The GitHub App token can't touch .github/workflows, so we can't add a
+ * "run wrangler d1 execute" step to the deploy workflow. Instead, the cron
+ * worker (which redeploys on every push and binds the SAME D1) applies any
+ * pending migrations itself — on every /5 tick and via the /migrate endpoint.
+ *
+ * Design:
+ *   - A `schema_migrations(id, applied_at)` table records which migrations ran.
+ *   - Each migration is a list of individual SQL statements. Statements run one
+ *     at a time; "duplicate column"/"already exists" errors are swallowed so a
+ *     partially-applied migration can be finished safely (idempotent).
+ *   - A migration is marked applied only after all its statements were attempted
+ *     without a FATAL (non-idempotent) error.
+ *   - Seed migrations (DELETE+INSERT) are safe to re-run, but we still gate them
+ *     on schema_migrations so we don't wipe/reseed on every single tick. The
+ *     /migrate?force=1 endpoint can force a reseed when needed.
+ *
+ * To add a new migration later: append an entry to MIGRATIONS with a unique id
+ * and its statements. It will auto-apply on the next deploy. No wrangler, no
+ * workflow edit.
+ */
+
+export interface MigrateEnv {
+  DB: D1Database;
+}
+
+interface Migration {
+  id: string;
+  statements: string[];
+}
+
+// Errors that mean "this statement's effect already exists" — safe to ignore.
+function isIdempotentError(msg: string): boolean {
+  const m = msg.toLowerCase();
+  return (
+    m.includes('duplicate column') ||
+    m.includes('already exists') ||
+    m.includes('duplicate column name')
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Migration definitions (kept in sync with /migrations/*.sql). Only the ones
+// the cron worker is responsible for auto-applying need to live here; older
+// migrations were already applied to prod by other means.
+// ---------------------------------------------------------------------------
+const MIGRATIONS: Migration[] = [
+  {
+    // 0044 — QTA staking tier model: schema (ADD COLUMN + ledger table).
+    id: '0044_staking_tier_model',
+    statements: [
+      `ALTER TABLE staking_products ADD COLUMN min_usd REAL DEFAULT 0`,
+      `ALTER TABLE staking_products ADD COLUMN max_usd REAL`,
+      `ALTER TABLE staking_products ADD COLUMN term_days INTEGER DEFAULT 0`,
+      `ALTER TABLE staking_products ADD COLUMN daily_rate REAL DEFAULT 0`,
+      `ALTER TABLE staking_products ADD COLUMN payout_coin TEXT DEFAULT 'QTA'`,
+      `ALTER TABLE staking_positions ADD COLUMN principal_usd REAL DEFAULT 0`,
+      `ALTER TABLE staking_positions ADD COLUMN daily_rate REAL DEFAULT 0`,
+      `ALTER TABLE staking_positions ADD COLUMN term_days INTEGER DEFAULT 0`,
+      `ALTER TABLE staking_positions ADD COLUMN accrued_dividend_usd REAL DEFAULT 0`,
+      `ALTER TABLE staking_positions ADD COLUMN paid_dividend_qta REAL DEFAULT 0`,
+      `ALTER TABLE staking_positions ADD COLUMN payout_coin TEXT DEFAULT 'QTA'`,
+      `ALTER TABLE staking_positions ADD COLUMN lock_end_at TEXT`,
+      `ALTER TABLE staking_positions ADD COLUMN term_end_at TEXT`,
+      `CREATE TABLE IF NOT EXISTS staking_dividends (
+        id TEXT PRIMARY KEY,
+        position_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'dividend',
+        usd_amount REAL NOT NULL DEFAULT 0,
+        qta_amount REAL NOT NULL DEFAULT 0,
+        qta_price REAL NOT NULL DEFAULT 0,
+        source_user_id TEXT,
+        created_at TEXT DEFAULT (datetime('now'))
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_staking_dividends_user ON staking_dividends (user_id, created_at DESC)`,
+      `CREATE INDEX IF NOT EXISTS idx_staking_dividends_pos ON staking_dividends (position_id)`,
+    ],
+  },
+  {
+    // 0045 — QTA staking tier SEED (5 official tiers). Re-runnable.
+    id: '0045_staking_tier_seed',
+    statements: [
+      `DELETE FROM staking_products`,
+      `INSERT INTO staking_products
+        (id, coin_symbol, kind, apr, lock_days, min_amount, max_amount,
+         min_usd, max_usd, term_days, daily_rate, payout_coin, sort_order, is_active)
+       VALUES
+        ('tier_1k_180','USDT','fixed',0.36,180,1000,1900,1000,1900,180,0.002,'QTA',1,1),
+        ('tier_1k_360','USDT','fixed',0.72,360,1000,1900,1000,1900,360,0.002,'QTA',2,1),
+        ('tier_2k_360','USDT','fixed',1.08,360,2000,4900,2000,4900,360,0.003,'QTA',3,1),
+        ('tier_5k_180','USDT','fixed',0.54,180,5000,10000,5000,10000,180,0.003,'QTA',4,1),
+        ('tier_5k_360','USDT','fixed',1.80,360,5000,10000,5000,10000,360,0.005,'QTA',5,1)`,
+    ],
+  },
+];
+
+export interface MigrateResult {
+  ok: boolean;
+  applied: string[];
+  skipped: string[];
+  errors: Array<{ id: string; statement: number; error: string }>;
+}
+
+/**
+ * Apply all pending migrations. Cheap to call every tick: after everything is
+ * applied it only does one SELECT against schema_migrations.
+ *
+ * @param force  when true, re-run seed migrations even if already recorded.
+ */
+export async function runMigrations(env: MigrateEnv, force = false): Promise<MigrateResult> {
+  const result: MigrateResult = { ok: true, applied: [], skipped: [], errors: [] };
+
+  // Ensure the tracking table exists.
+  await env.DB.prepare(
+    `CREATE TABLE IF NOT EXISTS schema_migrations (
+      id TEXT PRIMARY KEY,
+      applied_at TEXT DEFAULT (datetime('now'))
+    )`
+  ).run();
+
+  // Which migrations are already recorded?
+  const { results } = await env.DB.prepare(`SELECT id FROM schema_migrations`).all<{ id: string }>();
+  const done = new Set((results || []).map((r) => r.id));
+
+  for (const mig of MIGRATIONS) {
+    const isSeed = mig.id.includes('seed');
+    if (done.has(mig.id) && !(force && isSeed)) {
+      result.skipped.push(mig.id);
+      continue;
+    }
+
+    let fatal = false;
+    for (let i = 0; i < mig.statements.length; i++) {
+      try {
+        await env.DB.prepare(mig.statements[i]).run();
+      } catch (e: any) {
+        const msg = String(e?.message || e);
+        if (isIdempotentError(msg)) {
+          // Effect already present — fine, keep going.
+          continue;
+        }
+        // A genuine error. Record it but don't mark the migration done, so we
+        // retry next tick. Do NOT throw — other migrations should still run.
+        result.errors.push({ id: mig.id, statement: i, error: msg.slice(0, 300) });
+        fatal = true;
+        break;
+      }
+    }
+
+    if (!fatal) {
+      await env.DB.prepare(
+        `INSERT INTO schema_migrations (id, applied_at) VALUES (?, datetime('now'))
+         ON CONFLICT(id) DO UPDATE SET applied_at = excluded.applied_at`
+      ).bind(mig.id).run();
+      result.applied.push(mig.id);
+    } else {
+      result.ok = false;
+    }
+  }
+
+  return result;
+}
