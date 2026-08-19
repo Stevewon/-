@@ -120,10 +120,10 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
   };
 
   return (
-    <div className="flex flex-col p-4">
+    <div className="flex flex-col h-full min-h-0 p-4">
       {/* Buy/Sell toggle — Bybit-style rounded segment */}
       {!forceSide && (
-        <div className="flex gap-1.5 p-1 rounded-xl mb-5 bg-exchange-input">
+        <div className="flex gap-1.5 p-1 rounded-xl bg-exchange-input">
           <button
             onClick={() => setSide('buy')}
             className={`flex-1 py-3 text-[15px] font-bold rounded-lg transition-all ${
@@ -143,8 +143,10 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
         </div>
       )}
 
+      <div className="flex-1 min-h-4" />
+
       {/* Order type + fee tier badge */}
-      <div className="flex items-center justify-between mb-4 border-b border-exchange-border pb-3">
+      <div className="flex items-center justify-between border-b border-exchange-border pb-3">
         <div className="flex gap-4">
           {([
             { key: 'limit' as const, label: t('trade.limit') },
@@ -167,17 +169,20 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
         <FeeTierBadge compact />
       </div>
 
+      <div className="flex-1 min-h-4" />
+
       {/* Available */}
-      <div className="flex justify-between items-center text-sm mb-4">
+      <div className="flex justify-between items-center text-sm">
         <span className="text-exchange-text-third">{t('trade.available')}</span>
         <span className="text-exchange-text-secondary font-mono tabular-nums">
           {formatPrice(available)} {side === 'buy' ? quote : base}
         </span>
       </div>
 
+      {orderType === 'stop_limit' && <div className="flex-1 min-h-4" />}
       {/* Stop price input (stop-limit only) */}
       {orderType === 'stop_limit' && (
-        <div className="mb-4">
+        <div>
           <label className="text-sm text-exchange-text-secondary mb-2 block">
             {t('trade.stopPrice')} ({quote})
           </label>
@@ -193,9 +198,10 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
         </div>
       )}
 
+      {hasPrice && <div className="flex-1 min-h-4" />}
       {/* Price input */}
       {hasPrice && (
-        <div className="mb-4">
+        <div>
           <label className="text-sm text-exchange-text-secondary mb-2 block">{t('trade.price')} ({quote})</label>
           <input
             type="number"
@@ -208,8 +214,9 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
         </div>
       )}
 
+      <div className="flex-1 min-h-4" />
       {/* Amount input */}
-      <div className="mb-4">
+      <div>
         <label className="text-sm text-exchange-text-secondary mb-2 block">{t('trade.amount')} ({base})</label>
         <input
           type="number"
@@ -221,8 +228,9 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
         />
       </div>
 
+      <div className="flex-1 min-h-4" />
       {/* Percentage slider */}
-      <div className="mb-5">
+      <div>
         <input
           type="range"
           min="0"
@@ -289,9 +297,10 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
         </div>
       )}
 
+      <div className="flex-1 min-h-4" />
       {/* Total & Fee */}
       {hasPrice && (
-        <div className="space-y-2 mb-5 text-sm">
+        <div className="space-y-2 text-sm">
           <div className="flex justify-between">
             <span className="text-exchange-text-third">{t('trade.total')}</span>
             <span className="text-exchange-text-secondary font-mono tabular-nums">{formatPrice(total)} {quote}</span>
@@ -303,6 +312,7 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
         </div>
       )}
 
+      <div className="flex-1 min-h-5" />
       {/* Submit — Bybit-style big rounded pill */}
       <button
         onClick={handleSubmit}
