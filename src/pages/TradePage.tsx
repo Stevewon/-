@@ -224,7 +224,7 @@ export default function TradePage() {
         )}
 
         {/* Mobile view switch — Order form (default) vs Order book vs Chart */}
-        <div className="flex items-center gap-5 px-3 border-b border-exchange-border bg-exchange-card overflow-x-auto">
+        <div className="trade-tabs border-b border-exchange-border bg-exchange-card">
           {([
             { key: 'orderbook' as MobileView, label: t('trade.placeOrder'), icon: BookOpen },
             { key: 'book' as MobileView, label: t('trade.orderbookTab'), icon: BookOpen },
@@ -234,10 +234,10 @@ export default function TradePage() {
             <button
               key={key}
               onClick={() => setMobileView(key)}
-              className={`flex items-center gap-1.5 py-2.5 text-[14px] font-semibold border-b-2 transition-colors whitespace-nowrap shrink-0 ${
+              className={`trade-tab ${
                 mobileView === key
-                  ? 'border-exchange-yellow text-exchange-text'
-                  : 'border-transparent text-exchange-text-third'
+                  ? '!border-exchange-yellow text-exchange-text'
+                  : 'text-exchange-text-third'
               }`}
             >
               <Icon size={15} />

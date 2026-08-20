@@ -120,7 +120,7 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
   };
 
   return (
-    <div className="flex flex-col h-full min-h-0 p-4">
+    <div className="trade-panel">
       {/* Buy/Sell toggle — Bybit-style rounded segment */}
       {!forceSide && (
         <div className="flex gap-2">
@@ -142,8 +142,6 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
           </button>
         </div>
       )}
-
-      <div className="flex-1 min-h-4" />
 
       {/* Order type + fee tier badge */}
       <div className="flex items-center justify-between border-b border-exchange-border pb-3">
@@ -169,8 +167,6 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
         <FeeTierBadge compact />
       </div>
 
-      <div className="flex-1 min-h-4" />
-
       {/* Available */}
       <div className="flex justify-between items-center text-sm">
         <span className="text-exchange-text-third">{t('trade.available')}</span>
@@ -179,7 +175,6 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
         </span>
       </div>
 
-      {orderType === 'stop_limit' && <div className="flex-1 min-h-4" />}
       {/* Stop price input (stop-limit only) */}
       {orderType === 'stop_limit' && (
         <div>
@@ -198,7 +193,6 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
         </div>
       )}
 
-      {hasPrice && <div className="flex-1 min-h-4" />}
       {/* Price input */}
       {hasPrice && (
         <div>
@@ -214,7 +208,6 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
         </div>
       )}
 
-      <div className="flex-1 min-h-4" />
       {/* Amount input */}
       <div>
         <label className="text-sm text-exchange-text-secondary mb-2 block">{t('trade.amount')} ({base})</label>
@@ -228,7 +221,6 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
         />
       </div>
 
-      <div className="flex-1 min-h-4" />
       {/* Percentage slider */}
       <div>
         <input
@@ -297,7 +289,6 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
         </div>
       )}
 
-      <div className="flex-1 min-h-4" />
       {/* Total & Fee */}
       {hasPrice && (
         <div className="space-y-2 text-sm">
@@ -312,7 +303,8 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
         </div>
       )}
 
-      <div className="flex-1 min-h-5" />
+      {/* spacer pushes submit to bottom */}
+      <div className="flex-1" />
       {/* Submit — Bybit-style big rounded pill */}
       <button
         onClick={handleSubmit}

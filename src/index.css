@@ -118,12 +118,51 @@ input[type="range"]::-moz-range-thumb {
   border: 1px solid var(--color-exchange-border);
   color: var(--color-exchange-text);
   border-radius: 0.625rem;
-  padding: 0.5625rem 1rem;
+  padding: 0.75rem 1rem;
   width: 100%;
   font-size: 0.9375rem;
   line-height: 1.4;
   outline: none;
   transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+/* Trade order form — hard-coded padding + uniform vertical rhythm
+   (Tailwind p-4/gap utilities were resolving to 0 in this cascade). */
+.trade-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1rem 1rem 1.25rem;
+  height: 100%;
+  min-height: 0;
+}
+.trade-panel > * { margin: 0; }
+.trade-panel label {
+  font-size: 0.8125rem;
+  color: var(--color-exchange-text-secondary);
+  margin-bottom: 0.5rem;
+  display: block;
+}
+
+/* Mobile view-switch tab bar — hard padding (Tailwind px/py resolved to 0). */
+.trade-tabs {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  padding: 0 0.75rem;
+  overflow-x: auto;
+}
+.trade-tab {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.625rem 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s, border-color 0.15s;
 }
 .input-field:focus {
   border-color: var(--color-exchange-yellow);
