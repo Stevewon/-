@@ -123,19 +123,19 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
     <div className="flex flex-col h-full min-h-0 p-4">
       {/* Buy/Sell toggle — Bybit-style rounded segment */}
       {!forceSide && (
-        <div className="flex gap-2 p-1 rounded-xl bg-exchange-input">
+        <div className="flex gap-2">
           <button
             onClick={() => setSide('buy')}
-            className={`flex-1 py-4 text-base font-bold rounded-lg transition-all ${
-              side === 'buy' ? 'bg-exchange-buy text-white' : 'text-exchange-text-secondary hover:text-exchange-text'
+            className={`flex-1 py-4 text-base font-bold rounded-xl transition-all ${
+              side === 'buy' ? 'bg-exchange-buy text-white' : 'bg-exchange-input text-exchange-text-secondary hover:text-exchange-text'
             }`}
           >
             {t('trade.buy')}
           </button>
           <button
             onClick={() => setSide('sell')}
-            className={`flex-1 py-4 text-base font-bold rounded-lg transition-all ${
-              side === 'sell' ? 'bg-exchange-sell text-white' : 'text-exchange-text-secondary hover:text-exchange-text'
+            className={`flex-1 py-4 text-base font-bold rounded-xl transition-all ${
+              side === 'sell' ? 'bg-exchange-sell text-white' : 'bg-exchange-input text-exchange-text-secondary hover:text-exchange-text'
             }`}
           >
             {t('trade.sell')}
