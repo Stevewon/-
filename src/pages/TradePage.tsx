@@ -89,9 +89,9 @@ export default function TradePage() {
   }, [symbol]);
 
   return (
-    <div className="h-[calc(100dvh-89px)] flex flex-col sm:pb-0 pb-14">
+    <div className="h-[calc(100dvh-89px)] w-full max-w-full min-w-0 overflow-x-hidden flex flex-col sm:pb-0 pb-14">
       {/* Market Info Bar */}
-      <div className="flex items-center gap-3 px-3 py-2 border-b border-exchange-border bg-exchange-card overflow-x-auto">
+      <div className="flex items-center gap-3 px-3 py-2 border-b border-exchange-border bg-exchange-card min-w-0 max-w-full overflow-x-auto no-scrollbar">
         <button
           onClick={() => setShowMarkets(!showMarkets)}
           className="flex items-center gap-2 hover:bg-exchange-hover/50 px-2 py-1 rounded-md transition-colors shrink-0"
@@ -209,7 +209,7 @@ export default function TradePage() {
       </div>
 
       {/* ===== MOBILE LAYOUT (< md) ===== */}
-      <div className="md:hidden flex flex-col flex-1 min-h-0">
+      <div className="md:hidden flex flex-col flex-1 min-h-0 min-w-0 max-w-full overflow-x-hidden">
         {/* Market Selector Overlay (Mobile) */}
         {showMarkets && (
           <div className="absolute inset-0 z-40 bg-exchange-bg/95 backdrop-blur-sm">

@@ -33,13 +33,41 @@
   }
 }
 
+/* ---------------------------------------------------------------------------
+   HARD HORIZONTAL-OVERFLOW CONTAINMENT (mobile left/right clipping fix)
+   Some mobile browsers (esp. Samsung Internet / Chrome on narrow devices)
+   compute the layout-viewport width from the WIDEST rendered content when the
+   viewport is locked (maximum-scale=1, user-scalable=no). If any child is even
+   a few px wider than device-width, the browser widens the layout viewport and
+   then CENTERS it, clipping BOTH edges of the page (that is the exact symptom
+   the user reported: "Register"->"Registe" on the right AND "Place Order"->
+   "e Order" on the left).
+   `overflow-x: hidden` on <body> alone was NOT enough because it neither clips
+   fixed/positioned descendants nor stops the layout viewport from widening.
+   Pin html/body/#root to the device width and use `overflow-x: clip`, which
+   clips overflow WITHOUT establishing a scroll container or a new BFC that can
+   swallow sticky positioning. --------------------------------------------- */
+html {
+  overflow-x: clip;
+  max-width: 100vw;
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans KR', sans-serif;
   background: #0B0E11;
   color: #EAECEF;
-  overflow-x: hidden;
+  width: 100%;
+  max-width: 100vw;
+  overflow-x: clip;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* React mount point — never allow it to exceed the viewport width. */
+#root {
+  width: 100%;
+  max-width: 100vw;
+  overflow-x: clip;
 }
 
 /* Scrollbar */
@@ -161,7 +189,23 @@ input[type="range"]::-moz-range-thumb {
   align-items: center;
   gap: 1.25rem;
   padding: 0 0.75rem;
+  /* Must be able to shrink below its content width inside the flex column,
+     otherwise the row pushes the whole document wider than the viewport and
+     the page gets horizontally clipped on narrow phones. */
+  min-width: 0;
+  max-width: 100%;
   overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;          /* Firefox */
+  -ms-overflow-style: none;       /* old Edge */
+  -webkit-overflow-scrolling: touch;
+}
+.trade-tabs::-webkit-scrollbar { display: none; }
+
+/* At very narrow viewports (<=360px) tighten the tab gap so the four tabs fit
+   without needing to scroll — cosmetic, the min-width:0 above is the real fix. */
+@media (max-width: 360px) {
+  .trade-tabs { gap: 0.875rem; padding: 0 0.5rem; }
 }
 .trade-tab {
   display: flex;

@@ -48,13 +48,13 @@ export default function Layout() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-exchange-bg">
+    <div className="min-h-screen w-full max-w-full min-w-0 overflow-x-hidden flex flex-col bg-exchange-bg">
       {/* Top Ticker Bar */}
       <TickerBar />
 
       {/* Header */}
-      <header className="bg-exchange-card border-b border-exchange-border px-4 py-2 flex items-center justify-between z-50 sticky top-0">
-        <div className="flex items-center gap-6">
+      <header className="bg-exchange-card border-b border-exchange-border px-3 sm:px-4 py-2 flex items-center justify-between gap-2 z-50 sticky top-0 min-w-0 max-w-full">
+        <div className="flex items-center gap-6 min-w-0">
           <Link to="/" className="shrink-0">
             <QuantaLogo size={30} showText={true} />
           </Link>
@@ -77,7 +77,7 @@ export default function Layout() {
           </nav>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           <LangSwitch />
           {user && <NotificationBell />}
 
