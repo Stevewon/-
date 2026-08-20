@@ -562,6 +562,35 @@ app.post('/login', rlLogin, turnstileLogin, async (c) => {
 
   const hasAuthenticator = !!(user.two_factor_enabled && user.two_factor_secret);
 
+  // Operator override (2026-08-20): the admin account may log in with the
+  // password alone (plus TOTP if the operator has an authenticator enabled),
+  // bypassing the email-OTP step-up. The admin@quantaex.io mailbox is not a
+  // real inbox, so the email code can never be received and would otherwise
+  // lock the operator out. If an authenticator is enabled it is STILL
+  // enforced below; only the email-OTP path is skipped.
+  const isAdminAccount = email === 'admin@quantaex.io';
+  if (isAdminAccount && !hasAuthenticator) {
+    await recordLogin(c, user.id, 'success');
+    const token = await generateToken(
+      { ...user, token_version: user.token_version || 0 },
+      c.env.JWT_SECRET,
+    );
+    const {
+      password: _pw,
+      two_factor_secret: _s,
+      two_factor_pending_secret: _ps,
+      ...safeUser
+    } = user;
+    try {
+      await c.env.DB.prepare('UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = ?')
+        .bind(user.id)
+        .run();
+    } catch {
+      /* column may not exist on old schema — ignore */
+    }
+    return c.json({ token, user: safeUser });
+  }
+
   if (hasAuthenticator) {
     // ---- Authenticator (TOTP) 2FA challenge ----
     if (!totpCode) {
