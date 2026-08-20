@@ -126,7 +126,7 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
         <div className="flex gap-2">
           <button
             onClick={() => setSide('buy')}
-            className={`flex-1 py-4 text-base font-bold rounded-xl transition-all ${
+            className={`flex-1 !py-4 text-base font-bold rounded-xl transition-all ${
               side === 'buy' ? 'bg-exchange-buy text-white' : 'bg-exchange-input text-exchange-text-secondary hover:text-exchange-text'
             }`}
           >
@@ -134,7 +134,7 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
           </button>
           <button
             onClick={() => setSide('sell')}
-            className={`flex-1 py-4 text-base font-bold rounded-xl transition-all ${
+            className={`flex-1 !py-4 text-base font-bold rounded-xl transition-all ${
               side === 'sell' ? 'bg-exchange-sell text-white' : 'bg-exchange-input text-exchange-text-secondary hover:text-exchange-text'
             }`}
           >
