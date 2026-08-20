@@ -89,7 +89,7 @@ export default function TradePage() {
   }, [symbol]);
 
   return (
-    <div className="h-[calc(100vh-80px)] flex flex-col sm:pb-0 pb-14">
+    <div className="h-[calc(100dvh-89px)] flex flex-col sm:pb-0 pb-14">
       {/* Market Info Bar */}
       <div className="flex items-center gap-3 px-3 py-2 border-b border-exchange-border bg-exchange-card overflow-x-auto">
         <button

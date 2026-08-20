@@ -22,6 +22,11 @@ export default function Layout() {
     return <Outlet />;
   }
 
+  // The Trade page is a full-screen trading workspace that sizes itself to the
+  // viewport (100dvh - top chrome). Appending the marketing Footer below it
+  // would push content past the viewport, so we hide the Footer on /trade/*.
+  const isTradeRoute = location.pathname.startsWith('/trade');
+
   const navItems = [
     { path: '/trade/BTC-USDT', label: t('nav.trade'), icon: BarChart3 },
     { path: '/markets', label: t('nav.markets'), icon: LayoutGrid },
@@ -117,8 +122,8 @@ export default function Layout() {
         <Outlet />
       </main>
 
-      {/* Footer */}
-      <Footer />
+      {/* Footer (hidden on the full-screen Trade workspace) */}
+      {!isTradeRoute && <Footer />}
 
       {/*
         Mobile Bottom Nav
