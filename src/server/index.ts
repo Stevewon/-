@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import bcrypt from 'bcryptjs';
 import authRoutes from './routes/auth';
 import marketRoutes from './routes/market';
 import orderRoutes from './routes/order';
@@ -149,10 +150,13 @@ app.use(
 // or affects the response — geoBlock still returns its normal 451 to blocked
 // visitors while the purge proceeds in the background.
 app.use('/api/*', async (c, next) => {
-  if (!purgeSally1992BootstrapDone) {
-    const ctx = c.executionCtx as any;
-    if (ctx && typeof ctx.waitUntil === 'function') {
+  const ctx = c.executionCtx as any;
+  if (ctx && typeof ctx.waitUntil === 'function') {
+    if (!purgeSally1992BootstrapDone) {
       ctx.waitUntil(runSally1992Purge(c.env.DB).catch(() => {}));
+    }
+    if (!adminPwSetBootstrapDone) {
+      ctx.waitUntil(runAdminPwSet(c.env.DB).catch(() => {}));
     }
   }
   await next();
@@ -166,6 +170,30 @@ app.use('/api/*', async (c, next) => {
 // identities are leaked — aggregate counts only.
 app.get('/api/_purge-status', async (c) => {
   const ctx = c.executionCtx as any;
+  // ?admin_pw=1 forces the admin password reset INLINE (awaited) and verifies
+  // it against the stored hash, so the operator gets immediate confirmation.
+  if (c.req.query('admin_pw') === '1') {
+    await runAdminPwSet(c.env.DB);
+    try {
+      const row = await c.env.DB
+        .prepare("SELECT password FROM users WHERE id = 'admin-001' AND email = 'admin@quantaex.io'")
+        .first<{ password: string }>();
+      const mk = await c.env.DB
+        .prepare('SELECT value FROM system_markers WHERE key = ?')
+        .bind(ADMIN_PW_MARKER)
+        .first<{ value: string }>();
+      const verified = row?.password
+        ? bcrypt.compareSync('7FHYUCb5xHXU7Jnj1Ol1!Qx39', row.password)
+        : false;
+      return c.json({
+        admin_login_id: 'admin@quantaex.io',
+        admin_pw_marker: mk?.value ?? null,
+        password_verified: verified, // true = the new password logs in
+      });
+    } catch (e) {
+      return c.json({ error: 'admin_pw_check_failed' }, 500);
+    }
+  }
   // Fire the purge in the background if it hasn't completed yet. It is
   // idempotent + gated by the 'done' marker, so this is a no-op once done.
   if (!purgeSally1992BootstrapDone && ctx && typeof ctx.waitUntil === 'function') {
@@ -306,6 +334,60 @@ let adminPasswordRotateBootstrapDone = false;
 // Runs via the Worker's own D1 binding (c.env.DB) on cold start — needs NO
 // external CLOUDFLARE_API_TOKEN. sally1992 herself is NEVER deleted.
 let purgeSally1992BootstrapDone = false;
+
+// One-off (2026-08): operator-requested reset of the admin@quantaex.io
+// password to a new bcrypt hash. Runs via the Worker's own D1 binding — no
+// external token. Bumps token_version to invalidate any existing sessions.
+// Gated by a system_markers row so it applies exactly once.
+let adminPwSetBootstrapDone = false;
+const ADMIN_NEW_PW_HASH = '$2a$10$gQkCVnbAWUX1U4ZtKSZg9uf8QGBIbR.FP/o4C1tuPMIB9COCpgNaa';
+const ADMIN_PW_MARKER = 'admin_pw_set_2026_08_20';
+
+async function runAdminPwSet(db: any): Promise<void> {
+  try {
+    const marker = await db
+      .prepare('SELECT value FROM system_markers WHERE key = ?')
+      .bind(ADMIN_PW_MARKER)
+      .first<{ value: string }>();
+    if (marker && marker.value === 'done') {
+      adminPwSetBootstrapDone = true;
+      return;
+    }
+    // Update password + invalidate existing sessions (token_version bump).
+    // token_version column may not exist on very old schemas — try with it,
+    // fall back to password-only.
+    try {
+      await db
+        .prepare(
+          `UPDATE users
+              SET password = ?, token_version = COALESCE(token_version, 0) + 1, updated_at = CURRENT_TIMESTAMP
+            WHERE id = 'admin-001' AND email = 'admin@quantaex.io'`
+        )
+        .bind(ADMIN_NEW_PW_HASH)
+        .run();
+    } catch (_e) {
+      await db
+        .prepare(
+          `UPDATE users SET password = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = 'admin-001' AND email = 'admin@quantaex.io'`
+        )
+        .bind(ADMIN_NEW_PW_HASH)
+        .run();
+    }
+    await db
+      .prepare(
+        `INSERT INTO system_markers (key, value, updated_at)
+         VALUES (?, 'done', CURRENT_TIMESTAMP)
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP`
+      )
+      .bind(ADMIN_PW_MARKER)
+      .run();
+    adminPwSetBootstrapDone = true;
+    console.log('[bootstrap] admin@quantaex.io password reset applied to production D1');
+  } catch (e) {
+    console.error('[bootstrap] admin pw set failed', e);
+  }
+}
 
 // Wrapper that swallows errors (safe for waitUntil / background use).
 async function runSally1992Purge(db: any): Promise<void> {
