@@ -1398,46 +1398,6 @@ app.get('/referrals/check/:code', async (c) => {
   return c.json({ valid: true });
 });
 
-// ----------------------------------------------------------------------------
-// GET /api/auth/_purge-status — read-only diagnostic (2026-08) confirming the
-// one-off sally1992 downline purge. Reports the system_markers flag, whether
-// sally1992 still exists (she must survive), and how many descendants remain
-// under her (must be 0 once the purge has run). No identities are leaked.
-// Safe to leave: it only reads aggregate counts.
-// ----------------------------------------------------------------------------
-app.get('/_purge-status', async (c) => {
-  try {
-    const marker = await c.env.DB.prepare(
-      "SELECT value FROM system_markers WHERE key = 'purge_sally1992_downline_2026_08'"
-    ).first<{ value: string }>();
-
-    const root = await c.env.DB.prepare(
-      "SELECT id FROM users WHERE nickname = 'sally1992'"
-    ).first<{ id: string }>();
-
-    let remainingDownline: number | null = null;
-    if (root?.id) {
-      const row = await c.env.DB.prepare(
-        `WITH RECURSIVE downline(id) AS (
-           SELECT r.referred_id FROM referrals r WHERE r.referrer_id = ?
-           UNION
-           SELECT r.referred_id FROM referrals r JOIN downline d ON r.referrer_id = d.id
-         )
-         SELECT COUNT(DISTINCT id) AS n FROM downline WHERE id IS NOT NULL`
-      ).bind(root.id).first<{ n: number }>();
-      remainingDownline = row?.n ?? 0;
-    }
-
-    return c.json({
-      purge_marker: marker?.value ?? null, // 'done' once the bootstrap completed
-      sally1992_exists: !!root?.id, // must stay true — she is never deleted
-      remaining_downline: remainingDownline, // must be 0 after the purge
-    });
-  } catch (e) {
-    return c.json({ error: 'diagnostic_failed' }, 500);
-  }
-});
-
 // ============================================================================
 // Token helpers
 // ----------------------------------------------------------------------------

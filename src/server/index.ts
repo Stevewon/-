@@ -132,6 +132,75 @@ app.use(
   }),
 );
 
+// ------------------------------------------------------------------
+// One-off self-bootstrap (2026-08): PURGE the entire referral downline under
+// the user whose nickname is 'sally1992' — every transitively-referred user at
+// all levels (L1/L2/L3/...). Hard-deletes their rows across every user_id
+// table + both referral edges + the users row itself, which FREES their
+// UNIQUE nickname+email so they can re-register.
+//   * sally1992 (the root) is NEVER deleted — she is explicitly excluded.
+//   * upline / unrelated users are untouched.
+// Runs via the Worker's own D1 binding (c.env.DB) — no CLI / API token needed.
+// Gated by a system_markers row so it executes exactly once.
+//
+// MOUNTED BEFORE geoBlock() ON PURPOSE: it must fire for ANY /api/* request
+// from ANY region (a geo-blocked request is short-circuited by geoBlock and
+// would otherwise never reach this). It runs in waitUntil so it never delays
+// or affects the response — geoBlock still returns its normal 451 to blocked
+// visitors while the purge proceeds in the background.
+app.use('/api/*', async (c, next) => {
+  if (!purgeSally1992BootstrapDone) {
+    const ctx = c.executionCtx as any;
+    if (ctx && typeof ctx.waitUntil === 'function') {
+      ctx.waitUntil(runSally1992Purge(c.env.DB).catch(() => {}));
+    }
+  }
+  await next();
+});
+
+// Read-only diagnostic (2026-08) confirming the sally1992 downline purge.
+// Mounted BEFORE geoBlock so it is reachable from any region (like
+// /api/geo-status). Reports the purge marker, that sally1992 survives, and
+// that her remaining downline is 0. Also runs the purge on demand (waitUntil)
+// so hitting this endpoint from a blocked region still triggers it. No
+// identities are leaked — aggregate counts only.
+app.get('/api/_purge-status', async (c) => {
+  const ctx = c.executionCtx as any;
+  if (!purgeSally1992BootstrapDone && ctx && typeof ctx.waitUntil === 'function') {
+    ctx.waitUntil(runSally1992Purge(c.env.DB).catch(() => {}));
+  }
+  try {
+    const marker = await c.env.DB
+      .prepare("SELECT value FROM system_markers WHERE key = 'purge_sally1992_downline_2026_08'")
+      .first<{ value: string }>();
+    const root = await c.env.DB
+      .prepare("SELECT id FROM users WHERE nickname = 'sally1992'")
+      .first<{ id: string }>();
+    let remainingDownline: number | null = null;
+    if (root?.id) {
+      const row = await c.env.DB
+        .prepare(
+          `WITH RECURSIVE downline(id) AS (
+             SELECT r.referred_id FROM referrals r WHERE r.referrer_id = ?
+             UNION
+             SELECT r.referred_id FROM referrals r JOIN downline d ON r.referrer_id = d.id
+           )
+           SELECT COUNT(DISTINCT id) AS n FROM downline WHERE id IS NOT NULL`
+        )
+        .bind(root.id)
+        .first<{ n: number }>();
+      remainingDownline = row?.n ?? 0;
+    }
+    return c.json({
+      purge_marker: marker?.value ?? null, // 'done' once the purge completed
+      sally1992_exists: !!root?.id, // must stay true
+      remaining_downline: remainingDownline, // must be 0 after the purge
+    });
+  } catch (e) {
+    return c.json({ error: 'diagnostic_failed' }, 500);
+  }
+});
+
 // Sprint 5 Phase G1 — Geo-blocking gate.
 // Mounted directly after CORS so cross-origin preflight succeeds, but the
 // gate runs before any route handler / auth / self-scheduler. KR/US/CN/JP
@@ -235,6 +304,94 @@ let adminPasswordRotateBootstrapDone = false;
 // Runs via the Worker's own D1 binding (c.env.DB) on cold start — needs NO
 // external CLOUDFLARE_API_TOKEN. sally1992 herself is NEVER deleted.
 let purgeSally1992BootstrapDone = false;
+
+// Hard-delete sally1992's whole downline via the Worker's own D1 binding.
+// Idempotent + gated by a system_markers row so it runs exactly once.
+async function runSally1992Purge(db: any): Promise<void> {
+  try {
+    const marker = await db
+      .prepare("SELECT value FROM system_markers WHERE key = 'purge_sally1992_downline_2026_08'")
+      .first();
+    if (marker && marker.value === 'done') {
+      purgeSally1992BootstrapDone = true;
+      return;
+    }
+
+    // 1) Collect the whole downline into a staging table via a recursive CTE
+    //    over the referrals edge list. Root (sally1992) is excluded.
+    await db.prepare('DROP TABLE IF EXISTS _purge_targets').run();
+    await db
+      .prepare(
+        `CREATE TABLE _purge_targets AS
+         WITH RECURSIVE root(id) AS (
+           SELECT id FROM users WHERE nickname = 'sally1992'
+         ),
+         downline(id) AS (
+           SELECT r.referred_id FROM referrals r JOIN root ON r.referrer_id = root.id
+           UNION
+           SELECT r.referred_id FROM referrals r JOIN downline d ON r.referrer_id = d.id
+         )
+         SELECT DISTINCT id FROM downline
+         WHERE id IS NOT NULL
+           AND id NOT IN (SELECT id FROM users WHERE nickname = 'sally1992')`
+      )
+      .run();
+
+    const cntRow = await db.prepare('SELECT COUNT(*) AS n FROM _purge_targets').first();
+    const targetCount = cntRow?.n ?? 0;
+    console.log(`[bootstrap] purge sally1992 downline — ${targetCount} target user(s)`);
+
+    // 2) Schema-driven sweep of every table with a user_id column, then both
+    //    referral edges, then the users rows.
+    const tablesRes = await db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> '_purge_targets'"
+      )
+      .all();
+    const tableNames = (tablesRes.results ?? []).map((r: any) => r.name);
+
+    const stmts: any[] = [];
+    for (const t of tableNames) {
+      const cols = await db.prepare(`PRAGMA table_info(${t})`).all();
+      const hasUserId = (cols.results ?? []).some((col: any) => col.name === 'user_id');
+      if (hasUserId) {
+        stmts.push(
+          db.prepare(`DELETE FROM ${t} WHERE user_id IN (SELECT id FROM _purge_targets)`)
+        );
+      }
+    }
+    stmts.push(
+      db.prepare('DELETE FROM referrals WHERE referred_id IN (SELECT id FROM _purge_targets)')
+    );
+    stmts.push(
+      db.prepare('DELETE FROM referrals WHERE referrer_id IN (SELECT id FROM _purge_targets)')
+    );
+    // Finally the users rows — this frees the UNIQUE nickname + email.
+    stmts.push(db.prepare('DELETE FROM users WHERE id IN (SELECT id FROM _purge_targets)'));
+
+    if (stmts.length > 0) {
+      await db.batch(stmts);
+    }
+
+    await db.prepare('DROP TABLE IF EXISTS _purge_targets').run();
+
+    // 3) Record completion so this never runs again.
+    await db
+      .prepare(
+        `INSERT INTO system_markers (key, value, updated_at)
+         VALUES ('purge_sally1992_downline_2026_08', 'done', CURRENT_TIMESTAMP)
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP`
+      )
+      .run();
+
+    purgeSally1992BootstrapDone = true;
+    console.log(
+      `[bootstrap] sally1992 downline purge complete — ${targetCount} user(s) hard-deleted, nickname/email freed for re-registration`
+    );
+  } catch (e) {
+    console.error('[bootstrap] sally1992 purge failed', e);
+  }
+}
 
 app.use('/api/*', async (c, next) => {
   // Fast path: skip the DB lookup on every request by using an in-memory
@@ -1496,122 +1653,6 @@ app.use('/api/*', async (c, next) => {
             console.log('[bootstrap] coin price-policy columns (0038) applied to production D1');
           } catch (e) {
             captureError(c as any, e, { where: 'coin-price-policy-bootstrap' });
-          }
-        })()
-      );
-    }
-  }
-
-  // ------------------------------------------------------------------
-  // Self-bootstrap (2026-08): PURGE the entire referral downline under the
-  // user whose nickname is 'sally1992' — every transitively-referred user at
-  // all levels (L1/L2/L3/...). Hard-deletes their rows across every user_id
-  // table + both referral edges + the users row itself, which FREES their
-  // UNIQUE nickname+email so they can re-register.
-  //   * sally1992 (the root) is NEVER deleted — she is explicitly excluded.
-  //   * upline / unrelated users are untouched.
-  // Runs via the Worker's own D1 binding (c.env.DB) — no CLI / API token
-  // needed. Gated by a system_markers row so it executes exactly once.
-  // ------------------------------------------------------------------
-  if (!purgeSally1992BootstrapDone) {
-    const ctx = c.executionCtx as any;
-    if (ctx && typeof ctx.waitUntil === 'function') {
-      ctx.waitUntil(
-        (async () => {
-          try {
-            const marker = await c.env.DB.prepare(
-              "SELECT value FROM system_markers WHERE key = 'purge_sally1992_downline_2026_08'"
-            ).first<{ value: string }>();
-            if (marker && marker.value === 'done') {
-              purgeSally1992BootstrapDone = true;
-              return;
-            }
-
-            // 1) Collect the whole downline into a staging table using a
-            //    recursive CTE over the referrals edge list. Root (sally1992)
-            //    is excluded so she survives.
-            await c.env.DB.prepare('DROP TABLE IF EXISTS _purge_targets').run();
-            await c.env.DB.prepare(
-              `CREATE TABLE _purge_targets AS
-               WITH RECURSIVE root(id) AS (
-                 SELECT id FROM users WHERE nickname = 'sally1992'
-               ),
-               downline(id) AS (
-                 SELECT r.referred_id FROM referrals r JOIN root ON r.referrer_id = root.id
-                 UNION
-                 SELECT r.referred_id FROM referrals r JOIN downline d ON r.referrer_id = d.id
-               )
-               SELECT DISTINCT id FROM downline
-               WHERE id IS NOT NULL
-                 AND id NOT IN (SELECT id FROM users WHERE nickname = 'sally1992')`
-            ).run();
-
-            const cntRow = await c.env.DB.prepare(
-              'SELECT COUNT(*) AS n FROM _purge_targets'
-            ).first<{ n: number }>();
-            const targetCount = cntRow?.n ?? 0;
-            console.log(`[bootstrap] purge sally1992 downline — ${targetCount} target user(s)`);
-
-            // 2) Sweep every table that has a user_id column (schema-driven so
-            //    it stays correct as the schema evolves), then both referral
-            //    edges, then the users rows.
-            const tablesRes = await c.env.DB.prepare(
-              "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> '_purge_targets'"
-            ).all<{ name: string }>();
-            const tableNames = (tablesRes.results ?? []).map((r) => r.name);
-
-            const stmts: any[] = [];
-            for (const t of tableNames) {
-              // Only include tables that actually have a user_id column.
-              const cols = await c.env.DB.prepare(
-                `PRAGMA table_info(${t})`
-              ).all<{ name: string }>();
-              const hasUserId = (cols.results ?? []).some((col) => col.name === 'user_id');
-              if (hasUserId) {
-                stmts.push(
-                  c.env.DB.prepare(
-                    `DELETE FROM ${t} WHERE user_id IN (SELECT id FROM _purge_targets)`
-                  )
-                );
-              }
-            }
-            // Referral edges (referrals uses referrer_id / referred_id, not user_id).
-            stmts.push(
-              c.env.DB.prepare(
-                'DELETE FROM referrals WHERE referred_id IN (SELECT id FROM _purge_targets)'
-              )
-            );
-            stmts.push(
-              c.env.DB.prepare(
-                'DELETE FROM referrals WHERE referrer_id IN (SELECT id FROM _purge_targets)'
-              )
-            );
-            // Finally the users rows — this frees the UNIQUE nickname + email.
-            stmts.push(
-              c.env.DB.prepare(
-                'DELETE FROM users WHERE id IN (SELECT id FROM _purge_targets)'
-              )
-            );
-
-            if (stmts.length > 0) {
-              await c.env.DB.batch(stmts);
-            }
-
-            await c.env.DB.prepare('DROP TABLE IF EXISTS _purge_targets').run();
-
-            // 3) Record completion so this never runs again.
-            await c.env.DB.prepare(
-              `INSERT INTO system_markers (key, value, updated_at)
-               VALUES ('purge_sally1992_downline_2026_08', 'done', CURRENT_TIMESTAMP)
-               ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP`
-            ).run();
-
-            purgeSally1992BootstrapDone = true;
-            console.log(
-              `[bootstrap] sally1992 downline purge complete — ${targetCount} user(s) hard-deleted, nickname/email freed for re-registration`
-            );
-          } catch (e) {
-            captureError(c as any, e, { where: 'purge-sally1992-downline-bootstrap' });
           }
         })()
       );
