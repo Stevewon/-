@@ -16,10 +16,21 @@
   --color-exchange-text-third: #5E6673;
 }
 
+/* box-sizing stays global/unlayered (structural, never overridden by utilities). */
 * {
-  margin: 0;
-  padding: 0;
   box-sizing: border-box;
+}
+
+/* The default margin/padding reset MUST live inside @layer base so Tailwind's
+   utilities layer (p-*, px-*, m-*, mb-* ...) can override it. Previously this
+   reset was unlayered, so `* { padding:0 }` beat every Tailwind padding utility
+   (cascade layers lose to unlayered rules) — that is why p-4/px-3/py-2 etc.
+   computed to 0px across the entire app. */
+@layer base {
+  * {
+    margin: 0;
+    padding: 0;
+  }
 }
 
 body {
