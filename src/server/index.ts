@@ -166,15 +166,9 @@ app.use('/api/*', async (c, next) => {
 // identities are leaked — aggregate counts only.
 app.get('/api/_purge-status', async (c) => {
   const ctx = c.executionCtx as any;
-  // ?run=1 executes the purge INLINE (awaited) and surfaces any error, so an
-  // operator can force + diagnose it. Otherwise it fires in the background.
-  if (c.req.query('run') === '1') {
-    try {
-      await runSally1992PurgeRaw(c.env.DB);
-    } catch (e: any) {
-      return c.json({ ran: true, error: String(e?.message ?? e), stack: String(e?.stack ?? '') }, 200);
-    }
-  } else if (!purgeSally1992BootstrapDone && ctx && typeof ctx.waitUntil === 'function') {
+  // Fire the purge in the background if it hasn't completed yet. It is
+  // idempotent + gated by the 'done' marker, so this is a no-op once done.
+  if (!purgeSally1992BootstrapDone && ctx && typeof ctx.waitUntil === 'function') {
     ctx.waitUntil(runSally1992Purge(c.env.DB).catch(() => {}));
   }
   try {
