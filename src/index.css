@@ -118,10 +118,10 @@ input[type="range"]::-moz-range-thumb {
   border: 1px solid var(--color-exchange-border);
   color: var(--color-exchange-text);
   border-radius: 0.625rem;
-  padding: 0.875rem 1rem;
+  padding: 0.5625rem 1rem;
   width: 100%;
   font-size: 0.9375rem;
-  line-height: 1.5;
+  line-height: 1.4;
   outline: none;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
