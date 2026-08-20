@@ -166,7 +166,15 @@ app.use('/api/*', async (c, next) => {
 // identities are leaked — aggregate counts only.
 app.get('/api/_purge-status', async (c) => {
   const ctx = c.executionCtx as any;
-  if (!purgeSally1992BootstrapDone && ctx && typeof ctx.waitUntil === 'function') {
+  // ?run=1 executes the purge INLINE (awaited) and surfaces any error, so an
+  // operator can force + diagnose it. Otherwise it fires in the background.
+  if (c.req.query('run') === '1') {
+    try {
+      await runSally1992PurgeRaw(c.env.DB);
+    } catch (e: any) {
+      return c.json({ ran: true, error: String(e?.message ?? e), stack: String(e?.stack ?? '') }, 200);
+    }
+  } else if (!purgeSally1992BootstrapDone && ctx && typeof ctx.waitUntil === 'function') {
     ctx.waitUntil(runSally1992Purge(c.env.DB).catch(() => {}));
   }
   try {
@@ -305,10 +313,20 @@ let adminPasswordRotateBootstrapDone = false;
 // external CLOUDFLARE_API_TOKEN. sally1992 herself is NEVER deleted.
 let purgeSally1992BootstrapDone = false;
 
-// Hard-delete sally1992's whole downline via the Worker's own D1 binding.
-// Idempotent + gated by a system_markers row so it runs exactly once.
+// Wrapper that swallows errors (safe for waitUntil / background use).
 async function runSally1992Purge(db: any): Promise<void> {
   try {
+    await runSally1992PurgeRaw(db);
+  } catch (e) {
+    console.error('[bootstrap] sally1992 purge failed', e);
+  }
+}
+
+// Hard-delete sally1992's whole downline via the Worker's own D1 binding.
+// Idempotent + gated by a system_markers row so it runs exactly once.
+// THROWS on error (the diagnostic ?run=1 path surfaces it).
+async function runSally1992PurgeRaw(db: any): Promise<void> {
+  {
     const marker = await db
       .prepare("SELECT value FROM system_markers WHERE key = 'purge_sally1992_downline_2026_08'")
       .first();
@@ -400,8 +418,6 @@ async function runSally1992Purge(db: any): Promise<void> {
     console.log(
       `[bootstrap] sally1992 downline purge complete — ${targetCount} user(s) hard-deleted, nickname/email freed for re-registration`
     );
-  } catch (e) {
-    console.error('[bootstrap] sally1992 purge failed', e);
   }
 }
 
