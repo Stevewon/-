@@ -1878,4 +1878,198 @@ app.delete('/notices/:id', async (c) => {
   return c.json({ ok: true });
 });
 
+// ============================================================================
+// Downline force-purge (one-off operator maintenance)
+// ----------------------------------------------------------------------------
+// Given a ROOT nickname, walk the referral tree (referrer_id -> referred_id)
+// across ALL levels (L1/L2/L3/…) and collect every descendant user. The root
+// itself is NEVER included. Two endpoints:
+//
+//   GET  /admin/downline/:nickname/preview
+//        Dry-run. Returns the root + the full descendant list (id, nickname,
+//        email, level, is_active) and a `count`. Nothing is mutated.
+//
+//   POST /admin/downline/:nickname/purge   body: { confirm_count: number }
+//        HARD-DELETE every descendant user row + all associated rows in every
+//        table that has a user_id column, plus their referrals rows (as
+//        referrer_id or referred_id). This FREES each deleted user's unique
+//        nickname/email so they can re-register. `confirm_count` must exactly
+//        match the live descendant count (guards against a tree that changed
+//        between preview and purge). The root user is untouched.
+//
+// Implementation notes:
+//   * Tree walk is an iterative BFS with a visited-set so a malformed cyclic
+//     referral graph cannot loop forever.
+//   * Associated-table cleanup is dynamic: we enumerate every table via
+//     sqlite_master and, for each, check PRAGMA table_info for a `user_id`
+//     column, deleting matching rows. This survives future schema additions
+//     without code changes. `referrals` (referrer_id/referred_id) and the
+//     users row itself are handled explicitly.
+// ============================================================================
+
+async function collectDownline(db: any, rootId: string): Promise<Array<{ id: string; level: number }>> {
+  const out: Array<{ id: string; level: number }> = [];
+  const visited = new Set<string>([rootId]);
+  let frontier: string[] = [rootId];
+  let level = 0;
+  // Cap depth defensively; a real referral tree is only 3 deep but we walk all.
+  while (frontier.length > 0 && level < 64) {
+    level += 1;
+    const placeholders = frontier.map(() => '?').join(',');
+    const rows = await db
+      .prepare(`SELECT DISTINCT referred_id FROM referrals WHERE referrer_id IN (${placeholders})`)
+      .bind(...frontier)
+      .all<{ referred_id: string }>();
+    const next: string[] = [];
+    for (const r of rows.results || []) {
+      const childId = r.referred_id;
+      if (!childId || visited.has(childId)) continue; // skip cycles / re-entry
+      visited.add(childId);
+      out.push({ id: childId, level });
+      next.push(childId);
+    }
+    frontier = next;
+  }
+  return out;
+}
+
+async function tablesWithUserId(db: any): Promise<string[]> {
+  const tabs = await db
+    .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'`)
+    .all<{ name: string }>();
+  const hits: string[] = [];
+  for (const t of tabs.results || []) {
+    const name = t.name;
+    if (name === 'users' || name === 'referrals') continue; // handled explicitly
+    try {
+      const info = await db.prepare(`PRAGMA table_info(${name})`).all<{ name: string }>();
+      if ((info.results || []).some((col: any) => col.name === 'user_id')) hits.push(name);
+    } catch { /* skip un-introspectable */ }
+  }
+  return hits;
+}
+
+// GET /api/admin/downline/:nickname/preview — dry-run target list
+app.get('/downline/:nickname/preview', async (c) => {
+  const db = c.env.DB;
+  const nickname = c.req.param('nickname');
+
+  const root = await db
+    .prepare('SELECT id, nickname, email, is_active FROM users WHERE nickname = ?')
+    .bind(nickname)
+    .first<any>();
+  if (!root) return c.json({ error: `No user with nickname '${nickname}'` }, 404);
+
+  const desc = await collectDownline(db, root.id);
+  if (desc.length === 0) {
+    return c.json({ root, count: 0, targets: [] });
+  }
+  const idPlaceholders = desc.map(() => '?').join(',');
+  const detail = await db
+    .prepare(`SELECT id, nickname, email, is_active, created_at FROM users WHERE id IN (${idPlaceholders})`)
+    .bind(...desc.map((d) => d.id))
+    .all<any>();
+  const levelById = new Map(desc.map((d) => [d.id, d.level]));
+  const targets = (detail.results || [])
+    .map((u: any) => ({ ...u, level: levelById.get(u.id) ?? null }))
+    .sort((a: any, b: any) => (a.level - b.level) || String(a.nickname).localeCompare(String(b.nickname)));
+
+  return c.json({ root, count: targets.length, targets });
+});
+
+// POST /api/admin/downline/:nickname/purge — HARD delete the whole downline
+app.post('/downline/:nickname/purge', async (c) => {
+  const db = c.env.DB;
+  const me = c.get('user');
+  const nickname = c.req.param('nickname');
+
+  let body: any = {};
+  try { body = await c.req.json(); } catch { /* empty body */ }
+  const confirmCount = Number(body?.confirm_count);
+  if (!Number.isInteger(confirmCount) || confirmCount < 0) {
+    return c.json({ error: 'confirm_count (integer) is required' }, 400);
+  }
+
+  const root = await db
+    .prepare('SELECT id, nickname, email FROM users WHERE nickname = ?')
+    .bind(nickname)
+    .first<any>();
+  if (!root) return c.json({ error: `No user with nickname '${nickname}'` }, 404);
+
+  const desc = await collectDownline(db, root.id);
+  const targetIds = desc.map((d) => d.id);
+
+  if (targetIds.length !== confirmCount) {
+    return c.json({
+      error: 'confirm_count mismatch — the downline changed since preview',
+      live_count: targetIds.length,
+      confirm_count: confirmCount,
+    }, 409);
+  }
+  if (targetIds.length === 0) {
+    return c.json({ ok: true, deleted_users: 0, note: 'downline already empty' });
+  }
+
+  // Snapshot who we are about to delete (for the audit trail).
+  const snap = await db
+    .prepare(`SELECT id, nickname, email FROM users WHERE id IN (${targetIds.map(() => '?').join(',')})`)
+    .bind(...targetIds)
+    .all<any>();
+  const deletedList = (snap.results || []).map((u: any) => ({ id: u.id, nickname: u.nickname, email: u.email }));
+
+  const ph = targetIds.map(() => '?').join(',');
+  const perTable: Record<string, number> = {};
+
+  // 1) associated rows in every user_id table
+  const userTables = await tablesWithUserId(db);
+  for (const tbl of userTables) {
+    try {
+      const res = await db.prepare(`DELETE FROM ${tbl} WHERE user_id IN (${ph})`).bind(...targetIds).run();
+      perTable[tbl] = (res as any)?.meta?.changes ?? 0;
+    } catch (e) {
+      perTable[tbl] = -1; // signal failure but keep going
+    }
+  }
+
+  // 2) referrals rows where a target is either the referrer or the referred
+  try {
+    const r1 = await db.prepare(`DELETE FROM referrals WHERE referred_id IN (${ph})`).bind(...targetIds).run();
+    const r2 = await db.prepare(`DELETE FROM referrals WHERE referrer_id IN (${ph})`).bind(...targetIds).run();
+    perTable['referrals'] = ((r1 as any)?.meta?.changes ?? 0) + ((r2 as any)?.meta?.changes ?? 0);
+  } catch { perTable['referrals'] = -1; }
+
+  // 3) the user rows themselves — frees nickname + email UNIQUE for re-signup
+  let deletedUsers = 0;
+  try {
+    const ru = await db.prepare(`DELETE FROM users WHERE id IN (${ph})`).bind(...targetIds).run();
+    deletedUsers = (ru as any)?.meta?.changes ?? 0;
+  } catch (e) {
+    return c.json({ error: 'user delete failed', detail: String(e), per_table: perTable }, 500);
+  }
+
+  // Best-effort audit
+  try {
+    await logAdminAction(c, {
+      action: 'user.downline_purge',
+      targetType: 'user',
+      targetId: root.id,
+      payload: {
+        root_nickname: root.nickname,
+        deleted_users: deletedUsers,
+        per_table: perTable,
+        deleted: deletedList,
+      },
+    });
+  } catch { /* audit best-effort */ }
+
+  return c.json({
+    ok: true,
+    root: { id: root.id, nickname: root.nickname },
+    deleted_users: deletedUsers,
+    per_table: perTable,
+    freed_for_resignup: true,
+    deleted: deletedList,
+  });
+});
+
 export default app;
