@@ -352,6 +352,130 @@ function ActivityRow({ event, t }: any) {
 // ============================================================================
 // Users tab
 // ============================================================================
+// ---------------------------------------------------------------------------
+// Downline force-purge panel: enter a ROOT nickname, preview the full referral
+// tree (all descendants, root excluded), then hard-delete every descendant +
+// their associated data. Deleted nicknames/emails are freed for re-signup.
+// ---------------------------------------------------------------------------
+function DownlinePurgePanel({ t, onUpdate }: any) {
+  const [nickname, setNickname] = useState('');
+  const [preview, setPreview] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const [purging, setPurging] = useState(false);
+
+  const doPreview = async () => {
+    const nk = nickname.trim();
+    if (!nk) return;
+    setLoading(true);
+    setPreview(null);
+    try {
+      const res = await api.get(`/admin/downline/${encodeURIComponent(nk)}/preview`);
+      setPreview(res.data);
+    } catch (e: any) {
+      showToast('error', t('common.error'), e.response?.data?.error || 'Preview failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const doPurge = async () => {
+    if (!preview) return;
+    const nk = preview.root?.nickname;
+    const count = preview.count;
+    if (count === 0) {
+      showToast('info', t('common.error'), 'No downline to purge');
+      return;
+    }
+    const msg =
+      `⚠️ ${nk} 산하 ${count}명을 영구 삭제합니다.\n` +
+      `- 대상 계정 + 연관 데이터(주문/지갑/추천기록 등) 전부 삭제\n` +
+      `- 닉네임/이메일은 재가입 가능하게 해제됨\n` +
+      `- ${nk} 본인은 삭제되지 않음\n` +
+      `- 되돌릴 수 없습니다.\n\n계속하려면 삭제 인원수(${count})를 입력하세요:`;
+    const typed = window.prompt(msg, '');
+    if (typed === null) return;
+    if (Number(typed) !== count) {
+      showToast('error', t('common.error'), `입력값(${typed})이 인원수(${count})와 다릅니다`);
+      return;
+    }
+    setPurging(true);
+    try {
+      const res = await api.post(`/admin/downline/${encodeURIComponent(nk)}/purge`, { confirm_count: count });
+      showToast('success', t('common.save'), `${res.data.deleted_users}명 강제탈퇴 완료 (재가입 가능)`);
+      setPreview(null);
+      setNickname('');
+      onUpdate?.();
+    } catch (e: any) {
+      const d = e.response?.data;
+      showToast('error', t('common.error'), d?.error || 'Purge failed');
+      if (d?.live_count != null) setPreview((p: any) => p ? { ...p, count: d.live_count } : p);
+    } finally {
+      setPurging(false);
+    }
+  };
+
+  return (
+    <div className="mb-4 border border-exchange-sell/40 rounded-lg p-3 bg-exchange-sell/5">
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-xs font-semibold text-exchange-sell">⚠ 산하 강제탈퇴 (Downline force-purge)</span>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          type="text"
+          value={nickname}
+          onChange={e => setNickname(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') doPreview(); }}
+          placeholder="루트 닉네임 (예: sally1992)"
+          className="input-field text-xs h-8 min-w-[220px]"
+        />
+        <button onClick={doPreview} disabled={loading || !nickname.trim()} className="text-xs !py-1.5 !px-3 rounded bg-exchange-hover text-exchange-text disabled:opacity-50">
+          {loading ? '조회중…' : '미리보기'}
+        </button>
+        {preview && preview.count > 0 && (
+          <button onClick={doPurge} disabled={purging} className="text-xs !py-1.5 !px-3 rounded bg-exchange-sell text-white font-semibold disabled:opacity-50">
+            {purging ? '삭제중…' : `${preview.count}명 강제탈퇴`}
+          </button>
+        )}
+      </div>
+
+      {preview && (
+        <div className="mt-3 text-xs">
+          <div className="text-exchange-text-second mb-1">
+            루트: <span className="text-exchange-text font-semibold">{preview.root?.nickname}</span> (본인 유지) ·
+            산하 대상 <span className="text-exchange-sell font-semibold">{preview.count}</span>명
+          </div>
+          {preview.count > 0 && (
+            <div className="max-h-56 overflow-y-auto border border-exchange-border rounded">
+              <table className="w-full text-[11px]">
+                <thead className="sticky top-0 bg-exchange-card">
+                  <tr className="text-exchange-text-third text-left">
+                    <th className="px-2 py-1">#</th>
+                    <th className="px-2 py-1">Lv</th>
+                    <th className="px-2 py-1">Nickname</th>
+                    <th className="px-2 py-1">Email</th>
+                    <th className="px-2 py-1">Active</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {preview.targets.map((u: any, i: number) => (
+                    <tr key={u.id} className="border-t border-exchange-border/40">
+                      <td className="px-2 py-1 text-exchange-text-third">{i + 1}</td>
+                      <td className="px-2 py-1">L{u.level}</td>
+                      <td className="px-2 py-1 text-exchange-text">{u.nickname}</td>
+                      <td className="px-2 py-1 text-exchange-text-second">{u.email}</td>
+                      <td className="px-2 py-1">{u.is_active ? '1' : '0'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function UsersTab({ t, onUpdate }: any) {
   const [q, setQ] = useState('');
   const [kyc, setKyc] = useState('');
@@ -435,6 +559,9 @@ function UsersTab({ t, onUpdate }: any) {
 
   return (
     <div>
+      {/* Downline force-purge tool */}
+      <DownlinePurgePanel t={t} onUpdate={() => { load(); onUpdate?.(); }} />
+
       {/* Filters */}
       <form onSubmit={onSearch} className="flex flex-wrap items-center gap-2 mb-3">
         <div className="relative flex-1 min-w-[200px] max-w-sm">
