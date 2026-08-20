@@ -257,11 +257,11 @@ export default function TradePage() {
 
           {/* Order book — its own tab, full width */}
           {mobileView === 'book' && (
-            <div className="min-h-0">
+            <div className="h-full min-h-0">
               {isLoadingOrderbook && useStore.getState().orderbook.bids.length === 0 ? (
                 <SkeletonLoader type="orderbook" />
               ) : (
-                <Orderbook onPriceClick={(p) => setSelectedPrice(p)} />
+                <Orderbook onPriceClick={(p) => setSelectedPrice(p)} mobile />
               )}
             </div>
           )}

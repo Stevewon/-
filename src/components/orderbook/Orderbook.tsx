@@ -5,9 +5,10 @@ import { formatPrice, formatAmount } from '../../utils/format';
 
 interface Props {
   onPriceClick?: (price: number) => void;
+  mobile?: boolean;
 }
 
-export default function Orderbook({ onPriceClick }: Props) {
+export default function Orderbook({ onPriceClick, mobile }: Props) {
   const { orderbook, recentTrades } = useStore();
   const { t } = useI18n();
   const [flashPrices, setFlashPrices] = useState<Record<string, 'buy' | 'sell'>>({});
@@ -66,10 +67,17 @@ export default function Orderbook({ onPriceClick }: Props) {
   let askRunning = 0;
   let bidRunning = 0;
 
+  // Mobile Book tab gets larger, airier rows + side padding; desktop stays compact.
+  // NOTE: hard-coded CSS classes (.ob-row/.ob-head/.ob-spread) because Tailwind
+  // px-*/py-* utilities resolve to 0px in this app.
+  const mb = mobile ? ' ob-mobile' : '';
+  const bodyFont = mobile ? 'text-[13px]' : 'text-xs';
+  const headFont = mobile ? 'text-xs' : 'text-[10px]';
+
   return (
-    <div className="flex flex-col h-full text-xs font-mono">
+    <div className={`flex flex-col h-full ${bodyFont} font-mono`}>
       {/* Header */}
-      <div className="flex items-center justify-between px-2 py-1.5 border-b border-exchange-border text-exchange-text-third text-[10px]">
+      <div className={`ob-head${mb} border-b border-exchange-border text-exchange-text-third ${headFont}`}>
         <span className="w-[35%]">{t('trade.price')}</span>
         <span className="w-[30%] text-right">{t('trade.amount')}</span>
         <span className="w-[35%] text-right">{t('trade.total')}</span>
@@ -89,7 +97,7 @@ export default function Orderbook({ onPriceClick }: Props) {
             return (
               <div
                 key={`a-${i}`}
-                className={`flex items-center justify-between px-2 py-[3px] cursor-pointer hover:bg-exchange-sell/8 relative group transition-all ${
+                className={`ob-row${mb} cursor-pointer hover:bg-exchange-sell/8 relative group transition-all ${
                   isFlashing ? 'bg-exchange-sell/15' : ''
                 }`}
                 onClick={() => onPriceClick?.(ask.price)}
@@ -108,7 +116,7 @@ export default function Orderbook({ onPriceClick }: Props) {
       </div>
 
       {/* Spread / Last Price */}
-      <div className={`flex items-center justify-center py-2.5 border-y border-exchange-border font-semibold text-base transition-colors ${priceUp ? 'text-exchange-buy' : 'text-exchange-sell'}`}>
+      <div className={`ob-spread${mb} flex items-center justify-center border-y border-exchange-border font-semibold ${mobile ? 'text-lg' : 'text-base'} transition-colors ${priceUp ? 'text-exchange-buy' : 'text-exchange-sell'}`}>
         <span className="tabular-nums">{formatPrice(lastPrice)}</span>
         <span className="ml-1.5 text-xs">{priceUp ? '\u25B2' : '\u25BC'}</span>
       </div>
@@ -127,7 +135,7 @@ export default function Orderbook({ onPriceClick }: Props) {
             return (
               <div
                 key={`b-${i}`}
-                className={`flex items-center justify-between px-2 py-[3px] cursor-pointer hover:bg-exchange-buy/8 relative group transition-all ${
+                className={`ob-row${mb} cursor-pointer hover:bg-exchange-buy/8 relative group transition-all ${
                   isFlashing ? 'bg-exchange-buy/15' : ''
                 }`}
                 onClick={() => onPriceClick?.(bid.price)}

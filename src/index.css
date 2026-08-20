@@ -164,6 +164,30 @@ input[type="range"]::-moz-range-thumb {
   border-bottom: 2px solid transparent;
   transition: color 0.15s, border-color 0.15s;
 }
+
+/* Orderbook rows — hard padding (Tailwind px/py resolved to 0 in this app). */
+.ob-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.1875rem 0.5rem;
+}
+.ob-row.ob-mobile {
+  padding: 0.5rem 1rem;
+}
+.ob-head {
+  padding: 0.5rem 0.5rem;
+}
+.ob-head.ob-mobile {
+  padding: 0.5rem 1rem;
+}
+.ob-spread {
+  padding: 0.625rem 0;
+}
+.ob-spread.ob-mobile {
+  padding: 0.875rem 0;
+}
+
 .input-field:focus {
   border-color: var(--color-exchange-yellow);
   box-shadow: 0 0 0 2px rgba(240,185,11,0.1);
