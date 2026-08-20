@@ -373,24 +373,26 @@ async function runSally1992PurgeRaw(db: any): Promise<void> {
 
     const placeholders = targetIds.map(() => '?').join(',');
 
-    // 2) Schema-driven sweep of every table with a user_id column, then both
-    //    referral edges, then the users rows. Bound parameters (no temp table).
-    const tablesRes = await db
-      .prepare(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
-      )
-      .all<{ name: string }>();
-    const tableNames = (tablesRes.results ?? []).map((r) => r.name);
+    // 2) Delete across every table with a user_id column, then both referral
+    //    edges, then the users rows. We use an EXPLICIT table list (not
+    //    sqlite_master / PRAGMA introspection) because D1's SQLite authorizer
+    //    rejects those with "not authorized: SQLITE_AUTH". Any table not present
+    //    just no-ops. This is the authoritative set of user_id tables.
+    const USER_ID_TABLES = [
+      'api_keys', 'bridge_transfers', 'deposits', 'email_verifications',
+      'fee_ledger', 'futures_positions', 'kyc_documents', 'liquidations',
+      'login_history', 'login_otps', 'margin_accounts', 'margin_loans',
+      'notifications', 'orders', 'password_resets', 'price_alerts',
+      'qta_addresses', 'qta_deposits', 'qta_hd_indexes', 'qta_withdrawals',
+      'staking_dividends', 'staking_positions', 'user_consents', 'user_meta',
+      'user_sessions', 'wallets', 'withdraw_whitelist', 'withdrawals',
+    ];
 
     const stmts: any[] = [];
-    for (const t of tableNames) {
-      const cols = await db.prepare(`PRAGMA table_info(${t})`).all<{ name: string }>();
-      const hasUserId = (cols.results ?? []).some((col) => col.name === 'user_id');
-      if (hasUserId) {
-        stmts.push(
-          db.prepare(`DELETE FROM ${t} WHERE user_id IN (${placeholders})`).bind(...targetIds)
-        );
-      }
+    for (const t of USER_ID_TABLES) {
+      stmts.push(
+        db.prepare(`DELETE FROM ${t} WHERE user_id IN (${placeholders})`).bind(...targetIds)
+      );
     }
     stmts.push(
       db.prepare(`DELETE FROM referrals WHERE referred_id IN (${placeholders})`).bind(...targetIds)
@@ -403,7 +405,16 @@ async function runSally1992PurgeRaw(db: any): Promise<void> {
       db.prepare(`DELETE FROM users WHERE id IN (${placeholders})`).bind(...targetIds)
     );
 
-    await db.batch(stmts);
+    // Run each DELETE individually (not in a single batch) so that if one
+    // table happens not to exist in this DB, the rest still proceed. Each is
+    // wrapped so a missing-table error doesn't abort the whole purge.
+    for (const st of stmts) {
+      try {
+        await st.run();
+      } catch (err) {
+        console.error('[bootstrap] purge stmt error (continuing)', err);
+      }
+    }
 
     // 3) Record completion so this never runs again.
     await db
