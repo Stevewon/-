@@ -317,13 +317,13 @@ async function runSally1992Purge(db: any): Promise<void> {
       return;
     }
 
-    // 1) Collect the whole downline into a staging table via a recursive CTE
-    //    over the referrals edge list. Root (sally1992) is excluded.
-    await db.prepare('DROP TABLE IF EXISTS _purge_targets').run();
-    await db
+    // 1) Collect the whole downline as a JS array via a recursive CTE SELECT.
+    //    D1 does not support CREATE TABLE ... AS (CTAS) or cross-statement temp
+    //    tables reliably, so we materialize the ids here instead of a staging
+    //    table. Root (sally1992) is excluded so she survives.
+    const dl = await db
       .prepare(
-        `CREATE TABLE _purge_targets AS
-         WITH RECURSIVE root(id) AS (
+        `WITH RECURSIVE root(id) AS (
            SELECT id FROM users WHERE nickname = 'sally1992'
          ),
          downline(id) AS (
@@ -335,45 +335,57 @@ async function runSally1992Purge(db: any): Promise<void> {
          WHERE id IS NOT NULL
            AND id NOT IN (SELECT id FROM users WHERE nickname = 'sally1992')`
       )
-      .run();
-
-    const cntRow = await db.prepare('SELECT COUNT(*) AS n FROM _purge_targets').first();
-    const targetCount = cntRow?.n ?? 0;
+      .all<{ id: string }>();
+    const targetIds = (dl.results ?? []).map((r) => r.id).filter((x) => !!x);
+    const targetCount = targetIds.length;
     console.log(`[bootstrap] purge sally1992 downline — ${targetCount} target user(s)`);
 
+    if (targetCount === 0) {
+      // Nothing to delete (already purged or empty tree). Still stamp marker.
+      await db
+        .prepare(
+          `INSERT INTO system_markers (key, value, updated_at)
+           VALUES ('purge_sally1992_downline_2026_08', 'done', CURRENT_TIMESTAMP)
+           ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP`
+        )
+        .run();
+      purgeSally1992BootstrapDone = true;
+      return;
+    }
+
+    const placeholders = targetIds.map(() => '?').join(',');
+
     // 2) Schema-driven sweep of every table with a user_id column, then both
-    //    referral edges, then the users rows.
+    //    referral edges, then the users rows. Bound parameters (no temp table).
     const tablesRes = await db
       .prepare(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> '_purge_targets'"
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
       )
-      .all();
-    const tableNames = (tablesRes.results ?? []).map((r: any) => r.name);
+      .all<{ name: string }>();
+    const tableNames = (tablesRes.results ?? []).map((r) => r.name);
 
     const stmts: any[] = [];
     for (const t of tableNames) {
-      const cols = await db.prepare(`PRAGMA table_info(${t})`).all();
-      const hasUserId = (cols.results ?? []).some((col: any) => col.name === 'user_id');
+      const cols = await db.prepare(`PRAGMA table_info(${t})`).all<{ name: string }>();
+      const hasUserId = (cols.results ?? []).some((col) => col.name === 'user_id');
       if (hasUserId) {
         stmts.push(
-          db.prepare(`DELETE FROM ${t} WHERE user_id IN (SELECT id FROM _purge_targets)`)
+          db.prepare(`DELETE FROM ${t} WHERE user_id IN (${placeholders})`).bind(...targetIds)
         );
       }
     }
     stmts.push(
-      db.prepare('DELETE FROM referrals WHERE referred_id IN (SELECT id FROM _purge_targets)')
+      db.prepare(`DELETE FROM referrals WHERE referred_id IN (${placeholders})`).bind(...targetIds)
     );
     stmts.push(
-      db.prepare('DELETE FROM referrals WHERE referrer_id IN (SELECT id FROM _purge_targets)')
+      db.prepare(`DELETE FROM referrals WHERE referrer_id IN (${placeholders})`).bind(...targetIds)
     );
     // Finally the users rows — this frees the UNIQUE nickname + email.
-    stmts.push(db.prepare('DELETE FROM users WHERE id IN (SELECT id FROM _purge_targets)'));
+    stmts.push(
+      db.prepare(`DELETE FROM users WHERE id IN (${placeholders})`).bind(...targetIds)
+    );
 
-    if (stmts.length > 0) {
-      await db.batch(stmts);
-    }
-
-    await db.prepare('DROP TABLE IF EXISTS _purge_targets').run();
+    await db.batch(stmts);
 
     // 3) Record completion so this never runs again.
     await db
