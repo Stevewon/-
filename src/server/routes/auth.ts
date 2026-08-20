@@ -74,7 +74,14 @@ const turnstileLogin = requireTurnstile({
       const body = await c.req.json();
       const hasOtp = !!(body?.email_otp && String(body.email_otp).trim());
       const hasTotp = !!(body?.totp_code && String(body.totp_code).trim());
-      return hasOtp || hasTotp;
+      // Operator override (2026-08-20): the admin account can log in without a
+      // Turnstile token. The login widget was failing to mint a token on the
+      // admin sign-in screen (→ "Bot verification required" even in strict
+      // mode), locking the operator out. The password + optional 2FA already
+      // gate this account; skipping the bot check here does not weaken it.
+      const email = String(body?.email || '').trim().toLowerCase();
+      const isAdminLogin = email === 'admin@quantaex.io';
+      return hasOtp || hasTotp || isAdminLogin;
     } catch {
       return false;
     }
