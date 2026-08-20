@@ -113,7 +113,7 @@ export default function TradePage() {
           <div className="flex flex-col">
             <span className="text-exchange-text-third text-[10px]">{t('market.change24h')}</span>
             <span className={`chg-pill ${isUp ? 'up' : 'down'} mt-0.5`}>
-              {isUp ? '+' : ''}{formatPercent(ticker?.change || 0)}
+              {formatPercent(ticker?.change || 0)}
             </span>
           </div>
           <div className="hidden sm:flex flex-col">

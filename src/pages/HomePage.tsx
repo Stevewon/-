@@ -133,7 +133,7 @@ export default function HomePage() {
                       </div>
                       <div className="flex items-center justify-between">
                         <span className={`text-sm font-semibold tabular-nums ${isUp ? 'text-exchange-buy' : 'text-exchange-sell'}`}>
-                          {isUp ? '+' : ''}{formatPercent(coin.change)}
+                          {formatPercent(coin.change)}
                         </span>
                         <svg width="56" height="20" viewBox="0 0 56 20" className="opacity-40 group-hover:opacity-70 transition-opacity">
                           <polyline fill="none" stroke={isUp ? '#0ECB81' : '#F6465D'} strokeWidth="1.5" strokeLinecap="round"
@@ -222,7 +222,7 @@ export default function HomePage() {
                       isUp ? 'bg-exchange-buy/10 text-exchange-buy' : 'bg-exchange-sell/10 text-exchange-sell'
                     }`}>
                       {isUp ? <TrendingUp size={13} /> : <TrendingDown size={13} />}
-                      {isUp ? '+' : ''}{formatPercent(coin.change)}
+                      {formatPercent(coin.change)}
                     </span>
                   </div>
                   <div className="col-span-2 text-right text-sm text-exchange-text-secondary tabular-nums font-medium">
@@ -267,7 +267,7 @@ export default function HomePage() {
                 <div className="text-right shrink-0">
                   <div className={`text-sm font-bold tabular-nums ${isUp ? 'text-exchange-buy' : 'text-exchange-sell'}`}>${formatPrice(coin.last)}</div>
                   <div className={`text-[11px] font-medium tabular-nums mt-0.5 ${isUp ? 'text-exchange-buy' : 'text-exchange-sell'}`}>
-                    {isUp ? '+' : ''}{formatPercent(coin.change)}
+                    {formatPercent(coin.change)}
                   </div>
                 </div>
                 <ChevronRight size={14} className="text-exchange-text-third shrink-0" />
