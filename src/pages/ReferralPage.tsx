@@ -265,9 +265,9 @@ export default function ReferralPage() {
                     <span>
                       <b className="text-exchange-text">
                         {t('referral.howStep3MultiTitle', {
-                          l1: String(data?.level_rewards?.l1 ?? 50),
-                          l2: String(data?.level_rewards?.l2 ?? 30),
-                          l3: String(data?.level_rewards?.l3 ?? 20),
+                          l1: String(data?.level_rewards?.l1 ?? 100),
+                          l2: String(data?.level_rewards?.l2 ?? 50),
+                          l3: String(data?.level_rewards?.l3 ?? 30),
                         })}
                       </b><br />
                       {t('referral.howStep3MultiDesc')}
@@ -278,9 +278,9 @@ export default function ReferralPage() {
                 {/* Level reward chips */}
                 <div className="grid grid-cols-3 gap-2 mt-4">
                   {([
-                    { lvl: 'L1', amount: data?.level_rewards?.l1 ?? 50, hint: t('referral.l1Hint') },
-                    { lvl: 'L2', amount: data?.level_rewards?.l2 ?? 30, hint: t('referral.l2Hint') },
-                    { lvl: 'L3', amount: data?.level_rewards?.l3 ?? 20, hint: t('referral.l3Hint') },
+                    { lvl: 'L1', amount: data?.level_rewards?.l1 ?? 100, hint: t('referral.l1Hint') },
+                    { lvl: 'L2', amount: data?.level_rewards?.l2 ?? 50, hint: t('referral.l2Hint') },
+                    { lvl: 'L3', amount: data?.level_rewards?.l3 ?? 30, hint: t('referral.l3Hint') },
                   ] as const).map((row) => (
                     <div
                       key={row.lvl}
