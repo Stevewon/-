@@ -73,7 +73,7 @@ export default function VerifyEmailPage() {
             {bonusUnlocked > 0 && (
               <div className="bg-exchange-yellow/10 border border-exchange-yellow/30 rounded-lg px-4 py-3 my-4 text-left">
                 <p className="text-sm font-semibold text-exchange-yellow mb-1">
-                  🎉 {bonusUnlocked.toLocaleString()} QTA unlocked
+                  🎉 {bonusUnlocked.toLocaleString()} QX unlocked
                 </p>
                 <p className="text-[12px] text-exchange-text-secondary">
                   Your sign-up bonus is now available for trading and
