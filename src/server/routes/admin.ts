@@ -1900,11 +1900,12 @@ app.delete('/notices/:id', async (c) => {
 // Implementation notes:
 //   * Tree walk is an iterative BFS with a visited-set so a malformed cyclic
 //     referral graph cannot loop forever.
-//   * Associated-table cleanup is dynamic: we enumerate every table via
-//     sqlite_master and, for each, check PRAGMA table_info for a `user_id`
-//     column, deleting matching rows. This survives future schema additions
-//     without code changes. `referrals` (referrer_id/referred_id) and the
-//     users row itself are handled explicitly.
+//   * Associated-table cleanup uses an EXPLICIT hardcoded table list
+//     (USER_ID_TABLES). Cloudflare D1 forbids schema introspection
+//     (sqlite_master / PRAGMA table_info both raise SQLITE_AUTH), so dynamic
+//     enumeration is impossible on prod and crashed the handler. `referrals`
+//     (referrer_id/referred_id) and the users row itself are handled explicitly.
+//     Keep USER_ID_TABLES in sync when a new user-scoped table is migrated in.
 // ============================================================================
 
 async function collectDownline(db: any, rootId: string): Promise<Array<{ id: string; level: number }>> {
@@ -1933,20 +1934,26 @@ async function collectDownline(db: any, rootId: string): Promise<Array<{ id: str
   return out;
 }
 
-async function tablesWithUserId(db: any): Promise<string[]> {
-  const tabs = await db
-    .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'`)
-    .all<{ name: string }>();
-  const hits: string[] = [];
-  for (const t of tabs.results || []) {
-    const name = t.name;
-    if (name === 'users' || name === 'referrals') continue; // handled explicitly
-    try {
-      const info = await db.prepare(`PRAGMA table_info(${name})`).all<{ name: string }>();
-      if ((info.results || []).some((col: any) => col.name === 'user_id')) hits.push(name);
-    } catch { /* skip un-introspectable */ }
-  }
-  return hits;
+// Cloudflare D1 REJECTS schema introspection — `SELECT ... FROM sqlite_master`
+// and `PRAGMA table_info(...)` both throw `D1_ERROR: not authorized: SQLITE_AUTH`
+// on the production D1 authorizer. The previous dynamic-enumeration version of
+// this helper therefore ALWAYS crashed the purge handler on prod (the exception
+// propagated out of the /purge route → "member deletion doesn't work"). We use
+// an explicit, hardcoded list of every table that carries a `user_id` column
+// instead. This is the same validated pattern used by the index.ts self-bootstrap
+// purge. Update this list whenever a new user-scoped table is added by migration.
+const USER_ID_TABLES: readonly string[] = [
+  'api_keys', 'bridge_transfers', 'deposits', 'email_verifications', 'fee_ledger',
+  'futures_positions', 'kyc_documents', 'liquidations', 'login_history', 'login_otps',
+  'margin_accounts', 'margin_loans', 'notifications', 'orders', 'password_resets',
+  'price_alerts', 'qta_addresses', 'qta_deposits', 'qta_hd_indexes', 'qta_withdrawals',
+  'staking_dividends', 'staking_positions', 'user_consents', 'user_meta', 'user_sessions',
+  'wallets', 'withdraw_whitelist', 'withdrawals',
+];
+
+function tablesWithUserId(): string[] {
+  // Return a copy so callers cannot mutate the canonical list.
+  return [...USER_ID_TABLES];
 }
 
 // GET /api/admin/downline/:nickname/preview — dry-run target list
@@ -2020,8 +2027,9 @@ app.post('/downline/:nickname/purge', async (c) => {
   const ph = targetIds.map(() => '?').join(',');
   const perTable: Record<string, number> = {};
 
-  // 1) associated rows in every user_id table
-  const userTables = await tablesWithUserId(db);
+  // 1) associated rows in every user_id table (explicit list — D1 forbids
+  //    sqlite_master / PRAGMA introspection with SQLITE_AUTH)
+  const userTables = tablesWithUserId();
   for (const tbl of userTables) {
     try {
       const res = await db.prepare(`DELETE FROM ${tbl} WHERE user_id IN (${ph})`).bind(...targetIds).run();
