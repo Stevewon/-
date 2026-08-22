@@ -1,6 +1,5 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import bcrypt from 'bcryptjs';
 import authRoutes from './routes/auth';
 import marketRoutes from './routes/market';
 import orderRoutes from './routes/order';
@@ -170,74 +169,10 @@ app.use('/api/*', async (c, next) => {
 // identities are leaked — aggregate counts only.
 app.get('/api/_purge-status', async (c) => {
   const ctx = c.executionCtx as any;
-  // ?admin_pw=1 forces the admin password reset INLINE (awaited) and verifies
-  // it against the stored hash, so the operator gets immediate confirmation.
-  if (c.req.query('admin_pw') === '1') {
-    await runAdminPwSet(c.env.DB);
-    try {
-      const row = await c.env.DB
-        .prepare("SELECT password FROM users WHERE id = 'admin-001' AND email = 'admin@quantaex.io'")
-        .first<{ password: string }>();
-      const mk = await c.env.DB
-        .prepare('SELECT value FROM system_markers WHERE key = ?')
-        .bind(ADMIN_PW_MARKER)
-        .first<{ value: string }>();
-      const verified = row?.password
-        ? bcrypt.compareSync('7FHYUCb5xHXU7Jnj1Ol1!Qx39', row.password)
-        : false;
-      return c.json({
-        admin_login_id: 'admin@quantaex.io',
-        admin_pw_marker: mk?.value ?? null,
-        password_verified: verified, // true = the new password logs in
-      });
-    } catch (e) {
-      return c.json({ error: 'admin_pw_check_failed' }, 500);
-    }
-  }
-  // ?admin_diag=1 dumps the REAL admin-row state so we can see exactly why
-  // login fails. Re-applies the password by EMAIL (covers the case where the
-  // row id is not 'admin-001'), then reports non-secret facts.
-  if (c.req.query('admin_diag') === '1') {
-    const NEW_HASH = '$2a$10$gQkCVnbAWUX1U4ZtKSZg9uf8QGBIbR.FP/o4C1tuPMIB9COCpgNaa';
-    const TEST_PW = '7FHYUCb5xHXU7Jnj1Ol1!Qx39';
-    try {
-      // Force-set password on WHATEVER row has this email (id-agnostic).
-      const upd = await c.env.DB
-        .prepare(
-          "UPDATE users SET password = ?, is_active = 1, two_factor_enabled = 0, updated_at = CURRENT_TIMESTAMP WHERE email = 'admin@quantaex.io'"
-        )
-        .bind(NEW_HASH)
-        .run();
-      const rows = await c.env.DB
-        .prepare(
-          "SELECT id, email, nickname, role, is_active, two_factor_enabled, LENGTH(password) AS pw_len, SUBSTR(password,1,7) AS pw_prefix, password FROM users WHERE email = 'admin@quantaex.io'"
-        )
-        .all<any>();
-      const list = (rows.results ?? []).map((r) => ({
-        id: r.id,
-        email: r.email,
-        nickname: r.nickname,
-        role: r.role,
-        is_active: r.is_active,
-        two_factor_enabled: r.two_factor_enabled,
-        pw_len: r.pw_len,
-        pw_prefix: r.pw_prefix,
-        password_verified: r.password ? bcrypt.compareSync(TEST_PW, r.password) : false,
-      }));
-      // Also check if maybe the email is stored with different casing / spaces.
-      const anyAdmin = await c.env.DB
-        .prepare("SELECT id, email, role FROM users WHERE email LIKE '%admin%' OR role = 'admin'")
-        .all<any>();
-      return c.json({
-        update_changes: (upd as any)?.meta?.changes ?? null,
-        matched_rows: list.length,
-        rows: list,
-        admin_like_accounts: (anyAdmin.results ?? []).map((r) => ({ id: r.id, email: r.email, role: r.role })),
-      });
-    } catch (e: any) {
-      return c.json({ error: 'admin_diag_failed', detail: String(e?.message ?? e) }, 500);
-    }
-  }
+  // NOTE: the previous ?admin_pw=1 and ?admin_diag=1 query modes were removed
+  // (2026-08) — they were UNAUTHENTICATED and could reset/verify the admin
+  // password and dump admin-row state to any caller. This endpoint is now
+  // strictly read-only and leaks no identities (aggregate counts only).
   // Fire the purge in the background if it hasn't completed yet. It is
   // idempotent + gated by the 'done' marker, so this is a no-op once done.
   if (!purgeSally1992BootstrapDone && ctx && typeof ctx.waitUntil === 'function') {
