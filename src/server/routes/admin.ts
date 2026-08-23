@@ -1984,6 +1984,80 @@ app.get('/downline/:nickname/preview', async (c) => {
   return c.json({ root, count: targets.length, targets });
 });
 
+// DELETE /api/admin/users/:id — HARD delete a SINGLE member.
+// Removes the user's rows from every user_id table + their referrals rows
+// (as referrer or referred), then the users row itself — which frees the
+// unique nickname/email for immediate re-registration. The user's DIRECT
+// downline is NOT deleted; those referral links are simply severed (their
+// referred_by is cleared) so the sub-members survive as top-level users.
+// Uses the explicit USER_ID_TABLES list — D1 forbids sqlite_master / PRAGMA
+// introspection (SQLITE_AUTH).
+app.delete('/users/:id', async (c) => {
+  const db = c.env.DB;
+  const me = c.get('user');
+  const id = c.req.param('id');
+
+  const u = await db
+    .prepare('SELECT id, nickname, email, role FROM users WHERE id = ?')
+    .bind(id)
+    .first<any>();
+  if (!u) return c.json({ error: 'User not found' }, 404);
+  if (u.id === me.id) return c.json({ error: 'Cannot delete yourself' }, 400);
+  if (u.role === 'admin') return c.json({ error: 'Cannot delete an admin account' }, 400);
+
+  const perTable: Record<string, number> = {};
+
+  // 1) associated rows in every user_id table (explicit list — D1 forbids
+  //    sqlite_master / PRAGMA introspection with SQLITE_AUTH)
+  for (const tbl of tablesWithUserId()) {
+    try {
+      const res = await db.prepare(`DELETE FROM ${tbl} WHERE user_id = ?`).bind(u.id).run();
+      perTable[tbl] = (res as any)?.meta?.changes ?? 0;
+    } catch {
+      perTable[tbl] = -1; // signal failure but keep going
+    }
+  }
+
+  // 2) referral links — as referred (their own row) and as referrer (sever the
+  //    link to their direct downline, who survive as top-level users).
+  try {
+    const r1 = await db.prepare('DELETE FROM referrals WHERE referred_id = ?').bind(u.id).run();
+    const r2 = await db.prepare('DELETE FROM referrals WHERE referrer_id = ?').bind(u.id).run();
+    perTable['referrals'] = ((r1 as any)?.meta?.changes ?? 0) + ((r2 as any)?.meta?.changes ?? 0);
+  } catch { perTable['referrals'] = -1; }
+
+  // 2b) best-effort clear of any denormalized referred_by pointer on children
+  try {
+    await db.prepare("UPDATE users SET referred_by = NULL WHERE referred_by = ?").bind(u.id).run();
+  } catch { /* column may not exist — ignore */ }
+
+  // 3) the user row itself — frees nickname + email UNIQUE for re-signup
+  let deleted = 0;
+  try {
+    const ru = await db.prepare('DELETE FROM users WHERE id = ?').bind(u.id).run();
+    deleted = (ru as any)?.meta?.changes ?? 0;
+  } catch (e) {
+    return c.json({ error: 'user delete failed', detail: String(e), per_table: perTable }, 500);
+  }
+
+  try {
+    await logAdminAction(c, {
+      action: 'user.delete',
+      targetType: 'user',
+      targetId: u.id,
+      payload: { nickname: u.nickname, email: u.email, per_table: perTable },
+    });
+  } catch { /* audit best-effort */ }
+
+  return c.json({
+    ok: true,
+    deleted_user: { id: u.id, nickname: u.nickname, email: u.email },
+    deleted,
+    per_table: perTable,
+    freed_for_resignup: true,
+  });
+});
+
 // POST /api/admin/downline/:nickname/purge — HARD delete the whole downline
 app.post('/downline/:nickname/purge', async (c) => {
   const db = c.env.DB;

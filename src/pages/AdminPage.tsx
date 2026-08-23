@@ -555,6 +555,29 @@ function UsersTab({ t, onUpdate }: any) {
     }
   };
 
+  const deleteUser = async (u: any) => {
+    const answer = prompt(
+      `⚠️ 회원 영구 삭제\n\n` +
+      `- ${u.nickname} (${u.email}) 계정과 연관 데이터(주문/지갑/추천기록 등)를 전부 삭제합니다.\n` +
+      `- 하위 추천 회원은 삭제되지 않고 추천관계만 끊깁니다.\n` +
+      `- 닉네임/이메일이 풀려 재가입 가능해집니다.\n` +
+      `- 되돌릴 수 없습니다.\n\n` +
+      `계속하려면 닉네임 "${u.nickname}" 을(를) 그대로 입력하세요:`
+    );
+    if (answer === null) return;
+    if (answer.trim() !== u.nickname) {
+      showToast('error', t('common.error'), '닉네임이 일치하지 않아 취소되었습니다.');
+      return;
+    }
+    try {
+      const res = await api.delete(`/admin/users/${u.id}`);
+      showToast('success', t('common.save'), `${res.data?.deleted_user?.nickname ?? u.nickname} 삭제 완료 (재가입 가능)`);
+      load(); onUpdate?.();
+    } catch (e: any) {
+      showToast('error', t('common.error'), e.response?.data?.error || 'Delete failed');
+    }
+  };
+
   const totalPages = Math.max(1, Math.ceil(total / limit));
 
   return (
@@ -649,6 +672,11 @@ function UsersTab({ t, onUpdate }: any) {
                     {u.two_factor_enabled ? (
                       <button onClick={() => reset2fa(u)} className="p-1 hover:bg-exchange-hover/50 rounded" title={t('admin.reset2fa')}>
                         <KeyRound size={13} className="text-blue-400" />
+                      </button>
+                    ) : null}
+                    {u.role !== 'admin' ? (
+                      <button onClick={() => deleteUser(u)} className="p-1 hover:bg-exchange-sell/15 rounded" title="회원 삭제 (강제탈퇴)">
+                        <Trash2 size={13} className="text-exchange-sell" />
                       </button>
                     ) : null}
                   </div>
