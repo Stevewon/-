@@ -189,7 +189,15 @@ export default function RegisterPage() {
     try {
       const payload: any = { idToken };
       const code = refCode.trim().toUpperCase();
-      if (code && refCheck.state === 'valid') payload.refCode = code;
+      // Attach the referral code whenever one is present and NOT confirmed
+      // invalid. We must NOT gate on `state === 'valid'`: the check is
+      // debounced 400ms, so a fast Google-signup click (state still
+      // 'checking') or a transient validator failure (state 'unknown')
+      // would otherwise SILENTLY DROP an auto-filled `?ref=CODE` link and the
+      // referral would never attach. The server re-validates the code on its
+      // side and simply ignores it if it turns out to be bad, so sending an
+      // unverified-but-present code is safe and correct.
+      if (code && refCheck.state !== 'invalid') payload.refCode = code;
       if (country) payload.country = country;
 
       const res = await api.post('/auth/google', payload);
@@ -406,10 +414,16 @@ export default function RegisterPage() {
     }
 
     // ⚠️ Referral code is recorded ONLY at signup and can NEVER be added later.
-    // If the user is about to sign up without a confirmed-valid referral code,
-    // force an explicit confirmation so they don't lose the link forever.
-    const hasValidRef = !!refCode && refCheck.state === 'valid';
-    if (!hasValidRef) {
+    // Only nag with the "sign up without a code?" warning when NO code is
+    // present at all. If a code IS present (e.g. auto-filled from a
+    // `?ref=CODE` link) we must NOT block on validation state — the check is
+    // debounced 400ms, so a fast submit (state 'checking') or transient
+    // validator failure (state 'unknown') should still go through with the
+    // code attached. The server re-validates and the email register path
+    // always forwards `ref_code`. We already blocked confirmed-invalid codes
+    // above, so anything reaching here is either empty or worth sending.
+    const hasRefCode = !!refCode.trim();
+    if (!hasRefCode) {
       setShowNoRefWarn(true);
       return;
     }

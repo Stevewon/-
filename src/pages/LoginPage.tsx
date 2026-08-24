@@ -142,7 +142,11 @@ export default function LoginPage() {
   const [refCode, setRefCode] = useState('');
   const [showRef, setShowRef] = useState(false);
   const [refCheck, setRefCheck] = useState<{
-    state: 'idle' | 'checking' | 'valid' | 'invalid';
+    // 'unknown' = the validation request itself failed (network / geo-block),
+    // so we could NOT determine validity. This must NOT be treated as invalid,
+    // otherwise a valid auto-filled code shows a false "Invalid" state AND gets
+    // dropped from the Google-signup payload.
+    state: 'idle' | 'checking' | 'valid' | 'invalid' | 'unknown';
   }>({ state: 'idle' });
 
   const [mode, setMode] = useState<'email' | 'phone'>('email');
@@ -254,8 +258,17 @@ export default function LoginPage() {
         } else {
           setRefCheck({ state: 'invalid' });
         }
-      } catch {
-        setRefCheck({ state: 'invalid' });
+      } catch (e: any) {
+        // Distinguish "server said invalid" (HTTP 400/404) from "could not
+        // reach the validator" (network error / geo-block 451). The latter
+        // must NOT show a false invalid state nor drop the code — the server
+        // re-validates on /auth/google.
+        const status = e?.response?.status;
+        if (status === 400 || status === 404) {
+          setRefCheck({ state: 'invalid' });
+        } else {
+          setRefCheck({ state: 'unknown' });
+        }
       }
     }, 400);
     return () => clearTimeout(tm);
@@ -270,13 +283,16 @@ export default function LoginPage() {
     setError('');
     setGoogleLoading(true);
     try {
-      // Only attach refCode if it has been confirmed valid by the live check;
-      // we never block sign-in on an invalid code — silently drop it instead,
-      // because the user may have typed a typo and we don't want to deny them
-      // an account.
+      // Attach the referral code whenever one is present and NOT confirmed
+      // invalid. We must NOT gate on `state === 'valid'`: the check is
+      // debounced 400ms, so a fast Google-signup click (state still
+      // 'checking') or a transient validator failure (state 'unknown') would
+      // otherwise SILENTLY DROP an auto-filled `?ref=CODE` link and the
+      // referral would never attach. The server re-validates and ignores a
+      // bad code, so sending an unverified-but-present code is safe.
       const payload: any = { idToken };
       const code = refCode.trim().toUpperCase();
-      if (code && refCheck.state === 'valid') payload.refCode = code;
+      if (code && refCheck.state !== 'invalid') payload.refCode = code;
 
       const res = await api.post('/auth/google', payload);
       setAuth(res.data.user, res.data.token);
