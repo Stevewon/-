@@ -133,7 +133,10 @@ export default function RegisterPage() {
   const [refCode, setRefCode] = useState('');
   const [showRef, setShowRef] = useState(false);
   const [refCheck, setRefCheck] = useState<{
-    state: 'idle' | 'checking' | 'valid' | 'invalid';
+    // 'unknown' = the validation request itself failed (network / geo-block),
+    // so we could NOT determine validity. This must NOT be treated as invalid,
+    // otherwise a valid code shows a false "Invalid referral code" error.
+    state: 'idle' | 'checking' | 'valid' | 'invalid' | 'unknown';
   }>({ state: 'idle' });
   const [searchParams] = useSearchParams();
   const [showPw, setShowPw] = useState(false);
@@ -329,8 +332,17 @@ export default function RegisterPage() {
         } else {
           setRefCheck({ state: 'invalid' });
         }
-      } catch {
-        setRefCheck({ state: 'invalid' });
+      } catch (e: any) {
+        // Distinguish "server said the code is invalid" (HTTP 404/400) from
+        // "we could not reach the validator" (network error / geo-block 451).
+        // The latter must NOT show a false "Invalid referral code" error and
+        // must NOT block submit — the server re-validates the code on register.
+        const status = e?.response?.status;
+        if (status === 400 || status === 404) {
+          setRefCheck({ state: 'invalid' });
+        } else {
+          setRefCheck({ state: 'unknown' });
+        }
       }
     }, 400);
     return () => clearTimeout(t);

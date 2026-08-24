@@ -69,7 +69,14 @@ const BLOCKED_COUNTRIES = new Set<string>([
   // (on-chain gated by QTA_CHAIN_DRIVER='mock'). Re-add 'JP' below before
   // enabling real on-chain money movement, OR on explicit owner directive.
   // 'JP', // Japan — OPEN for soft-launch (owner: 2026-08-15); JFSA license required before real on-chain
-  'US', // United States — SEC/CFTC/FinCEN; 50-state MTL otherwise required
+  // SOFT-LAUNCH DECISION (2026-08-24, owner confirmed): US also OPENED for the
+  // soft-launch, same rationale as KR/JP — internal-balance-only operation
+  // (on-chain gated by QTA_CHAIN_DRIVER='mock'). Owner reported US-resident
+  // family members could not register (the /api/auth/referrals/check + register
+  // flow returned HTTP 451), and explicitly chose to unblock the US. Re-add
+  // 'US' below (uncomment) before enabling real on-chain money movement or
+  // before US launch requires SEC/CFTC/FinCEN + 50-state MTL compliance.
+  // 'US', // United States — SEC/CFTC/FinCEN; 50-state MTL otherwise required — OPEN for soft-launch (owner: 2026-08-24)
   'CN', // China — outright ban on crypto trading
 
   // Tier-2: sanctions (OFAC / EU / UN)
