@@ -132,6 +132,7 @@ export default function RegisterPage() {
   const [confirmPw, setConfirmPw] = useState('');
   const [refCode, setRefCode] = useState('');
   const [showRef, setShowRef] = useState(false);
+  const [showNoRefWarn, setShowNoRefWarn] = useState(false);
   const [refCheck, setRefCheck] = useState<{
     // 'unknown' = the validation request itself failed (network / geo-block),
     // so we could NOT determine validity. This must NOT be treated as invalid,
@@ -363,22 +364,10 @@ export default function RegisterPage() {
     !!country &&
     agreeTerms;
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // Actually perform the account creation. Extracted so the "no referral code"
+  // warning modal can call it after the user explicitly confirms.
+  const doRegister = async () => {
     setError('');
-    if (mode === 'phone') return setError(t('auth.phoneComingSoon'));
-    if (!emailValid) return setError(t('auth.invalidEmail'));
-    if (!nickValid) return setError(t('auth.invalidNickname'));
-    if (!rules.length || !rules.letter || !rules.number)
-      return setError(t('auth.passwordRulesFail'));
-    if (!rules.match) return setError(t('auth.passwordMismatch'));
-    if (!country) return setError(t('country.desc'));
-    if (!agreeTerms) return setError(t('auth.mustAgreeTerms'));
-    // Block submit if a referral code is entered but is invalid.
-    if (refCode && refCheck.state === 'invalid') {
-      return setError('Invalid referral code');
-    }
-
     setLoading(true);
     try {
       const res = await api.post('/auth/register', {
@@ -400,8 +389,89 @@ export default function RegisterPage() {
     }
   };
 
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    if (mode === 'phone') return setError(t('auth.phoneComingSoon'));
+    if (!emailValid) return setError(t('auth.invalidEmail'));
+    if (!nickValid) return setError(t('auth.invalidNickname'));
+    if (!rules.length || !rules.letter || !rules.number)
+      return setError(t('auth.passwordRulesFail'));
+    if (!rules.match) return setError(t('auth.passwordMismatch'));
+    if (!country) return setError(t('country.desc'));
+    if (!agreeTerms) return setError(t('auth.mustAgreeTerms'));
+    // Block submit if a referral code is entered but is invalid.
+    if (refCode && refCheck.state === 'invalid') {
+      return setError('Invalid referral code');
+    }
+
+    // ⚠️ Referral code is recorded ONLY at signup and can NEVER be added later.
+    // If the user is about to sign up without a confirmed-valid referral code,
+    // force an explicit confirmation so they don't lose the link forever.
+    const hasValidRef = !!refCode && refCheck.state === 'valid';
+    if (!hasValidRef) {
+      setShowNoRefWarn(true);
+      return;
+    }
+
+    await doRegister();
+  };
+
   return (
     <AuthLayout variant="register">
+      {/* ⚠️ No-referral-code warning — the referral link can ONLY be set now */}
+      {showNoRefWarn && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/70"
+          onClick={() => setShowNoRefWarn(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border-2 border-exchange-sell/60 bg-exchange-card p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 flex h-10 w-10 flex-none items-center justify-center rounded-full bg-exchange-sell/15">
+                <AlertCircle size={22} className="text-exchange-sell" />
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-[17px] font-bold text-exchange-text">
+                  {t('auth.noRefWarnTitle')}
+                </h3>
+                <p className="mt-2 text-[13.5px] leading-relaxed text-exchange-text-secondary">
+                  {t('auth.noRefWarnBody')}
+                </p>
+              </div>
+            </div>
+            <div className="mt-6 flex flex-col gap-2.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowNoRefWarn(false);
+                  setShowRef(true);
+                  setTimeout(() => {
+                    const el = document.querySelector<HTMLInputElement>('input[placeholder="' + (t('auth.referralPlaceholder') || '') + '"]');
+                    el?.focus();
+                  }, 60);
+                }}
+                className="w-full rounded-xl bg-exchange-yellow py-3 text-[15px] font-bold text-black hover:opacity-90 transition-opacity"
+              >
+                {t('auth.noRefWarnEnterCode')}
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  setShowNoRefWarn(false);
+                  await doRegister();
+                }}
+                className="w-full rounded-xl border border-exchange-border py-3 text-[14px] font-medium text-exchange-text-third hover:text-exchange-text hover:border-exchange-text-third transition-colors"
+              >
+                {t('auth.noRefWarnProceed')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Headline + inline login link (Binance mobile pattern) */}
       <div className="mb-8">
         <div className="flex items-start justify-between gap-3">

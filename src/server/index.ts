@@ -215,11 +215,14 @@ app.get('/api/_purge-status', async (c) => {
 // mounted BEFORE geoBlock so it is reachable from the (US) sandbox. Read-only.
 // REMOVE after the investigation. Query: ?k=<TOKEN>&referred=<email>&referrer=<email>
 const REF_DIAG_TOKEN = 'qx_refdiag_2026_08_24_7fH';
+const uuidRefDiag = () => crypto.randomUUID();
 app.get('/api/_ref-diag', async (c) => {
   if (c.req.query('k') !== REF_DIAG_TOKEN) return c.json({ error: 'forbidden' }, 403);
   const db = c.env.DB;
   const referredEmail = (c.req.query('referred') || '').trim().toLowerCase();
   const referrerEmail = (c.req.query('referrer') || '').trim().toLowerCase();
+  const doFix = c.req.query('fix') === '1';       // create the L1/L2/L3 link rows
+  const withReward = c.req.query('reward') === '1'; // also credit QX to uplines
   try {
     const pickUser = async (email: string) => {
       if (!email) return null;
@@ -233,6 +236,77 @@ app.get('/api/_ref-diag', async (c) => {
     };
     const referred = await pickUser(referredEmail);
     const referrer = await pickUser(referrerEmail);
+
+    // ── FIX MODE ─────────────────────────────────────────────────────────────
+    // Backfill the referral link for `referred` pointing at `referrer` as their
+    // L1, then walk up (L2/L3) exactly like the register handler. Idempotent:
+    // referrals has UNIQUE(referred_id, level) so re-runs INSERT OR IGNORE.
+    let fixResult: any = null;
+    if (doFix) {
+      if (!referred || !referrer) {
+        return c.json({ error: 'fix_failed', reason: 'referred or referrer not found' }, 400);
+      }
+      if (referred.id === referrer.id) {
+        return c.json({ error: 'fix_failed', reason: 'self-referral not allowed' }, 400);
+      }
+      const REWARDS = [
+        { level: 1, reward: 100 },
+        { level: 2, reward: 50 },
+        { level: 3, reward: 30 },
+      ];
+      const refCode = referrer.referral_code || '';
+      const seen = new Set<string>([referred.id]);
+      let current: { id: string } | null = { id: referrer.id };
+      const created: any[] = [];
+      for (const { level, reward } of REWARDS) {
+        if (!current || seen.has(current.id)) break;
+        seen.add(current.id);
+        const upline = current;
+        try {
+          const ins = await db
+            .prepare(
+              `INSERT OR IGNORE INTO referrals
+                 (id, referrer_id, referred_id, referral_code, reward_qta, rewarded_in_qx, level)
+               VALUES (?, ?, ?, ?, ?, 1, ?)`
+            )
+            .bind(uuidRefDiag(), upline.id, referred.id, refCode, reward, level)
+            .run();
+          const inserted = ((ins as any)?.meta?.changes ?? 0) > 0;
+          let creditedQx = 0;
+          if (inserted && withReward) {
+            // credit the upline's QX wallet (company-issued → bump available_initial too)
+            const w = await db
+              .prepare("SELECT id FROM wallets WHERE user_id = ? AND coin_symbol = 'QX'")
+              .bind(upline.id)
+              .first<{ id: string }>();
+            if (w?.id) {
+              await db
+                .prepare("UPDATE wallets SET available = available + ?, available_initial = COALESCE(available_initial,0) + ? WHERE id = ?")
+                .bind(reward, reward, w.id)
+                .run();
+            } else {
+              await db
+                .prepare("INSERT INTO wallets (id, user_id, coin_symbol, available, locked, available_initial) VALUES (?, ?, 'QX', ?, 0, ?)")
+                .bind(uuidRefDiag(), upline.id, reward, reward)
+                .run();
+            }
+            creditedQx = reward;
+          }
+          created.push({ level, upline_id: upline.id, inserted, credited_qx: creditedQx });
+        } catch (e: any) {
+          created.push({ level, upline_id: upline.id, error: String(e?.message ?? e) });
+        }
+        // walk up: whoever referred this upline (their own L1 row)
+        try {
+          const up = await db
+            .prepare("SELECT referrer_id FROM referrals WHERE referred_id = ? AND level = 1 LIMIT 1")
+            .bind(upline.id)
+            .first<{ referrer_id: string }>();
+          current = up?.referrer_id ? { id: up.referrer_id } : null;
+        } catch { current = null; }
+      }
+      fixResult = { rewarded: withReward, levels: created };
+    }
 
     let referralsForReferred: any[] = [];
     let refMeta: any = null;
@@ -280,6 +354,7 @@ app.get('/api/_ref-diag', async (c) => {
           !!referrer &&
           referralsForReferred.some((r: any) => r.referrer_id === referrer.id && r.level === 1),
       },
+      fix_result: fixResult,
     });
   } catch (e: any) {
     return c.json({ error: 'ref_diag_failed', detail: String(e?.message ?? e) }, 500);

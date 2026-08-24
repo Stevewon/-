@@ -1239,6 +1239,11 @@ const en = {
   'auth.refCodeInvalid': 'Invalid code',
   'auth.refCodePlaceholder': 'e.g. ABC123',
   'auth.refCodeGoogleHint': 'Applied only on new Google sign-up — no effect for existing accounts',
+  // ── No-referral-code warning modal (referral link can ONLY be set at signup) ──
+  'auth.noRefWarnTitle': 'Sign up without a referral code?',
+  'auth.noRefWarnBody': 'A referral code can ONLY be entered now, during sign-up. It can NEVER be added later. If you were invited by someone, enter their referral code now — otherwise the referral link is lost permanently.',
+  'auth.noRefWarnEnterCode': 'Enter referral code',
+  'auth.noRefWarnProceed': 'Sign up without a code',
   // 'auth.optional' is already defined below in the Register form section
 
   // ── Referral program ────────────────────────────────────────────────

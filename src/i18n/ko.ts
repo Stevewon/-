@@ -1229,6 +1229,11 @@ const ko = {
   'auth.refCodeInvalid': '유효하지 않은 코드',
   'auth.refCodePlaceholder': '예: ABC123',
   'auth.refCodeGoogleHint': '구글 신규 가입 시에만 적용 — 기존 계정 로그인엔 영향 없음',
+  // ── 추천코드 미입력 경고 모달 (추천 관계는 가입 시에만 지정 가능) ──
+  'auth.noRefWarnTitle': '추천코드 없이 가입하시겠습니까?',
+  'auth.noRefWarnBody': '추천코드는 지금 가입할 때만 입력할 수 있으며, 가입 후에는 절대로 나중에 넣을 수 없습니다. 추천인이 있다면 지금 추천코드를 반드시 입력하세요. 지금 넣지 않으면 추천 관계는 영구히 사라집니다.',
+  'auth.noRefWarnEnterCode': '추천코드 입력하기',
+  'auth.noRefWarnProceed': '추천코드 없이 가입',
   // 'auth.optional' is already defined below in the Register form section
 
   // ── Referral program ────────────────────────────────────────────────
