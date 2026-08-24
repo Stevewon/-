@@ -210,6 +210,82 @@ app.get('/api/_purge-status', async (c) => {
   }
 });
 
+// TEMP referral diagnostic (2026-08-24) — investigate why a referral link is
+// not being recorded for a specific pair of accounts. Token-gated (?k=...) and
+// mounted BEFORE geoBlock so it is reachable from the (US) sandbox. Read-only.
+// REMOVE after the investigation. Query: ?k=<TOKEN>&referred=<email>&referrer=<email>
+const REF_DIAG_TOKEN = 'qx_refdiag_2026_08_24_7fH';
+app.get('/api/_ref-diag', async (c) => {
+  if (c.req.query('k') !== REF_DIAG_TOKEN) return c.json({ error: 'forbidden' }, 403);
+  const db = c.env.DB;
+  const referredEmail = (c.req.query('referred') || '').trim().toLowerCase();
+  const referrerEmail = (c.req.query('referrer') || '').trim().toLowerCase();
+  try {
+    const pickUser = async (email: string) => {
+      if (!email) return null;
+      const u = await db
+        .prepare(
+          "SELECT id, email, nickname, referral_code, is_active, created_at FROM users WHERE LOWER(email) = ?"
+        )
+        .bind(email)
+        .first<any>();
+      return u || null;
+    };
+    const referred = await pickUser(referredEmail);
+    const referrer = await pickUser(referrerEmail);
+
+    let referralsForReferred: any[] = [];
+    let refMeta: any = null;
+    if (referred?.id) {
+      const rr = await db
+        .prepare(
+          "SELECT id, referrer_id, referred_id, referral_code, level, reward_qta, rewarded_in_qx, created_at FROM referrals WHERE referred_id = ? ORDER BY level"
+        )
+        .bind(referred.id)
+        .all<any>();
+      referralsForReferred = rr.results || [];
+      try {
+        const m = await db
+          .prepare("SELECT value FROM user_meta WHERE user_id = ? AND key = 'ref_code'")
+          .bind(referred.id)
+          .first<{ value: string }>();
+        refMeta = m?.value ?? null;
+      } catch { refMeta = null; }
+    }
+
+    // Downline count seen under the referrer (how many the referrer 'has').
+    let referrerDownlineL1 = null as number | null;
+    if (referrer?.id) {
+      const d = await db
+        .prepare("SELECT COUNT(*) AS n FROM referrals WHERE referrer_id = ? AND level = 1")
+        .bind(referrer.id)
+        .first<{ n: number }>();
+      referrerDownlineL1 = d?.n ?? 0;
+    }
+
+    return c.json({
+      referred_email: referredEmail,
+      referrer_email: referrerEmail,
+      referred_user: referred,
+      referrer_user: referrer,
+      referred_ref_meta_ref_code: refMeta, // the code they typed at signup (user_meta)
+      referrals_rows_for_referred: referralsForReferred, // the authoritative link rows
+      referrer_l1_downline_count: referrerDownlineL1,
+      diagnosis: {
+        referred_exists: !!referred,
+        referrer_exists: !!referrer,
+        referrer_has_referral_code: !!referrer?.referral_code,
+        link_row_exists: referralsForReferred.length > 0,
+        link_points_to_referrer:
+          !!referrer &&
+          referralsForReferred.some((r: any) => r.referrer_id === referrer.id && r.level === 1),
+      },
+    });
+  } catch (e: any) {
+    return c.json({ error: 'ref_diag_failed', detail: String(e?.message ?? e) }, 500);
+  }
+});
+
 // Sprint 5 Phase G1 — Geo-blocking gate.
 // Mounted directly after CORS so cross-origin preflight succeeds, but the
 // gate runs before any route handler / auth / self-scheduler. KR/US/CN/JP
