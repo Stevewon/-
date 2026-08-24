@@ -10,6 +10,9 @@ const ko = {
   'nav.wallet': '\uc790\uc0b0',
   'nav.earn': '\uc608\uce58',
   'earn.title': '예치',
+  // ---- Earn "준비중" 안내 (Earn 기능 일시 비활성화) ----
+  'earn.comingSoonTitle': '준비중입니다',
+  'earn.comingSoonBody': 'Earn 상품을 준비하고 있습니다. 곧 다시 찾아뵙겠습니다.',
   'earn.searchPlaceholder': '원하는 코인을 입력하세요',
   'earn.totalEarnAsset': '총 예치 자산',
   'earn.autoEarn': '자동 예치',

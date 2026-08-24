@@ -10,6 +10,9 @@ const en = {
   'nav.wallet': 'Wallet',
   'nav.earn': 'Earn',
   'earn.title': 'Earn',
+  // ---- Earn "coming soon" placeholder (all Earn features temporarily disabled) ----
+  'earn.comingSoonTitle': 'Coming soon',
+  'earn.comingSoonBody': 'Earn products are being prepared. Please check back shortly.',
   'earn.searchPlaceholder': 'Please enter your preferred coin',
   'earn.totalEarnAsset': 'Total Earn Asset',
   'earn.autoEarn': 'Auto-Earn',

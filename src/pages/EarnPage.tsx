@@ -8,7 +8,74 @@ import DesktopPageLayout from '../components/common/DesktopPageLayout';
 import CoinIcon from '../components/common/CoinIcon';
 import { showToast } from '../components/common/Toast';
 import { formatAmount } from '../utils/format';
-import { X, Lock, Loader2, TrendingUp, Users, AlertTriangle, Wallet } from 'lucide-react';
+import { X, Lock, Loader2, TrendingUp, Users, AlertTriangle, Wallet, Clock } from 'lucide-react';
+
+// ---------------------------------------------------------------------------
+// ⏸️  Earn "Coming soon / 준비중입니다" placeholder.
+//
+// All Earn features are temporarily disabled (owner directive 2026-08-24).
+// The primary heading/body use the i18n keys (English default, Korean via
+// ?lang=ko). Because the app currently ships only en + ko locale files (every
+// other language falls back to English), we ALSO render the phrase in each
+// major language so every visitor sees "in preparation" in their own tongue,
+// regardless of the i18n fallback. Restoring Earn = revert EarnPage to its
+// original return (kept verbatim in the block comment inside EarnPage()).
+// ---------------------------------------------------------------------------
+const COMING_SOON_BY_LANG: { label: string; text: string }[] = [
+  { label: '한국어',        text: '준비중입니다' },
+  { label: 'English',       text: 'Coming soon' },
+  { label: '中文 (简体)',    text: '正在准备中' },
+  { label: '中文 (繁體)',    text: '正在準備中' },
+  { label: '日本語',        text: '準備中です' },
+  { label: 'Español',       text: 'Próximamente' },
+  { label: 'Português',     text: 'Em breve' },
+  { label: 'Français',      text: 'Bientôt disponible' },
+  { label: 'Deutsch',       text: 'Demnächst verfügbar' },
+  { label: 'Русский',       text: 'Скоро будет' },
+  { label: 'Türkçe',        text: 'Çok yakında' },
+  { label: 'Tiếng Việt',    text: 'Sắp ra mắt' },
+  { label: 'Bahasa Indonesia', text: 'Segera hadir' },
+  { label: 'ไทย',           text: 'เร็ว ๆ นี้' },
+  { label: 'العربية',       text: 'قريبًا' },
+];
+
+function EarnComingSoon() {
+  const { t } = useI18n();
+  return (
+    <DesktopPageLayout>
+      <div className="min-h-[52vh] flex items-center justify-center px-4 py-10">
+        <div className="w-full max-w-md text-center">
+          <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-2xl bg-exchange-yellow/10 border border-exchange-yellow/30">
+            <Clock size={38} className="text-exchange-yellow" />
+          </div>
+          <h1 className="text-[26px] font-bold text-exchange-text leading-tight">
+            {t('earn.comingSoonTitle')}
+          </h1>
+          <p className="mt-3 text-[14px] leading-relaxed text-exchange-text-secondary">
+            {t('earn.comingSoonBody')}
+          </p>
+
+          {/* Multilingual "in preparation" so every visitor sees their own
+              language even though non-en/ko locales fall back to English. */}
+          <div className="mt-8 border-t border-exchange-border pt-6">
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2.5 text-left sm:grid-cols-3">
+              {COMING_SOON_BY_LANG.map((l) => (
+                <div key={l.label} className="min-w-0">
+                  <div className="text-[10px] uppercase tracking-wide text-exchange-text-third truncate">
+                    {l.label}
+                  </div>
+                  <div className="text-[13px] font-medium text-exchange-text truncate">
+                    {l.text}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </DesktopPageLayout>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // QTA Staking (tier plan): stake USDT in $100 increments, earn QTA dividends
@@ -44,7 +111,27 @@ interface Position {
 const rate = (r: number) => `${(r * 100).toFixed(1)}%`;
 const months = (d: number) => Math.round(d / 30);
 
+// ==========================================================================
+// ⏸️  EARN TEMPORARILY DISABLED (owner directive 2026-08-24)
+// All Earn features are turned off and replaced with a localized
+// "Coming soon / 준비중입니다" placeholder shown in each visitor's language.
+//
+// The full original Earn implementation (data loading, claim/redeem, staking
+// products grid, dividend summary, subscribe/withdraw modals) is preserved
+// verbatim and un-rendered in EarnLegacyUI() below — nothing calls it, so it
+// is effectively disabled but kept intact for easy restoration.
+// To restore Earn: rename EarnLegacyUI back to EarnPage (and delete this
+// wrapper + EarnComingSoon).
+// ==========================================================================
 export default function EarnPage() {
+  return <EarnComingSoon />;
+}
+
+// ---------------------------------------------------------------------------
+// ⏸️  ORIGINAL EARN UI — DISABLED (kept verbatim, never rendered).
+// Restore by moving this body back into EarnPage() (see note above).
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function EarnLegacyUI() {
   const { t } = useI18n();
   const navigate = useNavigate();
   const { user, wallets, fetchWallets } = useStore();
