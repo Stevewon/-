@@ -482,10 +482,54 @@ app.post('/withdraw', authMiddleware, rlWithdraw, requireKyc('approved'), async 
 // Get deposit history
 app.get('/history/deposits', authMiddleware, async (c) => {
   const user = c.get('user');
-  const { results } = await c.env.DB.prepare(
-    'SELECT * FROM deposits WHERE user_id = ? ORDER BY created_at DESC LIMIT 50'
+  // Merge two deposit sources into one history feed:
+  //   (1) `deposits`     — internal / legacy deposit rows
+  //   (2) `ext_deposits` — real on-chain external deposits (BEP-20 sweep model).
+  // ext_deposits stores `amount` as a decimal string and uses its own status
+  // vocabulary (detected|confirming|credited|swept|...), so we CAST the amount
+  // to REAL and normalize the status to the labels the UI already understands
+  // (completed | pending) so the Detail history shows the on-chain deposit.
+  let extResults: any[] = [];
+  try {
+    const ext = await c.env.DB.prepare(
+      `SELECT
+         id,
+         coin_symbol,
+         CAST(amount AS REAL)         AS amount,
+         tx_hash,
+         network,
+         address,
+         CASE
+           WHEN status IN ('credited','swept') THEN 'completed'
+           WHEN status IN ('detected','confirming') THEN 'pending'
+           ELSE status
+         END                          AS status,
+         confirmations,
+         required_confs,
+         created_at,
+         'external'                   AS source
+       FROM ext_deposits
+       WHERE user_id = ?
+       ORDER BY created_at DESC
+       LIMIT 50`
+    ).bind(user.id).all();
+    extResults = ext.results || [];
+  } catch {
+    // ext_deposits may not exist on older DBs; fail soft.
+    extResults = [];
+  }
+
+  const { results: baseResults } = await c.env.DB.prepare(
+    "SELECT *, 'internal' AS source FROM deposits WHERE user_id = ? ORDER BY created_at DESC LIMIT 50"
   ).bind(user.id).all();
-  return c.json(results);
+
+  const merged = [...(baseResults || []), ...extResults].sort((a: any, b: any) => {
+    const ta = String(a.created_at || '');
+    const tb = String(b.created_at || '');
+    return tb.localeCompare(ta);
+  }).slice(0, 50);
+
+  return c.json(merged);
 });
 
 // Get withdrawal history
