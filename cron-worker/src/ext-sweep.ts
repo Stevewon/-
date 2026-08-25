@@ -154,13 +154,18 @@ export async function sweepExtDeposits(env: ExtSweepEnv): Promise<{
   const minUsdt = Number(env.EXT_SWEEP_MIN_USDT || '1') || 1;
 
   for (const net of nets) {
-    // Pick the oldest address with un-swept credited deposits.
+    // Pick the oldest address with un-swept deposits. Include BOTH:
+    //   'credited' — not yet gas-funded (STEP 1 will gas-fund this tick), and
+    //   'funding'  — already gas-funded on a PRIOR tick (STEP 2 sweeps now).
+    // The two-step gas-fund → sweep flow spans multiple ticks in production
+    // (gas top-up must confirm before the USDT transfer can pay for gas), so
+    // the candidate query MUST re-pick 'funding' rows or they'd be stranded.
     const cand = await env.DB.prepare(
       `SELECT d.user_id, d.address, MIN(a.address_index) AS idx
          FROM ext_deposits d
          JOIN ext_addresses a
            ON a.user_id = d.user_id AND a.chain = d.chain AND a.network = d.network
-        WHERE d.chain = ? AND d.network = ? AND d.status = 'credited'
+        WHERE d.chain = ? AND d.network = ? AND d.status IN ('credited','funding')
         GROUP BY d.address
         ORDER BY MIN(d.created_at) ASC
         LIMIT 1`
@@ -207,10 +212,12 @@ export async function sweepExtDeposits(env: ExtSweepEnv): Promise<{
 
     const minWei = decimalToWei(String(minUsdt), net.usdtDecimals);
     if (tokenBal < minWei) {
-      // Dust or already moved — close out the credited rows so we don't re-pick.
+      // Dust or already moved — close out the rows so we don't re-pick. Cover
+      // both 'credited' and 'funding' (an already-gas-funded addr whose token
+      // balance is now below the min, e.g. already swept out-of-band).
       await env.DB.prepare(
         `UPDATE ext_deposits SET status='swept', swept_at=?, updated_at=?
-          WHERE chain=? AND network=? AND address=? AND status='credited'`
+          WHERE chain=? AND network=? AND address=? AND status IN ('credited','funding')`
       ).bind(new Date().toISOString(), new Date().toISOString(), net.chain, net.network, cand.address).run();
       return { ok: true, network: net.network, action: 'dust_closed', address: userAcct.address };
     }
