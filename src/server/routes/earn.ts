@@ -147,8 +147,12 @@ app.get('/positions', authMiddleware, async (c) => {
     const divUsd = accruedUsd(p, now);
     const termEnd = p.term_end_at ? Date.parse(p.term_end_at) : now;
     const matured = now >= termEnd;          // this position's own term reached
+    const principalQta = p.principal_qta
+      || p.principal
+      || (p.qta_price_at_stake > 0 ? (p.principal_usd || 0) / p.qta_price_at_stake : 0);
     return {
       ...p,
+      principal_qta: principalQta,
       accrued_dividend_usd: divUsd,
       accrued_dividend_qta: divUsd / price,
       // Normal (penalty-free) redeem is allowed only once THIS position's own
@@ -169,26 +173,45 @@ app.get('/positions', authMiddleware, async (c) => {
 });
 
 // --------------------------------------------------------------------------
-// POST /subscribe { product_id, amount_usd }
-// Stakes USDT in $100 increments matching the chosen tier band.
+// POST /subscribe { product_id, amount_usd? , amount_qta? }
+// Stakes QTA (bought on the exchange) into a tier. The tier band is USD, but
+// the staked asset is QTA: the required QTA quantity is derived from the LIVE
+// QTA price at stake time. Caller may send either a USD target (amount_usd) or
+// the QTA quantity directly (amount_qta) — they're two views of the same stake.
+//   required_qta   = amount_usd / price      (when USD target given)
+//   principal_usd  = qta_qty * price         (locked-in USD value at stake)
+// Dividend math stays USD-denominated off principal_usd; principal returns in
+// QTA (the same quantity that was staked).
 // --------------------------------------------------------------------------
 app.post('/subscribe', authMiddleware, async (c) => {
   const user = c.get('user');
   const body = await c.req.json().catch(() => ({}));
   const productId = String(body.product_id || '');
-  const amountUsd = Number(body.amount_usd);
+  const price = await qtaPrice(c);              // live QTA price (USD)
 
   if (!productId) return c.json({ error: 'product_id required' }, 400);
-  if (!isFinite(amountUsd) || amountUsd <= 0) return c.json({ error: 'Invalid amount' }, 400);
-  if (amountUsd % STAKE_UNIT_USD !== 0) {
-    return c.json({ error: `Amount must be in $${STAKE_UNIT_USD} increments` }, 400);
-  }
 
   const product = await c.env.DB.prepare(
     `SELECT * FROM staking_products WHERE id = ? AND is_active = 1`
   ).bind(productId).first<any>();
   if (!product) return c.json({ error: 'Product not found' }, 404);
 
+  // Resolve the stake into a QTA quantity + its USD value at the live price.
+  // Prefer an explicit QTA quantity; otherwise convert the USD target.
+  let qtaQty = Number(body.amount_qta);
+  let amountUsd = Number(body.amount_usd);
+  if (isFinite(qtaQty) && qtaQty > 0) {
+    amountUsd = qtaQty * price;
+  } else if (isFinite(amountUsd) && amountUsd > 0) {
+    qtaQty = amountUsd / price;
+  } else {
+    return c.json({ error: 'Invalid amount' }, 400);
+  }
+  if (!isFinite(qtaQty) || qtaQty <= 0 || !isFinite(amountUsd) || amountUsd <= 0) {
+    return c.json({ error: 'Invalid amount' }, 400);
+  }
+
+  // Validate the USD value against the tier band.
   if (amountUsd < product.min_usd) {
     return c.json({ error: `Minimum for this tier is $${product.min_usd}` }, 400);
   }
@@ -196,19 +219,18 @@ app.post('/subscribe', authMiddleware, async (c) => {
     return c.json({ error: `Maximum for this tier is $${product.max_usd}` }, 400);
   }
 
-  // Lock the USDT principal atomically (USDT is 1:1 USD).
+  // Lock the QTA principal atomically from the user's available balance.
   const lockRes = await c.env.DB.prepare(
-    `UPDATE wallets SET available = available - ?
-      WHERE user_id = ? AND coin_symbol = 'USDT' AND available >= ?`
-  ).bind(amountUsd, user.id, amountUsd).run();
+    `UPDATE wallets SET available = available - ?, locked = COALESCE(locked,0) + ?
+      WHERE user_id = ? AND coin_symbol = 'QTA' AND available >= ?`
+  ).bind(qtaQty, qtaQty, user.id, qtaQty).run();
   if (!lockRes.meta || lockRes.meta.changes === 0) {
-    return c.json({ error: 'Insufficient USDT balance' }, 400);
+    return c.json({ error: 'Insufficient QTA balance' }, 400);
   }
 
   const now = Date.now();
   const nowIso = new Date(now).toISOString();
   // Each position matures on its OWN start date + the product term (180/360d).
-  // There is no global fixed lock — the maturity date is per-position.
   const termEndIso = new Date(now + product.term_days * MS_PER_DAY).toISOString();
   const lockEndIso = termEndIso; // legacy column kept in sync with term end
   const posId = uuid();
@@ -218,14 +240,16 @@ app.post('/subscribe', authMiddleware, async (c) => {
       `INSERT INTO staking_positions
         (id, user_id, product_id, coin_symbol, kind, apr, principal,
          accrued_interest, status, lock_days,
-         principal_usd, daily_rate, term_days, accrued_dividend_usd,
+         principal_usd, principal_qta, qta_price_at_stake,
+         daily_rate, term_days, accrued_dividend_usd,
          paid_dividend_qta, payout_coin, lock_end_at, term_end_at,
          last_accrued_at, created_at)
-       VALUES (?,?,?, 'USDT','fixed', ?, ?, 0, 'active', ?,
-               ?,?,?,0, 0, 'QTA', ?,?, ?, ?)`
+       VALUES (?,?,?, 'QTA','fixed', ?, ?, 0, 'active', ?,
+               ?,?,?, ?,?,0, 0, 'QTA', ?,?, ?, ?)`
     ).bind(posId, user.id, product.id, product.total_return || (product.daily_rate * product.term_days),
-           amountUsd, product.term_days,
-           amountUsd, product.daily_rate, product.term_days,
+           qtaQty, product.term_days,
+           amountUsd, qtaQty, price,
+           product.daily_rate, product.term_days,
            lockEndIso, termEndIso, nowIso, nowIso),
     c.env.DB.prepare(
       `UPDATE staking_products SET total_staked = COALESCE(total_staked,0) + ?, updated_at = ?
@@ -233,7 +257,11 @@ app.post('/subscribe', authMiddleware, async (c) => {
     ).bind(amountUsd, nowIso, product.id),
   ]);
 
-  return c.json({ ok: true, position_id: posId, lock_end_at: lockEndIso, term_end_at: termEndIso });
+  return c.json({
+    ok: true, position_id: posId,
+    staked_qta: qtaQty, principal_usd: amountUsd, qta_price: price,
+    lock_end_at: lockEndIso, term_end_at: termEndIso,
+  });
 });
 
 // --------------------------------------------------------------------------
@@ -316,8 +344,12 @@ app.post('/redeem', authMiddleware, async (c) => {
   const nowIso = new Date(now).toISOString();
   const price = await qtaPrice(c);
   const principalUsd = pos.principal_usd || 0;
-  // Early == before this position's own maturity date (per-position, not a
-  // global fixed number of days).
+  // QTA principal that was locked at stake time. Fall back to `principal`
+  // (the QTA quantity is now stored there) or derive from the staked-price.
+  const principalQta = pos.principal_qta
+    || pos.principal
+    || (pos.qta_price_at_stake > 0 ? principalUsd / pos.qta_price_at_stake : 0);
+  // Early == before this position's own maturity date (per-position).
   const isEarly = pos.term_end_at ? Date.parse(pos.term_end_at) > now : false;
 
   // Claim-first status flip.
@@ -329,34 +361,24 @@ app.post('/redeem', authMiddleware, async (c) => {
     return c.json({ error: 'Already redeemed' }, 409);
   }
 
-  let returnedUsd: number;
-  let dividendQta = 0;
-  let penaltyUsd = 0;
-  let baseUsd = 0;
-  let alreadyPaidQtaValueUsd = 0;
+  let returnedQta: number;      // QTA principal returned to the wallet
+  let dividendQta = 0;          // remaining unpaid dividend (matured only)
+  let penaltyQta = 0;           // QTA principal forfeited (early only)
 
   if (isEarly) {
-    // Early exit settlement:
-    //   base    = (principal + TOTAL accrued dividend USD)
-    //   payout  = base * 70%  (i.e. 30% penalty on the whole base)
-    //   minus   = QTA already claimed/withdrawn (QUANTITY) valued at TODAY's
-    //             QTA price — netted off so we don't pay that portion twice.
-    //   result  = payout - minus, paid ALL as USDT.
-    const totalDivUsd = accruedUsd(pos, now);
-    baseUsd = principalUsd + totalDivUsd;
-    penaltyUsd = baseUsd * EARLY_PENALTY;                 // 30% of base
-    const grossReturnUsd = baseUsd - penaltyUsd;          // 70% of base
-    // Value the QTA the user already took, at the redeem-day price.
-    const paidQta = pos.paid_dividend_qta || 0;
-    alreadyPaidQtaValueUsd = paidQta * price;             // (가) quantity × today's price
-    returnedUsd = Math.max(0, grossReturnUsd - alreadyPaidQtaValueUsd);
+    // Early exit: 30% penalty on the QTA PRINCIPAL; forfeit the accrued
+    // dividend entirely (dividend already claimed stays with the user). The
+    // remaining 70% of the staked QTA is returned. No USDT is involved.
+    penaltyQta = principalQta * EARLY_PENALTY;      // 30% of principal QTA
+    returnedQta = Math.max(0, principalQta - penaltyQta);   // 70% back
   } else {
-    // Pay remaining unpaid dividend as QTA + full principal back.
+    // Matured: return the full QTA principal + pay remaining unpaid dividend
+    // (valued in USD, paid as QTA at today's price).
     const totalUsd = accruedUsd(pos, now);
     const paidUsd = pos.accrued_dividend_usd || 0;
     const payableUsd = Math.max(0, totalUsd - paidUsd);
     dividendQta = payableUsd / price;
-    returnedUsd = principalUsd;
+    returnedQta = principalQta;
 
     if (dividendQta > 0) {
       await creditQta(c, user.id, dividendQta);
@@ -368,16 +390,27 @@ app.post('/redeem', authMiddleware, async (c) => {
     }
   }
 
-  // Return USDT principal (net of any early penalty) to available.
-  const upd = await c.env.DB.prepare(
-    `UPDATE wallets SET available = available + ?
-      WHERE user_id = ? AND coin_symbol = 'USDT'`
-  ).bind(returnedUsd, user.id).run();
-  if (!upd.meta || upd.meta.changes === 0) {
+  // Return the QTA principal (net of any early penalty): move it out of locked
+  // and back into available. Non-negative guard keeps locked from underflowing.
+  if (returnedQta > 0) {
+    const upd = await c.env.DB.prepare(
+      `UPDATE wallets
+          SET available = available + ?,
+              locked = MAX(0, COALESCE(locked,0) - ?)
+        WHERE user_id = ? AND coin_symbol = 'QTA'`
+    ).bind(returnedQta, principalQta, user.id).run();
+    if (!upd.meta || upd.meta.changes === 0) {
+      await c.env.DB.prepare(
+        `INSERT INTO wallets (id, user_id, coin_symbol, available, available_initial)
+         VALUES (?,?, 'QTA', ?, 0)`
+      ).bind(uuid(), user.id, returnedQta).run();
+    }
+  } else {
+    // Nothing returned (100% forfeit edge case): just release the lock.
     await c.env.DB.prepare(
-      `INSERT INTO wallets (id, user_id, coin_symbol, available, available_initial)
-       VALUES (?,?, 'USDT', ?, 0)`
-    ).bind(uuid(), user.id, returnedUsd).run();
+      `UPDATE wallets SET locked = MAX(0, COALESCE(locked,0) - ?)
+        WHERE user_id = ? AND coin_symbol = 'QTA'`
+    ).bind(principalQta, user.id).run();
   }
 
   await c.env.DB.prepare(
@@ -387,9 +420,8 @@ app.post('/redeem', authMiddleware, async (c) => {
 
   return c.json({
     ok: true, early: isEarly,
-    returned_usdt: returnedUsd, penalty_usdt: penaltyUsd,
-    penalty_base_usd: baseUsd,                      // principal + accrued dividend (early only)
-    already_paid_qta_value_usd: alreadyPaidQtaValueUsd, // QTA already taken, valued today (early only)
+    returned_qta: returnedQta, penalty_qta: penaltyQta,
+    principal_qta: principalQta,
     dividend_qta: dividendQta, qta_price: price,
   });
 });

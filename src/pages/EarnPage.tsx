@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { useI18n } from '../i18n';
@@ -8,150 +8,95 @@ import DesktopPageLayout from '../components/common/DesktopPageLayout';
 import CoinIcon from '../components/common/CoinIcon';
 import { showToast } from '../components/common/Toast';
 import { formatAmount } from '../utils/format';
-import { X, Lock, Loader2, TrendingUp, Users, AlertTriangle, Wallet, Clock } from 'lucide-react';
+import { X, Lock, Loader2, Star, Crown, ShieldCheck, Gift, TrendingUp, Wallet, AlertTriangle, Users } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
-// ⏸️  Earn "Coming soon / 준비중입니다" placeholder.
+// QTA ADVANCED EARN — STAKE. EARN. GROW.
 //
-// All Earn features are temporarily disabled (owner directive 2026-08-24).
-// The primary heading/body use the i18n keys (English default, Korean via
-// ?lang=ko). Because the app currently ships only en + ko locale files (every
-// other language falls back to English), we ALSO render the phrase in each
-// major language so every visitor sees "in preparation" in their own tongue,
-// regardless of the i18n fallback. Restoring Earn = revert EarnPage to its
-// original return (kept verbatim in the block comment inside EarnPage()).
-// ---------------------------------------------------------------------------
-const COMING_SOON_BY_LANG: { label: string; text: string }[] = [
-  { label: '한국어',        text: '준비중입니다' },
-  { label: 'English',       text: 'Coming soon' },
-  { label: '中文 (简体)',    text: '正在准备中' },
-  { label: '中文 (繁體)',    text: '正在準備中' },
-  { label: '日本語',        text: '準備中です' },
-  { label: 'Español',       text: 'Próximamente' },
-  { label: 'Português',     text: 'Em breve' },
-  { label: 'Français',      text: 'Bientôt disponible' },
-  { label: 'Deutsch',       text: 'Demnächst verfügbar' },
-  { label: 'Русский',       text: 'Скоро будет' },
-  { label: 'Türkçe',        text: 'Çok yakında' },
-  { label: 'Tiếng Việt',    text: 'Sắp ra mắt' },
-  { label: 'Bahasa Indonesia', text: 'Segera hadir' },
-  { label: 'ไทย',           text: 'เร็ว ๆ นี้' },
-  { label: 'العربية',       text: 'قريبًا' },
-];
-
-function EarnComingSoon() {
-  const { t } = useI18n();
-  return (
-    <DesktopPageLayout>
-      <div className="min-h-[52vh] flex items-center justify-center px-4 py-10">
-        <div className="w-full max-w-md text-center">
-          <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-2xl bg-exchange-yellow/10 border border-exchange-yellow/30">
-            <Clock size={38} className="text-exchange-yellow" />
-          </div>
-          <h1 className="text-[26px] font-bold text-exchange-text leading-tight">
-            {t('earn.comingSoonTitle')}
-          </h1>
-          <p className="mt-3 text-[14px] leading-relaxed text-exchange-text-secondary">
-            {t('earn.comingSoonBody')}
-          </p>
-
-          {/* Multilingual "in preparation" so every visitor sees their own
-              language even though non-en/ko locales fall back to English. */}
-          <div className="mt-8 border-t border-exchange-border pt-6">
-            <div className="grid grid-cols-2 gap-x-4 gap-y-2.5 text-left sm:grid-cols-3">
-              {COMING_SOON_BY_LANG.map((l) => (
-                <div key={l.label} className="min-w-0">
-                  <div className="text-[10px] uppercase tracking-wide text-exchange-text-third truncate">
-                    {l.label}
-                  </div>
-                  <div className="text-[13px] font-medium text-exchange-text truncate">
-                    {l.text}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-    </DesktopPageLayout>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// QTA Staking (tier plan): stake USDT in $100 increments, earn QTA dividends
-// daily. 90-day min lock, 30% early-exit penalty, referral match (10%/5%),
-// dividend withdrawal in 100-QTA units with a 5% fee.
+// Users stake QTA (bought on the exchange) into one of four tiers. Each tier
+// carries a USD target band; the number of QTA required is computed from the
+// LIVE QTA price at stake time (price floats with the market), so the card
+// shows both the USD band AND its QTA-quantity conversion.
+//
+//   PLATINUM 1  $100 - $4,999   180d   0.2%/day  (36%)
+//   PLATINUM 2  $100 - $4,999   360d   0.3%/day  (108%)
+//   VIP 1       $5,000+         180d   0.3%/day  (54%)
+//   VIP 2       $5,000+         360d   0.5%/day  (180%)
 // ---------------------------------------------------------------------------
 
 interface Product {
   id: string;
+  coin_symbol: string;
   min_usd: number;
   max_usd: number;
   term_days: number;
   daily_rate: number;      // fraction, 0.002 = 0.2%/day
-  total_return: number;    // daily_rate * term_days, e.g. 0.36
+  total_return: number;    // daily_rate * term_days
   unit_usd: number;
+  sort_order: number;
 }
 
 interface Position {
   id: string;
   product_id: string;
   principal_usd: number;
+  principal_qta: number;
+  qta_price_at_stake: number;
   daily_rate: number;
   term_days: number;
   accrued_dividend_usd: number;
   accrued_dividend_qta: number;
   can_redeem: boolean;
   matured: boolean;
-  lock_end_at: string | null;
   term_end_at: string | null;
   created_at: string;
 }
 
 const rate = (r: number) => `${(r * 100).toFixed(1)}%`;
-const months = (d: number) => Math.round(d / 30);
 
-// ==========================================================================
-// ⏸️  EARN TEMPORARILY DISABLED (owner directive 2026-08-24)
-// All Earn features are turned off and replaced with a localized
-// "Coming soon / 준비중입니다" placeholder shown in each visitor's language.
-//
-// The full original Earn implementation (data loading, claim/redeem, staking
-// products grid, dividend summary, subscribe/withdraw modals) is preserved
-// verbatim and un-rendered in EarnLegacyUI() below — nothing calls it, so it
-// is effectively disabled but kept intact for easy restoration.
-// To restore Earn: rename EarnLegacyUI back to EarnPage (and delete this
-// wrapper + EarnComingSoon).
-// ==========================================================================
-export default function EarnPage() {
-  return <EarnComingSoon />;
+// USD target -> required QTA quantity at the given live price.
+const usdToQta = (usd: number, price: number) => (price > 0 ? usd / price : 0);
+
+// Compact QTA quantity for card display (e.g. 1.4M, 28.0K).
+function fmtQtaCompact(q: number): string {
+  if (!isFinite(q) || q <= 0) return '0';
+  if (q >= 1_000_000) return `${(q / 1_000_000).toFixed(q >= 10_000_000 ? 0 : 2)}M`;
+  if (q >= 1_000) return `${(q / 1_000).toFixed(q >= 100_000 ? 0 : 1)}K`;
+  return Math.round(q).toLocaleString();
 }
 
-// ---------------------------------------------------------------------------
-// ⏸️  ORIGINAL EARN UI — DISABLED (kept verbatim, never rendered).
-// Restore by moving this body back into EarnPage() (see note above).
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function EarnLegacyUI() {
+// Tier presentation (icon / accent) keyed by product id, with a name fallback.
+function tierMeta(p: Product): { label: string; sub: string; icon: any; vip: boolean; stars: number } {
+  const id = p.id.toLowerCase();
+  if (id.includes('vip_2') || (p.min_usd >= 5000 && p.term_days >= 360))
+    return { label: 'VIP 2', sub: '', icon: Crown, vip: true, stars: 0 };
+  if (id.includes('vip_1') || (p.min_usd >= 5000))
+    return { label: 'VIP 1', sub: '', icon: Crown, vip: true, stars: 0 };
+  if (id.includes('platinum_2') || p.term_days >= 360)
+    return { label: 'PLATINUM 2', sub: '', icon: Star, vip: false, stars: 2 };
+  return { label: 'PLATINUM 1', sub: '', icon: Star, vip: false, stars: 1 };
+}
+
+export default function EarnPage() {
   const { t } = useI18n();
   const navigate = useNavigate();
   const { user, wallets, fetchWallets } = useStore();
 
   const [products, setProducts] = useState<Product[]>([]);
   const [positions, setPositions] = useState<Position[]>([]);
-  const [qtaPrice, setQtaPrice] = useState(0.01);
+  const [qtaPrice, setQtaPrice] = useState(0.00357142857);
   const [loading, setLoading] = useState(true);
   const [subscribeTarget, setSubscribeTarget] = useState<Product | null>(null);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  const usdtBalance = wallets.find((w) => w.coin_symbol === 'USDT')?.available || 0;
   const qtaBalance = wallets.find((w) => w.coin_symbol === 'QTA')?.available || 0;
 
   const loadProducts = useCallback(async () => {
     try {
       const res = await api.get('/earn/products');
       setProducts(res.data.products || []);
-      setQtaPrice(res.data.qta_price || 0.01);
+      if (res.data.qta_price) setQtaPrice(res.data.qta_price);
     } catch { /* public */ }
     finally { setLoading(false); }
   }, []);
@@ -191,14 +136,11 @@ function EarnLegacyUI() {
     try {
       const res = await api.post('/earn/redeem', { position_id: p.id });
       if (res.data.early) {
-        const netQtaNote = res.data.already_paid_qta_value_usd > 0
-          ? ` − ${formatAmount(res.data.already_paid_qta_value_usd)} (${t('earn.paidQtaOffset')})`
-          : '';
         showToast('success', t('earn.redeemed'),
-          `${t('earn.returned')}: ${formatAmount(res.data.returned_usdt)} USDT (${t('earn.penalty')} ${formatAmount(res.data.penalty_usdt)}${netQtaNote})`);
+          `${t('earn.returned')}: ${formatAmount(res.data.returned_qta)} QTA (${t('earn.penalty')} ${formatAmount(res.data.penalty_qta)} QTA)`);
       } else {
         showToast('success', t('earn.redeemed'),
-          `${formatAmount(res.data.returned_usdt)} USDT + ${formatAmount(res.data.dividend_qta)} QTA`);
+          `${formatAmount(res.data.returned_qta)} QTA + ${formatAmount(res.data.dividend_qta)} QTA`);
       }
       await refreshAll();
     } catch (err: any) {
@@ -210,43 +152,60 @@ function EarnLegacyUI() {
 
   return (
     <DesktopPageLayout>
-      {/* Hero */}
-      <div className="rounded-2xl mb-6 overflow-hidden p-5"
-        style={{ background: 'linear-gradient(120deg, #2b2410 0%, #14171A 60%)', border: '1px solid rgba(240,185,11,0.3)' }}>
-        <div className="flex items-center gap-3 mb-1">
+      {/* ADVANCED EARN hero (matches owner card design) */}
+      <div
+        className="rounded-2xl mb-5 overflow-hidden p-5"
+        style={{ background: 'linear-gradient(120deg,#0b1220 0%,#101826 55%,#1a1305 100%)', border: '1px solid rgba(240,185,11,0.28)' }}
+      >
+        <div className="flex items-center gap-3">
           <CoinIcon symbol="QTA" size={40} />
-          <div>
-            <div className="text-[19px] font-bold text-exchange-text">{t('earn.qtaStaking')}</div>
-            <div className="text-[12px] text-exchange-text-secondary">{t('earn.heroSub')}</div>
+          <div className="min-w-0">
+            <div className="text-[20px] font-extrabold tracking-wide text-exchange-text leading-none">
+              {t('earn.advancedEarn')}
+            </div>
+            <div className="text-[11px] font-semibold tracking-[0.25em] text-exchange-yellow mt-1">
+              {t('earn.stakeEarnGrow')}
+            </div>
           </div>
         </div>
-        <div className="flex gap-6 mt-4 text-[13px]">
-          <div>
-            <div className="text-exchange-text-third">{t('earn.maxReturn')}</div>
-            <div className="text-[20px] font-bold text-exchange-buy leading-tight">180%</div>
-          </div>
-          <div>
-            <div className="text-exchange-text-third">{t('earn.payoutIn')}</div>
-            <div className="text-[16px] font-bold text-exchange-yellow leading-tight mt-1">QTA</div>
-          </div>
+
+        {/* Feature strip */}
+        <div className="grid grid-cols-3 gap-2 mt-4">
+          <Feature icon={Lock} title={t('earn.featLockTitle')} body={t('earn.featLockBody')} />
+          <Feature icon={Gift} title={t('earn.featRewardTitle')} body={t('earn.featRewardBody')} />
+          <Feature icon={ShieldCheck} title={t('earn.featPriceTitle')} body={t('earn.featPriceBody')} />
+        </div>
+
+        {/* QTA live price */}
+        <div className="flex items-center gap-4 mt-4 text-[12px]">
           <div>
             <div className="text-exchange-text-third">{t('earn.qtaPrice')}</div>
-            <div className="text-[16px] font-bold text-exchange-text leading-tight mt-1 tabular-nums">${qtaPrice.toFixed(4)}</div>
+            <div className="text-[15px] font-bold text-exchange-text tabular-nums leading-tight mt-0.5">
+              ${qtaPrice.toFixed(5)}
+              <span className="text-[11px] text-exchange-text-third ml-1">
+                ≈ ₩{Math.round(qtaPrice * 1400).toLocaleString()}
+              </span>
+            </div>
           </div>
+          {user && (
+            <div>
+              <div className="text-exchange-text-third">{t('earn.qtaBalance')}</div>
+              <div className="text-[15px] font-bold text-exchange-yellow tabular-nums leading-tight mt-0.5">
+                {formatAmount(qtaBalance)} QTA
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
       {/* My dividend summary + withdraw */}
       {user && (
-        <div className="bg-exchange-card border border-exchange-border rounded-2xl p-4 mb-6">
+        <div className="bg-exchange-card border border-exchange-border rounded-2xl p-4 mb-5">
           <div className="flex items-center justify-between">
             <div>
               <div className="text-[12px] text-exchange-text-third">{t('earn.claimableDividend')}</div>
               <div className="text-[22px] font-bold text-exchange-buy tabular-nums">
-                {formatAmount(totalDividendQta + 0)} <span className="text-[13px] text-exchange-text-third">QTA {t('earn.accruing')}</span>
-              </div>
-              <div className="text-[12px] text-exchange-text-secondary mt-1">
-                {t('earn.qtaBalance')}: {formatAmount(qtaBalance)} QTA
+                {formatAmount(totalDividendQta)} <span className="text-[13px] text-exchange-text-third">QTA {t('earn.accruing')}</span>
               </div>
             </div>
             <button
@@ -268,12 +227,12 @@ function EarnLegacyUI() {
             {positions.map((p) => (
               <div key={p.id} className="bg-exchange-card border border-exchange-border rounded-2xl p-4">
                 <div className="flex items-center gap-2 mb-3">
-                  <CoinIcon symbol="USDT" size={26} />
+                  <CoinIcon symbol="QTA" size={24} />
                   <span className="text-[14px] font-bold text-exchange-text tabular-nums">
-                    ${formatAmount(p.principal_usd)}
+                    {formatAmount(p.principal_qta)} QTA
                   </span>
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-exchange-yellow/15 text-exchange-yellow">
-                    {months(p.term_days)}{t('earn.mo')} · {rate(p.daily_rate)}/{t('earn.day')}
+                  <span className="text-[10px] text-exchange-text-third tabular-nums">
+                    ≈ ${formatAmount(p.principal_usd)}
                   </span>
                   <span className="text-[13px] font-bold text-exchange-buy tabular-nums ml-auto">
                     +{(p.daily_rate * p.term_days * 100).toFixed(0)}%
@@ -284,9 +243,6 @@ function EarnLegacyUI() {
                     <div className="text-[11px] text-exchange-text-third">{t('earn.accruedDividend')}</div>
                     <div className="text-[15px] font-bold text-exchange-buy tabular-nums">
                       +{formatAmount(p.accrued_dividend_qta)} QTA
-                    </div>
-                    <div className="text-[10px] text-exchange-text-third tabular-nums">
-                      ≈ ${formatAmount(p.accrued_dividend_usd)}
                     </div>
                   </div>
                   <div>
@@ -328,7 +284,7 @@ function EarnLegacyUI() {
         </div>
       )}
 
-      {/* Tier products */}
+      {/* Tier cards (image design) */}
       <div className="flex items-center gap-2 mb-3">
         <TrendingUp size={18} className="text-exchange-yellow" />
         <h2 className="text-[18px] font-bold text-exchange-text">{t('earn.stakingPlans')}</h2>
@@ -337,39 +293,14 @@ function EarnLegacyUI() {
       {loading ? (
         <div className="flex justify-center py-16 text-exchange-text-third"><Loader2 size={26} className="animate-spin" /></div>
       ) : (
-        <div className="space-y-3 mb-6">
+        <div className="grid grid-cols-2 gap-3 mb-6">
           {products.map((p) => (
-            <div key={p.id} className="bg-exchange-card border border-exchange-border rounded-2xl p-4">
-              <div className="flex items-center justify-between mb-2">
-                <div className="text-[15px] font-bold text-exchange-text tabular-nums">
-                  ${formatAmount(p.min_usd)}{p.max_usd > p.min_usd ? ` ~ $${formatAmount(p.max_usd)}` : ''}
-                </div>
-                <span className="text-[11px] px-2.5 py-1 rounded-full bg-exchange-yellow/15 text-exchange-yellow font-medium">
-                  {months(p.term_days)}{t('earn.months')}
-                </span>
-              </div>
-              <div className="flex items-end justify-between">
-                <div className="flex gap-6">
-                  <div>
-                    <div className="text-[10px] text-exchange-text-third">{t('earn.dailyRate')}</div>
-                    <div className="text-[17px] font-bold text-exchange-text tabular-nums">{rate(p.daily_rate)}</div>
-                  </div>
-                  <div>
-                    <div className="text-[10px] text-exchange-text-third">{t('earn.totalReturn')}</div>
-                    <div className="text-[17px] font-bold text-exchange-buy tabular-nums">
-                      {(p.total_return * 100).toFixed(0)}%
-                    </div>
-                  </div>
-                </div>
-                <button
-                  onClick={() => user ? setSubscribeTarget(p) : navigate('/login')}
-                  className="rounded-full bg-exchange-yellow text-black text-[13px] font-bold hover:bg-exchange-yellow/90 transition-colors shrink-0"
-                  style={{ padding: '10px 20px' }}
-                >
-                  {t('earn.stakeNow')}
-                </button>
-              </div>
-            </div>
+            <TierCard
+              key={p.id}
+              product={p}
+              price={qtaPrice}
+              onStake={() => (user ? setSubscribeTarget(p) : navigate('/login'))}
+            />
           ))}
         </div>
       )}
@@ -389,7 +320,7 @@ function EarnLegacyUI() {
 
       {/* Rules note */}
       <div className="text-[11px] text-exchange-text-third space-y-1 mb-8 leading-relaxed">
-        <p>• {t('earn.ruleStake')}</p>
+        <p>• {t('earn.ruleStakeQta')}</p>
         <p>• {t('earn.ruleDividend')}</p>
         <p>• {t('earn.ruleLock')}</p>
         <p>• {t('earn.ruleWithdraw')}</p>
@@ -398,7 +329,7 @@ function EarnLegacyUI() {
       {subscribeTarget && (
         <SubscribeModal
           product={subscribeTarget}
-          usdtBalance={usdtBalance}
+          qtaBalance={qtaBalance}
           qtaPrice={qtaPrice}
           onClose={() => setSubscribeTarget(null)}
           onDone={async () => { setSubscribeTarget(null); await refreshAll(); }}
@@ -417,14 +348,106 @@ function EarnLegacyUI() {
 }
 
 // ---------------------------------------------------------------------------
-// Subscribe (stake USDT) modal
+// Hero feature chip
 // ---------------------------------------------------------------------------
-function SubscribeModal({ product, usdtBalance, qtaPrice, onClose, onDone }: {
-  product: Product; usdtBalance: number; qtaPrice: number;
+function Feature({ icon: Icon, title, body }: { icon: any; title: string; body: string }) {
+  return (
+    <div className="rounded-xl bg-black/25 border border-exchange-border/60 p-2.5">
+      <div className="flex items-center gap-1.5 mb-1">
+        <Icon size={13} className="text-exchange-yellow shrink-0" />
+        <span className="text-[11px] font-bold text-exchange-text truncate">{title}</span>
+      </div>
+      <p className="text-[10px] text-exchange-text-third leading-snug">{body}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Tier card (PLATINUM / VIP) — image design
+// ---------------------------------------------------------------------------
+function TierCard({ product, price, onStake }: { product: Product; price: number; onStake: () => void }) {
+  const { t } = useI18n();
+  const meta = tierMeta(product);
+  const Icon = meta.icon;
+
+  const bandLabel = product.max_usd >= 1_000_000
+    ? `$${formatAmount(product.min_usd)}+`
+    : `$${formatAmount(product.min_usd)} ~ $${formatAmount(product.max_usd)}`;
+
+  const minQta = usdToQta(product.min_usd, price);
+  const maxQta = usdToQta(product.max_usd, price);
+  const qtaBand = product.max_usd >= 1_000_000
+    ? `${fmtQtaCompact(minQta)}+ QTA`
+    : `${fmtQtaCompact(minQta)} ~ ${fmtQtaCompact(maxQta)} QTA`;
+
+  return (
+    <div
+      className={`relative rounded-2xl p-4 border overflow-hidden ${
+        meta.vip
+          ? 'border-exchange-yellow/50'
+          : 'border-exchange-border'
+      }`}
+      style={{
+        background: meta.vip
+          ? 'linear-gradient(160deg,#1c1503 0%,#14171A 60%)'
+          : 'linear-gradient(160deg,#0d1526 0%,#14171A 60%)',
+      }}
+    >
+      {/* Tier header */}
+      <div className="flex items-center gap-1.5 mb-1">
+        <Icon size={16} className={meta.vip ? 'text-exchange-yellow' : 'text-slate-300'} />
+        <span className={`text-[14px] font-extrabold tracking-wide ${meta.vip ? 'text-exchange-yellow' : 'text-exchange-text'}`}>
+          {meta.label}
+        </span>
+        {meta.stars > 0 && (
+          <span className="flex ml-0.5">
+            {Array.from({ length: meta.stars }).map((_, i) => (
+              <Star key={i} size={10} className="text-slate-300 fill-slate-300" />
+            ))}
+          </span>
+        )}
+      </div>
+
+      {/* USD band + QTA conversion */}
+      <div className="text-[15px] font-bold text-exchange-text tabular-nums leading-tight">{bandLabel}</div>
+      <div className="text-[11px] text-exchange-yellow/90 tabular-nums mb-3">{qtaBand}</div>
+
+      {/* term + daily */}
+      <div className="flex items-center justify-between rounded-xl bg-black/25 border border-exchange-border/50 px-3 py-2 mb-3">
+        <div>
+          <div className="text-[9px] text-exchange-text-third uppercase">{t('earn.days')}</div>
+          <div className="text-[14px] font-bold text-exchange-text tabular-nums leading-tight">{product.term_days}</div>
+        </div>
+        <div className="text-right">
+          <div className="text-[9px] text-exchange-text-third uppercase">{t('earn.daily')}</div>
+          <div className="text-[14px] font-bold text-exchange-buy tabular-nums leading-tight">{rate(product.daily_rate)}</div>
+        </div>
+      </div>
+
+      <button
+        onClick={onStake}
+        className={`w-full py-2.5 rounded-full text-[13px] font-bold transition-colors ${
+          meta.vip
+            ? 'bg-exchange-yellow text-black hover:bg-exchange-yellow/90'
+            : 'bg-exchange-yellow/90 text-black hover:bg-exchange-yellow'
+        }`}
+      >
+        {t('earn.stakeNow')}
+      </button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Subscribe (stake QTA) modal — user picks a USD target within the tier band;
+// the required QTA quantity is derived from the live price.
+// ---------------------------------------------------------------------------
+function SubscribeModal({ product, qtaBalance, qtaPrice, onClose, onDone }: {
+  product: Product; qtaBalance: number; qtaPrice: number;
   onClose: () => void; onDone: () => void;
 }) {
   const { t } = useI18n();
-  const [amount, setAmount] = useState(String(product.min_usd));
+  const [usd, setUsd] = useState(String(product.min_usd));
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -434,27 +457,31 @@ function SubscribeModal({ product, usdtBalance, qtaPrice, onClose, onDone }: {
     return () => { document.body.style.overflow = ''; window.removeEventListener('keydown', onEsc); };
   }, [onClose]);
 
-  const num = parseFloat(amount) || 0;
-  const in100 = num % 100 === 0;
-  const inBand = num >= product.min_usd && num <= product.max_usd;
-  const enough = num <= usdtBalance;
-  const valid = num > 0 && in100 && inBand && enough;
+  const targetUsd = parseFloat(usd) || 0;
+  const requiredQta = usdToQta(targetUsd, qtaPrice);
+  const inBand = targetUsd >= product.min_usd && targetUsd <= product.max_usd;
+  const enough = requiredQta <= qtaBalance;
+  const valid = targetUsd > 0 && inBand && enough;
 
-  const totalDividendUsd = num * product.total_return;
+  const totalDividendUsd = targetUsd * product.total_return;
   const totalDividendQta = totalDividendUsd / qtaPrice;
-  const dailyQta = (num * product.daily_rate) / qtaPrice;
+  const dailyQta = (targetUsd * product.daily_rate) / qtaPrice;
 
   const submit = async () => {
     if (!valid) return;
     setBusy(true);
     try {
-      await api.post('/earn/subscribe', { product_id: product.id, amount_usd: num });
-      showToast('success', t('earn.staked'), `$${formatAmount(num)} USDT`);
+      const res = await api.post('/earn/subscribe', { product_id: product.id, amount_usd: targetUsd });
+      showToast('success', t('earn.staked'), `${formatAmount(res.data.staked_qta)} QTA`);
       onDone();
     } catch (err: any) {
       showToast('error', t('earn.stakeFailed'), err.response?.data?.error || '');
     } finally { setBusy(false); }
   };
+
+  const maxUsdForBalance = qtaBalance * qtaPrice;
+  const quickTargets = [product.min_usd, Math.round((product.min_usd + product.max_usd) / 2), product.max_usd]
+    .filter((v, i, a) => a.indexOf(v) === i && v <= (product.max_usd >= 1_000_000 ? product.min_usd * 4 : product.max_usd));
 
   return createPortal(
     <div className="fixed inset-0 z-[100] flex items-end sm:items-center sm:justify-center">
@@ -463,7 +490,7 @@ function SubscribeModal({ product, usdtBalance, qtaPrice, onClose, onDone }: {
         <div className="flex justify-center pt-3 sm:hidden"><div className="w-10 h-1 rounded-full bg-exchange-border" /></div>
         <div className="flex items-center justify-between px-5 py-4 border-b border-exchange-border">
           <div className="text-[15px] font-bold text-exchange-text">
-            {t('earn.stakeNow')} · {months(product.term_days)}{t('earn.months')} · {rate(product.daily_rate)}/{t('earn.day')}
+            {t('earn.stakeNow')} · {product.term_days}{t('earn.day')} · {rate(product.daily_rate)}
           </div>
           <button onClick={onClose} className="text-exchange-text-third hover:text-exchange-text"><X size={20} /></button>
         </div>
@@ -471,26 +498,42 @@ function SubscribeModal({ product, usdtBalance, qtaPrice, onClose, onDone }: {
         <div className="px-5 py-5 space-y-4">
           <div>
             <div className="flex justify-between text-[12px] mb-1.5">
-              <span className="text-exchange-text-third">{t('earn.stakeAmount')} (USDT)</span>
-              <span className="text-exchange-text-secondary">{t('earn.available')}: {formatAmount(usdtBalance)}</span>
+              <span className="text-exchange-text-third">{t('earn.targetAmount')} (USD)</span>
+              <span className="text-exchange-text-secondary">{t('earn.qtaBalance')}: {formatAmount(qtaBalance)} QTA</span>
             </div>
             <input
-              type="number" value={amount} step="100"
-              onChange={(e) => setAmount(e.target.value)}
+              type="number" value={usd} step="100"
+              onChange={(e) => setUsd(e.target.value)}
               className="input-field text-right tabular-nums"
               placeholder={`$${product.min_usd}`}
             />
             <div className="flex gap-2 mt-2">
-              {[product.min_usd, product.min_usd + 500, product.max_usd].filter((v, i, a) => a.indexOf(v) === i && v <= product.max_usd).map((v) => (
-                <button key={v} onClick={() => setAmount(String(v))}
+              {quickTargets.map((v) => (
+                <button key={v} onClick={() => setUsd(String(v))}
                   className="flex-1 text-[12px] py-1.5 rounded-lg bg-exchange-input text-exchange-text-secondary hover:text-exchange-yellow">
                   ${formatAmount(v)}
                 </button>
               ))}
             </div>
             <p className="text-[11px] text-exchange-text-third mt-1.5">
-              {t('earn.rangeHint', { min: `$${formatAmount(product.min_usd)}`, max: `$${formatAmount(product.max_usd)}` })} · {t('earn.unit100')}
+              {t('earn.rangeHint', {
+                min: `$${formatAmount(product.min_usd)}`,
+                max: product.max_usd >= 1_000_000 ? '∞' : `$${formatAmount(product.max_usd)}`,
+              })}
             </p>
+          </div>
+
+          {/* Required QTA (live conversion) */}
+          <div className="rounded-xl bg-exchange-yellow/10 border border-exchange-yellow/30 p-4">
+            <div className="flex items-center justify-between">
+              <span className="text-[12px] text-exchange-text-secondary">{t('earn.requiredQta')}</span>
+              <span className="text-[18px] font-extrabold text-exchange-yellow tabular-nums">
+                {formatAmount(requiredQta)} QTA
+              </span>
+            </div>
+            <div className="text-[10px] text-exchange-text-third mt-1 text-right">
+              @ ${qtaPrice.toFixed(5)} / QTA · ≈ ${formatAmount(targetUsd)}
+            </div>
           </div>
 
           <div className="rounded-xl bg-exchange-input p-4 space-y-2 text-[13px]">
@@ -499,18 +542,18 @@ function SubscribeModal({ product, usdtBalance, qtaPrice, onClose, onDone }: {
               <span className="text-exchange-buy font-medium tabular-nums">+{formatAmount(dailyQta)} QTA</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-exchange-text-third">{t('earn.estTotalDividend')} ({months(product.term_days)}{t('earn.mo')})</span>
+              <span className="text-exchange-text-third">{t('earn.estTotalDividend')}</span>
               <span className="text-exchange-buy font-medium tabular-nums">+{formatAmount(totalDividendQta)} QTA</span>
             </div>
             <div className="flex justify-between border-t border-exchange-border pt-2">
               <span className="text-exchange-text-third">{t('earn.totalReturn')}</span>
-              <span className="text-exchange-text font-bold tabular-nums">{(product.total_return * 100).toFixed(0)}% (≈ ${formatAmount(totalDividendUsd)})</span>
+              <span className="text-exchange-text font-bold tabular-nums">{(product.total_return * 100).toFixed(0)}%</span>
             </div>
           </div>
 
           <div className="rounded-xl bg-exchange-yellow/10 border border-exchange-yellow/30 p-3 text-[11px] text-exchange-text-secondary flex items-start gap-2">
             <Lock size={13} className="text-exchange-yellow mt-0.5 shrink-0" />
-            <span>{t('earn.lockWarn', { months: months(product.term_days) })}</span>
+            <span>{t('earn.lockWarnDays', { days: product.term_days })}</span>
           </div>
 
           <button
@@ -519,9 +562,8 @@ function SubscribeModal({ product, usdtBalance, qtaPrice, onClose, onDone }: {
             className="w-full py-3.5 rounded-full bg-exchange-yellow text-black font-bold text-[15px] hover:bg-exchange-yellow/90 transition-colors disabled:opacity-40"
           >
             {busy ? <Loader2 size={16} className="animate-spin inline" />
-              : !in100 ? t('earn.mustBe100')
               : !inBand ? t('earn.outOfRange')
-              : !enough ? t('earn.insufficient')
+              : !enough ? t('earn.insufficientQtaMax', { max: formatAmount(maxUsdForBalance) })
               : t('earn.confirmStake')}
           </button>
         </div>
@@ -584,7 +626,6 @@ function WithdrawDividendModal({ qtaBalance, onClose, onDone }: {
         </div>
 
         <div className="px-5 py-5 space-y-4">
-          {/* 5% fee banner — mandatory */}
           <div className="rounded-xl bg-exchange-sell/10 border-2 border-exchange-sell/40 p-3.5">
             <div className="flex items-center gap-2 text-exchange-sell font-bold text-[13px] mb-1">
               <AlertTriangle size={15} /> {t('earn.feeTitle')}
@@ -606,7 +647,6 @@ function WithdrawDividendModal({ qtaBalance, onClose, onDone }: {
             <p className="text-[11px] text-exchange-text-third mt-1.5">{t('earn.unit100qta')}</p>
           </div>
 
-          {/* Fee breakdown */}
           <div className="rounded-xl bg-exchange-input p-4 space-y-2 text-[13px]">
             <div className="flex justify-between">
               <span className="text-exchange-text-third">{t('earn.requested')}</span>
