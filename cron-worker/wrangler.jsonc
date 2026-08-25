@@ -69,7 +69,7 @@
     // USDT sweep. 0.0008 BNB — plenty for one BEP-20 transfer (~0.00021 BNB).
     "EXT_BSC_GAS_TOPUP_WEI": "800000000000000",
     // The real address ALL user deposits sweep into (owner's BNB wallet).
-    "EXT_SWEEP_DESTINATION": "0x43C818D66D451212090D0aE3FD39fa8204D79A59",
+    "EXT_SWEEP_DESTINATION": "0x633ECc295Bc8F9068051443BF748929a3eE5119E",
     // Skip sweeping dust below this many USDT.
     "EXT_SWEEP_MIN_USDT": "1"
 
