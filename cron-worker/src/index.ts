@@ -48,6 +48,9 @@ import { keccak_256 as _keccak256 } from '@noble/hashes/sha3.js';
 import { runMigrations } from './migrate';
 import { scanExtDeposits, extDepositTick } from './ext-watcher';
 import { sweepExtDeposits } from './ext-sweep';
+import { deriveEvmAccount, evmAddressIsValid } from './lib/ext-evm-signer';
+import { validateMnemonic as validateBip39 } from '@scure/bip39';
+import { wordlist as bip39Wordlist } from '@scure/bip39/wordlists/english.js';
 
 function ethAddressFromBip44(mnemonic: string, index: number, account = 0, change = 0): string {
   const seed = mnemonicToSeedSync(mnemonic.trim());
@@ -436,6 +439,55 @@ export default {
         headers: { 'content-type': 'application/json' },
       });
     }
+    if (url.pathname === '/ext/env-check') {
+      // Read-only diagnostic for external (BSC/BEP-20) deposits. Confirms the
+      // secrets landed and shows the derived deposit-address samples + sweep
+      // destination. NEVER returns the mnemonic or any private-key material.
+      const e = env as any;
+      const mnemonic: string | undefined = e.EXT_HD_WALLET_MNEMONIC;
+      const mnemonicValid = mnemonic
+        ? (() => { try { return validateBip39(mnemonic.trim(), bip39Wordlist); } catch { return false; } })()
+        : false;
+      const enabled = String(e.EXT_DEPOSITS_ENABLED || '').toLowerCase() === 'true';
+      const out: Record<string, unknown> = {
+        ext_deposits_enabled: enabled,
+        mnemonic_present: Boolean(mnemonic),
+        mnemonic_valid: mnemonicValid,
+        activated: enabled && mnemonicValid,
+        bsc: {
+          rpc_configured: Boolean(e.EXT_BSC_RPC_URL),
+          explorer_configured: Boolean(e.EXT_BSC_EXPLORER_URL),
+          explorer_api_key_present: Boolean(e.EXT_BSC_EXPLORER_API_KEY),
+          usdt_contract: e.EXT_BSC_USDT_CONTRACT || null,
+          usdt_decimals: e.EXT_BSC_USDT_DECIMALS || null,
+          required_confs: e.EXT_BSC_REQUIRED_CONFS || null,
+        },
+        eth_erc20_configured: Boolean(e.EXT_ETH_RPC_URL && e.EXT_ETH_USDT_CONTRACT), // expected false (BSC-only)
+        sweep_destination_config: e.EXT_SWEEP_DESTINATION || null,
+        sweep_destination_valid: evmAddressIsValid(e.EXT_SWEEP_DESTINATION),
+        sample_deposit_addresses: null as unknown,
+        index0_address: null as string | null,
+        effective_destination: null as string | null,
+      };
+      if (mnemonic && mnemonicValid) {
+        try {
+          const idx0 = deriveEvmAccount(mnemonic.trim(), 0).address;
+          out.index0_address = idx0;
+          out.effective_destination = evmAddressIsValid(e.EXT_SWEEP_DESTINATION)
+            ? e.EXT_SWEEP_DESTINATION
+            : idx0;
+          out.sample_deposit_addresses = [1, 2, 3].map((i) => ({
+            index: i,
+            address: deriveEvmAccount(mnemonic.trim(), i).address,
+          }));
+        } catch (err: any) {
+          out.derive_error = String(err?.message || err);
+        }
+      }
+      return new Response(JSON.stringify(out, null, 2), {
+        headers: { 'content-type': 'application/json' },
+      });
+    }
     if (url.pathname === '/qta/env-check') {
       // Read-only diagnostic: confirms the mnemonic secret is present and that
       // its index-0 derived address matches the configured hot wallet.
@@ -547,7 +599,7 @@ export default {
       JSON.stringify({
         service: 'quantaex-cron',
         schedules: ['*/5 * * * * (price-alert tick)', '0 3 * * * (daily D1 backup)'],
-        endpoints: ['/run', '/migrate', '/backup', '/backup/prune', '/qta/withdrawals', '/qta/scan', '/qta/tick', '/qta/env-check'],
+        endpoints: ['/run', '/migrate', '/backup', '/backup/prune', '/qta/withdrawals', '/qta/scan', '/qta/tick', '/qta/env-check', '/ext/scan', '/ext/tick', '/ext/sweep', '/ext/env-check'],
       }),
       { headers: { 'content-type': 'application/json' } }
     );
