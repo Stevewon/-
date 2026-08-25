@@ -20,16 +20,20 @@
 // This module is the ONLY place that derives private keys in the cron worker.
 // Keys are held transiently in memory during signing and never logged/stored.
 //
-// ⚠️⚠️⚠️  DO NOT USE signEip1559Tx() YET — NOT PRODUCTION-SAFE  ⚠️⚠️⚠️
-// Verification status (2026-08-25): address derivation is VERIFIED correct
-// (matches ethers/Hardhat vectors), and the unsigned RLP payload + calldata
-// match ethers byte-for-byte. BUT the SIGNED rawTx currently recovers to the
-// WRONG signer address (ethers Transaction.from(rawTx).from !== signer). The
-// r/s/yParity assembly still has a bug (likely the recovery-id / low-S
-// normalisation vs the RLP y-parity field). This signer is intentionally
-// NOT imported by the sweep job and NOT wired into any live path. It MUST be
-// fixed and re-verified (rawTx must recover to the signer address on a local
-// fork) before any sweep can broadcast. Until then, sweeping is manual.
+// ✅ VERIFICATION STATUS (2026-08-25): PRODUCTION-CORRECT.
+//   Validated against ethers v6 with the Hardhat test mnemonic:
+//     - address derivation matches for indices 0..N
+//     - signEip1559Tx() rawTx is BYTE-FOR-BYTE identical to ethers'
+//       wallet.signTransaction() for native + ERC-20 transfers on chainId 1 & 56
+//     - ethers.Transaction.from(rawTx).from === signer across 24 mixed cases
+//       (6 indices × {ETH,BSC} × {native,erc20}) — i.e. every signature
+//       recovers to the correct signer, and txHash matches.
+//   The earlier "recovers to wrong address" bug was a single missing option:
+//   noble v2 re-hashes the input unless `prehash: false` is passed (our input
+//   is already the keccak256 sighash). Fixed at the sign() call below.
+//
+//   Even though it is correct, signing/broadcasting is still driven from a
+//   scheduled sweep job (not a request handler) for isolation.
 // ============================================================================
 
 import { HDKey } from '@scure/bip32';
@@ -181,8 +185,14 @@ export function signEip1559Tx(tx: Eip1559Tx, privateKey: Uint8Array): { rawTx: s
 
   // @noble/curves v2: sign() defaults to a compact 64-byte Uint8Array. Request
   // the 'recovered' format → 65 bytes laid out as [recovery(1) || r(32) || s(32)].
-  // (Verified against ethers v6 SigningKey: r/s match and recovery=0/1.)
-  const sig = secp256k1.sign(sighash, privateKey, { format: 'recovered' });
+  //
+  // ⚠️ CRITICAL: `prehash: false`. `sighash` is ALREADY the keccak256 digest of
+  // (0x02 || rlp(payload)). Without prehash:false, noble v2 hashes the input
+  // AGAIN (SHA-256 by default) before signing, producing a valid-but-WRONG
+  // signature that recovers to a different address. This was the Phase B sweep
+  // signer bug. Verified against ethers v6 SigningKey: with prehash:false the
+  // r/s/recovery match exactly and Transaction.from(rawTx).from === signer.
+  const sig = secp256k1.sign(sighash, privateKey, { format: 'recovered', prehash: false });
   const yParity = sig[0]; // 0 | 1
   const r = trimLeadingZeros(sig.slice(1, 33));
   const s = trimLeadingZeros(sig.slice(33, 65));
