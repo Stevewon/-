@@ -48,12 +48,40 @@
     "QTA_TOKEN_QX_ADDRESS": "0xad447d42fB065a5b505772235F0c96d27501e6Fb",
     "QTA_TOKEN_QX_DECIMALS": "18",
     "QTA_TOKEN_QKEY_ADDRESS": "0x216621D3b3dB600F35DBf6c5709486dDC8882a16",
-    "QTA_TOKEN_QKEY_DECIMALS": "18"
+    "QTA_TOKEN_QKEY_DECIMALS": "18",
 
-    // SECRET (do NOT put in this file — set via `wrangler secret put` or the
+    // ── External deposits (Phase B) — BEP-20 (BSC) USDT ────────────────────
+    // scanExtDeposits + extDepositTick watch each per-user address on BSC and
+    // credit the user after required confirmations; sweepExtDeposits gas-funds
+    // then forwards the whole USDT balance to EXT_SWEEP_DESTINATION (owner's BNB
+    // wallet). Only BSC is configured — Ethereum (ERC-20) EXT_ETH_* is left
+    // unset on purpose, so resolveNetworks()/resolveSweepNetworks() skip erc20.
+    //
+    // Explorer is Etherscan V2 (unified multichain, chainid=56). The BSC data
+    // needs a PAID Etherscan plan; the API key is a dashboard SECRET below.
+    "EXT_BSC_RPC_URL": "https://bsc-dataseed.binance.org",
+    "EXT_BSC_EXPLORER_URL": "https://api.etherscan.io/v2/api",
+    "EXT_BSC_EXPLORER_FLAVOUR": "etherscan",
+    "EXT_BSC_USDT_CONTRACT": "0x55d398326f99059fF775485246999027B3197955",
+    "EXT_BSC_USDT_DECIMALS": "18",
+    "EXT_BSC_REQUIRED_CONFS": "15",
+    // Native BNB top-up sent to a fresh deposit addr so it can pay gas for the
+    // USDT sweep. 0.0008 BNB — plenty for one BEP-20 transfer (~0.00021 BNB).
+    "EXT_BSC_GAS_TOPUP_WEI": "800000000000000",
+    // The real address ALL user deposits sweep into (owner's BNB wallet).
+    "EXT_SWEEP_DESTINATION": "0x43C818D66D451212090D0aE3FD39fa8204D79A59",
+    // Skip sweeping dust below this many USDT.
+    "EXT_SWEEP_MIN_USDT": "1"
+
+    // SECRETS (do NOT put in this file — set via `wrangler secret put` or the
     // dashboard on the quantaex-cron Worker):
     //   QTA_HD_WALLET_MNEMONIC  — 12-word BIP-39 mnemonic; index 0 must derive
     //                             to QTA_HOT_WALLET_ADDRESS above.
     //   QTA_CHAIN_DRIVER=real   — flip on when ready to broadcast.
+    //   EXT_HD_WALLET_MNEMONIC  — 24-word BIP-39 mnemonic for external deposits.
+    //                             index 1..N = per-user BSC addresses; index 0
+    //                             holds no funds (sweeps go to EXT_SWEEP_DESTINATION).
+    //   EXT_BSC_EXPLORER_API_KEY — Etherscan V2 PAID API key (BSC chain access).
+    //   EXT_DEPOSITS_ENABLED     — "true" to activate the watcher + sweeper.
   }
 }

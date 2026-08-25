@@ -33,6 +33,26 @@
     "QTA_TOKEN_QX_ADDRESS": "0xad447d42fB065a5b505772235F0c96d27501e6Fb",
     "QTA_TOKEN_QX_DECIMALS": "18",
     "QTA_TOKEN_QKEY_ADDRESS": "0x216621D3b3dB600F35DBf6c5709486dDC8882a16",
-    "QTA_TOKEN_QKEY_DECIMALS": "18"
+    "QTA_TOKEN_QKEY_DECIMALS": "18",
+
+    // ── External deposits (Phase B) — BEP-20 (BSC) USDT ────────────────────
+    // Per-user deposit addresses derived from EXT_HD_WALLET_MNEMONIC; funds
+    // auto-sweep to EXT_SWEEP_DESTINATION (owner's BNB wallet). The Pages app
+    // only ISSUES addresses (getOrCreateExtAddress); the cron worker watches +
+    // sweeps. Non-secret config is pinned here; the mnemonic + explorer API key
+    // are dashboard SECRETS (see below). Ethereum (ERC-20) is intentionally NOT
+    // configured — only BSC is enabled.
+    //
+    // EXT_DEPOSITS_ENABLED is intentionally NOT pinned here — set it to 'true'
+    // in the Cloudflare dashboard once the mnemonic secret is in place, so the
+    // 503 "준비중" gate only lifts when everything is wired (like QTA_CHAIN_DRIVER).
+    "EXT_BSC_USDT_CONTRACT": "0x55d398326f99059fF775485246999027B3197955",
+    "EXT_BSC_USDT_DECIMALS": "18"
+
+    // SECRETS (set in the Cloudflare dashboard on the `quantaex` Pages project
+    // → Settings → Environment variables & secrets — do NOT commit these):
+    //   EXT_HD_WALLET_MNEMONIC  — 24-word BIP-39 mnemonic. index 1..N = per-user
+    //                             deposit addresses. Required to derive/allocate.
+    //   EXT_DEPOSITS_ENABLED    — "true" to lift the 503 pending gate.
   }
 }
