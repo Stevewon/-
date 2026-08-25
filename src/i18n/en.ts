@@ -347,6 +347,9 @@ const en = {
   'wallet.withdrawSubtitle': 'Send crypto to an external address',
   'wallet.currentBalance': 'Balance',
   'wallet.depositAddress': 'Deposit Address',
+  // External (USDT/BTC/ETH…) deposits temporarily unavailable — see DepositModal gate
+  'wallet.extDepositPendingTitle': 'Deposits are being prepared',
+  'wallet.extDepositPendingBody': 'On-chain deposits for this asset are being finalized and will be enabled shortly. Please do not send any funds to a manually-entered address in the meantime.',
   'wallet.minDeposit': 'Min Deposit',
   'wallet.confirmations': 'Confirmations',
   'wallet.blocks': 'blocks',

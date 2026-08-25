@@ -17,6 +17,23 @@ interface Props {
   initialCoin?: string;
 }
 
+// ---------------------------------------------------------------------------
+// ⚠️ EXTERNAL (USDT / BTC / ETH …) DEPOSITS TEMPORARILY DISABLED (2026-08-25).
+//
+// The old flow showed a *client-side simulated* deposit address
+// (generateDepositAddress) for external coins. Those strings only LOOK like
+// real TRC20/ERC20 addresses — no wallet exists behind them and there is no
+// on-chain watcher — so any funds sent to them are unrecoverable. Until the
+// real per-user deposit-address + sweep infrastructure (Phase B) is live, we
+// must NOT surface any external deposit address. Quantarium-native assets
+// (QTA/QX/QKEY) are unaffected — they use the real backend HD endpoint and
+// its own CHAIN_INTEGRATION_PENDING gate.
+//
+// Flip to `true` ONLY when Phase B (real derived addresses + watcher + sweep)
+// is deployed and verified.
+// ---------------------------------------------------------------------------
+const EXTERNAL_DEPOSIT_ENABLED = false;
+
 export default function DepositModal({ open, onClose, initialCoin = 'USDT' }: Props) {
   const { t } = useI18n();
   const { user, wallets, fetchWallets } = useStore();
@@ -81,6 +98,10 @@ export default function DepositModal({ open, onClose, initialCoin = 'USDT' }: Pr
     // Quantarium assets → real HD address fetched from backend (may be empty
     // while loading or when the chain adapter isn't configured yet).
     if (quantarium) return chainAddress;
+    // External coins → the old client-side simulated address is a FAKE string
+    // with no wallet behind it. Never expose it. Show the "pending" banner
+    // instead until Phase B (real derived address + sweep) is live.
+    if (!EXTERNAL_DEPOSIT_ENABLED) return '';
     return generateDepositAddress(user.id, coin, network.id);
   }, [user, coin, network, quantarium, chainAddress]);
 
@@ -421,6 +442,37 @@ export default function DepositModal({ open, onClose, initialCoin = 'USDT' }: Pr
 
           {/* ===== RIGHT PANEL ===== */}
           <div className="flex flex-col">
+            {/* External (USDT/BTC/ETH…) deposits temporarily disabled: show a
+                clear "being prepared" notice instead of a fake address. This
+                prevents users from sending real funds to an unrecoverable
+                client-side simulated address (see EXTERNAL_DEPOSIT_ENABLED). */}
+            {!quantarium && !EXTERNAL_DEPOSIT_ENABLED && (
+              <div
+                className="bg-[#151c25] border border-exchange-yellow/40 flex flex-col items-center text-center"
+                style={{ padding: '28px 20px', borderRadius: '14px', marginBottom: '16px', gap: '10px' }}
+              >
+                <div
+                  className="rounded-full bg-exchange-yellow/10 border border-exchange-yellow/30 flex items-center justify-center"
+                  style={{ width: '56px', height: '56px' }}
+                >
+                  <Clock size={26} className="text-exchange-yellow" />
+                </div>
+                <h3 className="font-bold text-exchange-text" style={{ fontSize: '16px', marginTop: '4px' }}>
+                  {t('wallet.extDepositPendingTitle')}
+                </h3>
+                <p className="text-exchange-text-secondary" style={{ fontSize: '13px', lineHeight: 1.6, maxWidth: '320px' }}>
+                  {t('wallet.extDepositPendingBody')}
+                </p>
+                <div
+                  className="flex items-start bg-exchange-sell/10 border border-exchange-sell/30 text-exchange-sell"
+                  style={{ gap: '8px', padding: '10px 12px', borderRadius: '10px', marginTop: '6px', fontSize: '12px', lineHeight: 1.5, textAlign: 'left' }}
+                >
+                  <AlertTriangle size={14} className="shrink-0" style={{ marginTop: '1px' }} />
+                  <span>{t('wallet.warnSendOnlyCoin', { coin, network: network?.shortName })}</span>
+                </div>
+              </div>
+            )}
+
             {/* Quantarium assets: pending / error banner when the real HD
                 deposit address isn't available yet (chain adapter not wired
                 or still loading). Prevents rendering an empty/blank QR. */}
@@ -594,6 +646,10 @@ export default function DepositModal({ open, onClose, initialCoin = 'USDT' }: Pr
         </div>
 
         {/* ============ FOOTER: Demo test ============ */}
+        {/* Only meaningful for Quantarium assets while external deposits are
+            disabled (the /wallet/deposit sim endpoint is 403 for everyone;
+            keep this hidden for external coins to avoid confusion). */}
+        {(quantarium || EXTERNAL_DEPOSIT_ENABLED) && (
         <div
           className="border-t border-white/[0.08]"
           style={{ marginTop: '24px', paddingTop: '16px' }}
@@ -670,6 +726,7 @@ export default function DepositModal({ open, onClose, initialCoin = 'USDT' }: Pr
             </div>
           )}
         </div>
+        )}
       </div>
     </div>
   );

@@ -347,6 +347,9 @@ const ko = {
   'wallet.withdrawSubtitle': '\uc678\ubd80 \uc8fc\uc18c\ub85c \uc554\ud638\ud654\ud3d0\ub97c \uc804\uc1a1\ud558\uc138\uc694',
   'wallet.currentBalance': '\ubcf4\uc720\ub7c9',
   'wallet.depositAddress': '\uc785\uae08 \uc8fc\uc18c',
+  // \uc678\ubd80(USDT/BTC/ETH\u2026) \uc785\uae08 \uc77c\uc2dc \uc900\ube44\uc911 \uc548\ub0b4
+  'wallet.extDepositPendingTitle': '\uc785\uae08 \uae30\ub2a5\uc744 \uc900\ube44\ud558\uace0 \uc788\uc2b5\ub2c8\ub2e4',
+  'wallet.extDepositPendingBody': '해당 자산의 온체인 입금 기능을 마무리하고 있으며 곧 개설될 예정입니다. 그 전까지는 임의의 주소로 절대 자금을 보내지 마세요.',
   'wallet.minDeposit': '\ucd5c\uc18c \uc785\uae08',
   'wallet.confirmations': '\ud655\uc778 \ube14\ub85d',
   'wallet.blocks': '\ube14\ub85d',
