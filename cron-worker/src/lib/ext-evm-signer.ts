@@ -90,6 +90,11 @@ export function deriveEvmAddress(mnemonic: string, index: number): string {
   return deriveEvmAccount(mnemonic, index).address;
 }
 
+/** True if `s` is a syntactically valid 0x-prefixed 20-byte EVM address. */
+export function evmAddressIsValid(s: string | undefined | null): boolean {
+  return typeof s === 'string' && /^0x[0-9a-fA-F]{40}$/.test(s.trim());
+}
+
 // ----------------------------------------------------------------------------
 // Minimal RLP encoder (byte strings + lists only — enough for EIP-1559 txs).
 // ----------------------------------------------------------------------------

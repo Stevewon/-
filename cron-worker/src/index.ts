@@ -47,6 +47,7 @@ import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { keccak_256 as _keccak256 } from '@noble/hashes/sha3.js';
 import { runMigrations } from './migrate';
 import { scanExtDeposits, extDepositTick } from './ext-watcher';
+import { sweepExtDeposits } from './ext-sweep';
 
 function ethAddressFromBip44(mnemonic: string, index: number, account = 0, change = 0): string {
   const seed = mnemonicToSeedSync(mnemonic.trim());
@@ -109,7 +110,15 @@ export interface Env {
   EXT_BSC_REQUIRED_CONFS?: string;
   // Sweep tuning (optional)
   EXT_SWEEP_MIN_USDT?: string;         // don't sweep dust below this
-  EXT_SWEEP_GAS_TOPUP_WEI?: string;    // native gas to send a per-user addr before token sweep
+  EXT_SWEEP_GAS_TOPUP_WEI?: string;    // (legacy/global) native gas to send a per-user addr before token sweep
+  // Optional override receiving address for sweeps. Default = HD index 0 (the
+  // exchange hot wallet derived from EXT_HD_WALLET_MNEMONIC). Set this to route
+  // swept funds to an existing exchange/Binance deposit address instead.
+  EXT_SWEEP_DESTINATION?: string;
+  // Per-network native gas top-up (wei) sent to a user address before its
+  // ERC-20 sweep transfer (covers the token transfer's gas).
+  EXT_ETH_GAS_TOPUP_WEI?: string;
+  EXT_BSC_GAS_TOPUP_WEI?: string;
 }
 
 interface PriceAlert {
@@ -420,6 +429,13 @@ export default {
         headers: { 'content-type': 'application/json' },
       });
     }
+    if (url.pathname === '/ext/sweep') {
+      // Manual external-deposit sweep (gas-fund → forward to hot wallet).
+      const result = await sweepExtDeposits(env as any);
+      return new Response(JSON.stringify(result), {
+        headers: { 'content-type': 'application/json' },
+      });
+    }
     if (url.pathname === '/qta/env-check') {
       // Read-only diagnostic: confirms the mnemonic secret is present and that
       // its index-0 derived address matches the configured hot wallet.
@@ -613,6 +629,14 @@ export default {
       extDepositTick(env as any)
         .then((r) => console.log('[cron] ext deposit tick:', r))
         .catch((e) => console.error('[cron] ext deposit tick failed:', e))
+    );
+    // Sweep/forwarding: move ONE credited per-user address's funds to the hot
+    // wallet (or EXT_SWEEP_DESTINATION) per tick. Two-step gas-fund → sweep.
+    // No-op unless EXT_DEPOSITS_ENABLED='true' + mnemonic + network config.
+    ctx.waitUntil(
+      sweepExtDeposits(env as any)
+        .then((r) => console.log('[cron] ext sweep:', r))
+        .catch((e) => console.error('[cron] ext sweep failed:', e))
     );
   },
 };
