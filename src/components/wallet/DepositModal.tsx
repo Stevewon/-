@@ -4,7 +4,7 @@ import {
   Clock, ChevronDown, ChevronUp, Shield,
 } from 'lucide-react';
 import { useI18n } from '../../i18n';
-import { getNetworks, generateMemo, isQuantariumAsset } from '../../utils/networks';
+import { getDepositNetworks, generateMemo, isQuantariumAsset } from '../../utils/networks';
 import CoinIcon from '../common/CoinIcon';
 import QRCode from '../common/QRCode';
 import { showToast } from '../common/Toast';
@@ -58,7 +58,10 @@ export default function DepositModal({ open, onClose, initialCoin = 'USDT' }: Pr
     }
   }, [open, initialCoin]);
 
-  const networks = useMemo(() => getNetworks(coin), [coin]);
+  // DEPOSIT ONLY sees networks we actually watch + sweep on-chain (safety
+  // whitelist). For USDT that is BEP-20 only — TRC20/ERC20 are hidden so users
+  // can't send to an unmonitored address. Withdrawals are unaffected.
+  const networks = useMemo(() => getDepositNetworks(coin), [coin]);
   const network = useMemo(
     () => networks.find(n => n.id === networkId) || networks[0],
     [networks, networkId]
@@ -366,7 +369,7 @@ export default function DepositModal({ open, onClose, initialCoin = 'USDT' }: Pr
                     key={n.id}
                     onClick={() => setNetworkId(n.id)}
                     className={`text-left transition-all ${
-                      network.id === n.id
+                      network?.id === n.id
                         ? 'border-exchange-yellow bg-exchange-yellow/10 text-exchange-text'
                         : 'border-white/[0.08] bg-[#151c25] text-exchange-text-secondary hover:border-exchange-yellow/40 hover:bg-[#18202a]'
                     }`}

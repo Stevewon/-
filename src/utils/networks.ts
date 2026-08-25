@@ -338,6 +338,42 @@ export function getNetworks(coin: string): NetworkInfo[] {
 }
 
 /**
+ * DEPOSIT network whitelist for externally-issued (non-Quantarium) coins.
+ *
+ * ⚠️ SAFETY: users must ONLY see deposit networks we actually watch + sweep
+ * on-chain. Showing a network we don't run a watcher for would let a user send
+ * real funds to an address nobody monitors → funds effectively lost. So the
+ * deposit UI is restricted to the networks listed here (per coin).
+ *
+ * Currently ONLY BEP-20 (BNB Chain) USDT is live (Phase B activated 2026-08-25).
+ * To enable another network later, add its network id here AND wire the
+ * corresponding EXT_* config + watcher/sweep support in the cron worker.
+ *
+ * A coin NOT present in this map falls back to "all networks" (used by
+ * Quantarium-native assets, which have their own separate real address flow).
+ */
+export const EXTERNAL_DEPOSIT_NETWORK_WHITELIST: Record<string, string[]> = {
+  USDT: ['BEP20'],
+  // BTC/ETH etc. intentionally omitted — no external watcher for them yet, so
+  // their deposit UI stays gated to the 503 "준비중" notice (backend-driven).
+};
+
+/**
+ * Networks a coin may be DEPOSITED through, after applying the safety
+ * whitelist. Quantarium-native assets are unaffected (own flow). For external
+ * coins with a whitelist entry, only whitelisted networks are returned; if the
+ * whitelist yields nothing, returns [] so the modal shows the pending notice
+ * rather than an unsupported network.
+ */
+export function getDepositNetworks(coin: string): NetworkInfo[] {
+  const all = getNetworks(coin);
+  if (isQuantariumAsset(coin)) return all;
+  const allow = EXTERNAL_DEPOSIT_NETWORK_WHITELIST[coin.toUpperCase()];
+  if (!allow) return all; // no explicit whitelist → leave as-is (backend still gates via 503)
+  return all.filter(n => allow.includes(n.id));
+}
+
+/**
  * Generate a deterministic-looking deposit address for a user+coin+network.
  * This is a simulation — real exchanges generate unique per-user addresses.
  */
