@@ -119,6 +119,46 @@ app.post('/deposit', authMiddleware, async (c) => {
   }, 403);
 });
 
+// --------------------------------------------------------------------------
+// External deposit address (Phase B) — real per-user derived address.
+//
+// POST /api/wallet/ext/deposit-address  { network: 'ERC20' | 'BEP20' }
+//
+// Returns a REAL address derived from the exchange HD mnemonic
+// (EXT_HD_WALLET_MNEMONIC). Idempotent per (user, chain, network). Gated by
+// EXT_DEPOSITS_ENABLED='true' + the mnemonic secret being present — otherwise
+// returns 503 EXTERNAL_DEPOSIT_PENDING so the UI keeps showing the "being
+// prepared" notice. NEVER falls back to a fake/simulated address.
+// --------------------------------------------------------------------------
+app.post('/ext/deposit-address', authMiddleware, async (c) => {
+  const user = c.get('user');
+  let body: any = {};
+  try { body = await c.req.json(); } catch { /* empty body ok */ }
+  const networkId = String(body?.network || 'ERC20').toUpperCase();
+
+  const { getOrCreateExtAddress, ExtDepositPendingError } = await import('../lib/ext-deposit');
+  try {
+    const res = await getOrCreateExtAddress(c.env as any, user.id, networkId);
+    return c.json({
+      ok: true,
+      address: res.address,
+      chain: res.chain,
+      network: res.network,
+      derivation: res.derivation,
+    });
+  } catch (e: any) {
+    if (e instanceof ExtDepositPendingError || e?.name === 'ExtDepositPendingError') {
+      return c.json({
+        ok: false,
+        error: 'EXTERNAL_DEPOSIT_PENDING',
+        message: 'External deposits are being finalized and will be enabled shortly.',
+      }, 503);
+    }
+    console.error('[ext-deposit-address] failed:', e);
+    return c.json({ ok: false, error: 'internal_error' }, 500);
+  }
+});
+
 // Admin-only credit (kept for QA / compensation). Requires admin role.
 app.post('/admin-credit', authMiddleware, adminMiddleware, async (c) => {
   const body = await c.req.json();

@@ -4,7 +4,7 @@ import {
   Clock, ChevronDown, ChevronUp, Shield,
 } from 'lucide-react';
 import { useI18n } from '../../i18n';
-import { getNetworks, generateDepositAddress, generateMemo, isQuantariumAsset } from '../../utils/networks';
+import { getNetworks, generateMemo, isQuantariumAsset } from '../../utils/networks';
 import CoinIcon from '../common/CoinIcon';
 import QRCode from '../common/QRCode';
 import { showToast } from '../common/Toast';
@@ -18,21 +18,27 @@ interface Props {
 }
 
 // ---------------------------------------------------------------------------
-// ⚠️ EXTERNAL (USDT / BTC / ETH …) DEPOSITS TEMPORARILY DISABLED (2026-08-25).
+// EXTERNAL (USDT / BTC / ETH …) DEPOSITS — Phase B (2026-08-25).
 //
-// The old flow showed a *client-side simulated* deposit address
+// History: the ORIGINAL flow showed a *client-side simulated* deposit address
 // (generateDepositAddress) for external coins. Those strings only LOOK like
 // real TRC20/ERC20 addresses — no wallet exists behind them and there is no
-// on-chain watcher — so any funds sent to them are unrecoverable. Until the
-// real per-user deposit-address + sweep infrastructure (Phase B) is live, we
-// must NOT surface any external deposit address. Quantarium-native assets
-// (QTA/QX/QKEY) are unaffected — they use the real backend HD endpoint and
-// its own CHAIN_INTEGRATION_PENDING gate.
+// on-chain watcher — so any funds sent to them were unrecoverable. That fake
+// generator is now permanently dead (never rendered).
 //
-// Flip to `true` ONLY when Phase B (real derived addresses + watcher + sweep)
-// is deployed and verified.
+// Phase B replaces it with a REAL per-user derived deposit address fetched
+// from the backend:  POST /api/wallet/ext/deposit-address { network }.
+//   • 200 → a genuine HD-derived address the user can safely send to. Funds
+//           are watched on-chain, credited after N confs, then auto-swept to
+//           the exchange hot wallet.
+//   • 503 EXTERNAL_DEPOSIT_PENDING → the chain integration isn't switched on
+//           yet (EXT_DEPOSITS_ENABLED / EXT_HD_WALLET_MNEMONIC not set). The
+//           UI keeps showing the "being prepared" notice. NO fake fallback.
+//
+// So availability is now driven ENTIRELY by the backend response — the moment
+// the operator sets the flag + secret, the modal lights up automatically with
+// no frontend re-deploy (same pattern as QTA's driver gate).
 // ---------------------------------------------------------------------------
-const EXTERNAL_DEPOSIT_ENABLED = false;
 
 export default function DepositModal({ open, onClose, initialCoin = 'USDT' }: Props) {
   const { t } = useI18n();
@@ -69,6 +75,16 @@ export default function DepositModal({ open, onClose, initialCoin = 'USDT' }: Pr
   const [chainAddress, setChainAddress] = useState('');
   const [chainAddressError, setChainAddressError] = useState('');
 
+  // External (non-Quantarium) coins → real per-user derived deposit address
+  // fetched from the backend. `extPending` = true while the endpoint returns
+  // 503 EXTERNAL_DEPOSIT_PENDING (integration not switched on yet) → keep the
+  // "being prepared" notice. `extAddress` is only ever a genuine on-chain
+  // address; there is NO fake fallback.
+  const [extAddress, setExtAddress] = useState('');
+  const [extPending, setExtPending] = useState(true);
+  const [extLoading, setExtLoading] = useState(false);
+  const [extError, setExtError] = useState('');
+
   useEffect(() => {
     let cancelled = false;
     setChainAddress('');
@@ -93,17 +109,60 @@ export default function DepositModal({ open, onClose, initialCoin = 'USDT' }: Pr
     return () => { cancelled = true; };
   }, [open, user, quantarium, coin]);
 
+  // Fetch the REAL external deposit address (Phase B) for non-Quantarium coins
+  // on the selected network. Idempotent server-side — re-calling returns the
+  // same address. On 503 EXTERNAL_DEPOSIT_PENDING we surface the "being
+  // prepared" banner (extPending); we NEVER show a simulated address.
+  useEffect(() => {
+    let cancelled = false;
+    setExtAddress('');
+    setExtError('');
+    setExtPending(true);
+    if (!open || !user || quantarium || !network) return;
+    setExtLoading(true);
+    (async () => {
+      try {
+        const res = await api.post('/wallet/ext/deposit-address', { network: network.id });
+        const addr = res?.data?.address || '';
+        if (!cancelled) {
+          if (addr) {
+            setExtAddress(addr);
+            setExtPending(false);
+          } else {
+            // 200 but no address (shouldn't happen) → treat as pending.
+            setExtPending(true);
+          }
+        }
+      } catch (err: any) {
+        if (cancelled) return;
+        const code = err?.response?.status;
+        const errCode = err?.response?.data?.error;
+        if (code === 503 || errCode === 'EXTERNAL_DEPOSIT_PENDING') {
+          // Integration not switched on yet → keep the "being prepared" notice.
+          setExtPending(true);
+        } else {
+          setExtPending(true);
+          setExtError(
+            err?.response?.data?.message || err?.response?.data?.error || 'Deposit address unavailable',
+          );
+        }
+      } finally {
+        if (!cancelled) setExtLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [open, user, quantarium, coin, network?.id]);
+
   const address = useMemo(() => {
     if (!user || !network) return '';
     // Quantarium assets → real HD address fetched from backend (may be empty
     // while loading or when the chain adapter isn't configured yet).
     if (quantarium) return chainAddress;
-    // External coins → the old client-side simulated address is a FAKE string
-    // with no wallet behind it. Never expose it. Show the "pending" banner
-    // instead until Phase B (real derived address + sweep) is live.
-    if (!EXTERNAL_DEPOSIT_ENABLED) return '';
-    return generateDepositAddress(user.id, coin, network.id);
-  }, [user, coin, network, quantarium, chainAddress]);
+    // External coins → the REAL per-user derived address from the Phase B
+    // backend endpoint. Empty while pending (503) or loading — the fake
+    // client-side generator is permanently gone.
+    return extAddress;
+  }, [user, network, quantarium, chainAddress, extAddress]);
 
   const memo = useMemo(() => {
     if (!user || !network?.memoRequired) return '';
@@ -442,11 +501,11 @@ export default function DepositModal({ open, onClose, initialCoin = 'USDT' }: Pr
 
           {/* ===== RIGHT PANEL ===== */}
           <div className="flex flex-col">
-            {/* External (USDT/BTC/ETH…) deposits temporarily disabled: show a
-                clear "being prepared" notice instead of a fake address. This
-                prevents users from sending real funds to an unrecoverable
-                client-side simulated address (see EXTERNAL_DEPOSIT_ENABLED). */}
-            {!quantarium && !EXTERNAL_DEPOSIT_ENABLED && (
+            {/* External (USDT/BTC/ETH…) deposits: when the Phase B chain
+                integration isn't switched on yet the backend returns 503
+                EXTERNAL_DEPOSIT_PENDING → show a clear "being prepared" notice
+                instead of a real address. Never a fake/simulated address. */}
+            {!quantarium && !extAddress && (extPending || extLoading) && (
               <div
                 className="bg-[#151c25] border border-exchange-yellow/40 flex flex-col items-center text-center"
                 style={{ padding: '28px 20px', borderRadius: '14px', marginBottom: '16px', gap: '10px' }}
@@ -646,10 +705,11 @@ export default function DepositModal({ open, onClose, initialCoin = 'USDT' }: Pr
         </div>
 
         {/* ============ FOOTER: Demo test ============ */}
-        {/* Only meaningful for Quantarium assets while external deposits are
-            disabled (the /wallet/deposit sim endpoint is 403 for everyone;
-            keep this hidden for external coins to avoid confusion). */}
-        {(quantarium || EXTERNAL_DEPOSIT_ENABLED) && (
+        {/* Quantarium-only. The /wallet/deposit sim endpoint is 403 for
+            everyone, and external coins now use the real Phase B on-chain
+            deposit + watcher flow — so keep this hidden for external coins to
+            avoid confusion. */}
+        {quantarium && (
         <div
           className="border-t border-white/[0.08]"
           style={{ marginTop: '24px', paddingTop: '16px' }}
