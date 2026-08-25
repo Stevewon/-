@@ -46,6 +46,7 @@ import { mnemonicToSeedSync } from '@scure/bip39';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { keccak_256 as _keccak256 } from '@noble/hashes/sha3.js';
 import { runMigrations } from './migrate';
+import { scanExtDeposits, extDepositTick } from './ext-watcher';
 
 function ethAddressFromBip44(mnemonic: string, index: number, account = 0, change = 0): string {
   const seed = mnemonicToSeedSync(mnemonic.trim());
@@ -83,6 +84,32 @@ export interface Env {
   QTA_TOKEN_QX_DECIMALS?: string;
   QTA_TOKEN_QKEY_ADDRESS?: string;
   QTA_TOKEN_QKEY_DECIMALS?: string;
+
+  // ── External (non-Quantarium) deposits — Phase B ─────────────────────────
+  // Master switch. Watcher + sweep no-op unless 'true'.
+  EXT_DEPOSITS_ENABLED?: string;
+  // The exchange HD mnemonic used to derive per-user deposit addresses AND to
+  // sign sweep transactions. Index 0 = hot wallet (sweep destination).
+  EXT_HD_WALLET_MNEMONIC?: string;
+  // Ethereum (ERC-20 USDT)
+  EXT_ETH_RPC_URL?: string;
+  EXT_ETH_EXPLORER_URL?: string;
+  EXT_ETH_EXPLORER_FLAVOUR?: string;
+  EXT_ETH_EXPLORER_API_KEY?: string;
+  EXT_ETH_USDT_CONTRACT?: string;
+  EXT_ETH_USDT_DECIMALS?: string;
+  EXT_ETH_REQUIRED_CONFS?: string;
+  // BSC (BEP-20 USDT)
+  EXT_BSC_RPC_URL?: string;
+  EXT_BSC_EXPLORER_URL?: string;
+  EXT_BSC_EXPLORER_FLAVOUR?: string;
+  EXT_BSC_EXPLORER_API_KEY?: string;
+  EXT_BSC_USDT_CONTRACT?: string;
+  EXT_BSC_USDT_DECIMALS?: string;
+  EXT_BSC_REQUIRED_CONFS?: string;
+  // Sweep tuning (optional)
+  EXT_SWEEP_MIN_USDT?: string;         // don't sweep dust below this
+  EXT_SWEEP_GAS_TOPUP_WEI?: string;    // native gas to send a per-user addr before token sweep
 }
 
 interface PriceAlert {
@@ -379,6 +406,20 @@ export default {
         headers: { 'content-type': 'application/json' },
       });
     }
+    if (url.pathname === '/ext/scan') {
+      // Manual external-deposit scan (also runs on every /5 tick).
+      const result = await scanExtDeposits(env as any);
+      return new Response(JSON.stringify(result), {
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    if (url.pathname === '/ext/tick') {
+      // Manual external-deposit confirmation/credit tick.
+      const result = await extDepositTick(env as any);
+      return new Response(JSON.stringify(result), {
+        headers: { 'content-type': 'application/json' },
+      });
+    }
     if (url.pathname === '/qta/env-check') {
       // Read-only diagnostic: confirms the mnemonic secret is present and that
       // its index-0 derived address matches the configured hot wallet.
@@ -556,6 +597,22 @@ export default {
       processQtaWithdrawals(env)
         .then((r) => console.log('[cron] qta withdrawal broadcast:', r))
         .catch((e) => console.error('[cron] qta withdrawal broadcast failed:', e))
+    );
+
+    // External (non-Quantarium) deposit watcher — Phase B. Both no-op unless
+    // EXT_DEPOSITS_ENABLED='true' AND a network is fully configured. Scan first
+    // (detect inbound → ext_deposits), then the tick advances/credits them.
+    // Idempotent via UNIQUE(chain,tx_hash,log_index,address) + status-guarded
+    // credit — same safety model as the QTA watcher.
+    ctx.waitUntil(
+      scanExtDeposits(env as any)
+        .then((r) => console.log('[cron] ext deposit scan:', r))
+        .catch((e) => console.error('[cron] ext deposit scan failed:', e))
+    );
+    ctx.waitUntil(
+      extDepositTick(env as any)
+        .then((r) => console.log('[cron] ext deposit tick:', r))
+        .catch((e) => console.error('[cron] ext deposit tick failed:', e))
     );
   },
 };

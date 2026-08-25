@@ -95,6 +95,78 @@ const MIGRATIONS: Migration[] = [
         ('tier_5k_360','USDT','fixed',1.80,360,5000,10000,5000,10000,360,0.005,'QTA',5,1)`,
     ],
   },
+  {
+    // 0046 — External (non-Quantarium) deposit infrastructure (Phase B).
+    // Chain-agnostic tables for the per-user deposit-address + watcher + sweep
+    // model. Mirrors /migrations/0046_external_deposits.sql. All statements are
+    // CREATE ... IF NOT EXISTS / idempotent, so re-running is a safe no-op.
+    id: '0046_external_deposits',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS ext_hd_indexes (
+        user_id        TEXT NOT NULL,
+        chain          TEXT NOT NULL,
+        address_index  INTEGER NOT NULL,
+        address        TEXT,
+        created_at     TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+        PRIMARY KEY (user_id, chain),
+        UNIQUE (chain, address_index),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE NO ACTION
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_ext_hd_indexes_addr ON ext_hd_indexes(address)`,
+      `CREATE TABLE IF NOT EXISTS ext_addresses (
+        id            TEXT PRIMARY KEY,
+        user_id       TEXT NOT NULL,
+        chain         TEXT NOT NULL,
+        network       TEXT NOT NULL,
+        address       TEXT NOT NULL,
+        derivation    TEXT,
+        address_index INTEGER NOT NULL,
+        is_active     INTEGER NOT NULL DEFAULT 1,
+        created_at    TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+        UNIQUE (chain, network, address),
+        FOREIGN KEY (user_id) REFERENCES users(id)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_ext_addresses_user ON ext_addresses(user_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_ext_addresses_scan ON ext_addresses(chain, network, is_active)`,
+      `CREATE TABLE IF NOT EXISTS ext_deposits (
+        id              TEXT PRIMARY KEY,
+        user_id         TEXT NOT NULL,
+        chain           TEXT NOT NULL,
+        network         TEXT NOT NULL,
+        coin_symbol     TEXT NOT NULL,
+        address         TEXT NOT NULL,
+        tx_hash         TEXT NOT NULL,
+        log_index       INTEGER NOT NULL DEFAULT 0,
+        block_height    INTEGER,
+        amount          TEXT NOT NULL,
+        confirmations   INTEGER NOT NULL DEFAULT 0,
+        required_confs  INTEGER NOT NULL DEFAULT 12,
+        status          TEXT NOT NULL DEFAULT 'detected',
+        credited_at     TEXT,
+        swept_tx_hash   TEXT,
+        swept_at        TEXT,
+        raw_meta        TEXT,
+        created_at      TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+        updated_at      TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+        UNIQUE (chain, tx_hash, log_index, address),
+        FOREIGN KEY (user_id) REFERENCES users(id)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_ext_deposits_user ON ext_deposits(user_id, status)`,
+      `CREATE INDEX IF NOT EXISTS idx_ext_deposits_status ON ext_deposits(status, chain, network)`,
+      `CREATE INDEX IF NOT EXISTS idx_ext_deposits_address ON ext_deposits(address)`,
+      `CREATE TABLE IF NOT EXISTS ext_scan_state (
+        chain              TEXT NOT NULL,
+        network            TEXT NOT NULL,
+        last_scanned_block INTEGER NOT NULL DEFAULT 0,
+        head_block         INTEGER NOT NULL DEFAULT 0,
+        hot_wallet_addr    TEXT,
+        updated_at         TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+        PRIMARY KEY (chain, network)
+      )`,
+      `INSERT OR REPLACE INTO system_state (key, value, updated_at)
+       VALUES ('external_deposits_2026_08_25', 'migrated_v1', strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
+    ],
+  },
 ];
 
 export interface MigrateResult {
