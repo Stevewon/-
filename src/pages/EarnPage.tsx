@@ -8,7 +8,7 @@ import DesktopPageLayout from '../components/common/DesktopPageLayout';
 import CoinIcon from '../components/common/CoinIcon';
 import { showToast } from '../components/common/Toast';
 import { formatAmount } from '../utils/format';
-import { X, Lock, Loader2, Star, Crown, ShieldCheck, Gift, TrendingUp, Wallet, AlertTriangle, Scale } from 'lucide-react';
+import { X, Lock, Loader2, Star, Crown, ShieldCheck, Gift, TrendingUp, Wallet, AlertTriangle, Scale, HelpCircle, Users } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
 // QTA ADVANCED EARN — STAKE. EARN. GROW.
@@ -89,6 +89,7 @@ export default function EarnPage() {
   const [loading, setLoading] = useState(true);
   const [subscribeTarget, setSubscribeTarget] = useState<Product | null>(null);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
+  const [rateModalOpen, setRateModalOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const qtaBalance = wallets.find((w) => w.coin_symbol === 'QTA')?.available || 0;
@@ -317,64 +318,97 @@ export default function EarnPage() {
       )}
 
       {/* ══════════════════════════════════════════════════════════════
-          BINARY LEFT/RIGHT MATCHING BONUS — rate table
-          (replaces the retired 1대/2대 Referral Match panel)
+          COMMUNITY BONUS banner (replaces the retired 1대/2대 panel).
+          The "?" button top-right opens the matching-bonus rate table.
          ══════════════════════════════════════════════════════════════ */}
-      <div className="bg-exchange-card/60 border border-exchange-border rounded-2xl overflow-hidden mb-4">
-        <div className="flex items-center gap-2 px-4 pt-4 pb-2">
-          <div className="w-8 h-8 rounded-lg bg-exchange-yellow/15 flex items-center justify-center">
-            <Scale size={16} className="text-exchange-yellow" />
-          </div>
-          <div>
-            <div className="text-[14px] font-bold text-exchange-text">{t('earn.matchTitle')}</div>
-            <div className="text-[11px] text-exchange-text-third">{t('earn.matchSubtitle')}</div>
-          </div>
-        </div>
+      <div className="relative mb-6 rounded-2xl overflow-hidden border border-exchange-yellow/40
+                      bg-[radial-gradient(120%_140%_at_15%_0%,#12305a_0%,#0a1526_55%,#060b16_100%)]
+                      shadow-[0_0_40px_-12px_rgba(234,179,8,0.35)]">
+        {/* subtle glowing network dots */}
+        <div className="pointer-events-none absolute inset-0 opacity-40
+                        bg-[radial-gradient(circle_at_80%_20%,rgba(56,189,248,0.18),transparent_40%),radial-gradient(circle_at_25%_80%,rgba(234,179,8,0.14),transparent_45%)]" />
 
-        {/* Intro / how-it-works */}
-        <p className="px-4 pb-3 text-[11px] text-exchange-text-secondary leading-relaxed">
-          {t('earn.matchIntro')}
-        </p>
+        {/* ? help button */}
+        <button
+          onClick={() => setRateModalOpen(true)}
+          aria-label={t('earn.matchTitle')}
+          className="absolute top-3 right-3 z-10 w-8 h-8 rounded-full flex items-center justify-center
+                     bg-black/30 border border-exchange-yellow/60 text-exchange-yellow
+                     hover:bg-exchange-yellow hover:text-black transition-colors"
+        >
+          <HelpCircle size={18} />
+        </button>
 
-        {/* Rate table */}
-        <div className="px-4 pb-4">
-          <div className="rounded-xl border border-exchange-border/70 overflow-hidden">
-            {/* header row */}
-            <div className="grid grid-cols-2 bg-exchange-bg/60 text-[11px] font-bold text-exchange-text-third uppercase tracking-wider">
-              <div className="px-3 py-2 border-r border-exchange-border/70">{t('earn.matchColAmount')}</div>
-              <div className="px-3 py-2 text-right">{t('earn.matchColRate')}</div>
+        <div className="relative flex flex-col md:flex-row">
+          {/* LEFT — Community Bonus headline */}
+          <div className="flex-1 px-5 py-5 md:py-6 md:border-r md:border-white/10">
+            <h3 className="text-[20px] md:text-[22px] font-extrabold tracking-wide
+                           bg-gradient-to-r from-amber-200 via-yellow-400 to-amber-300 bg-clip-text text-transparent">
+              COMMUNITY BONUS
+            </h3>
+            <div className="mt-0.5 text-[11px] font-bold uppercase tracking-wider text-white/90">
+              GROW TOGETHER, EARN TOGETHER!
             </div>
-            {[
-              { band: '$100 ~ $999', rate: '2%' },
-              { band: '$1,000 ~ $4,999', rate: '3%' },
-              { band: '$5,000 ~ $9,999', rate: '4%' },
-              { band: '$10,000 ~ $49,999', rate: '5%' },
-              { band: '$50,000 ~ $99,999', rate: '6%' },
-              { band: '$100,000 ~', rate: '7%' },
-            ].map((row, i) => (
-              <div
-                key={row.band}
-                className={`grid grid-cols-2 text-[13px] ${
-                  i % 2 === 0 ? 'bg-transparent' : 'bg-exchange-bg/30'
-                } border-t border-exchange-border/50`}
-              >
-                <div className="px-3 py-2.5 tabular-nums text-exchange-text border-r border-exchange-border/50">
-                  {row.band}
-                </div>
-                <div className="px-3 py-2.5 text-right tabular-nums font-bold text-exchange-buy">
-                  {row.rate}
-                </div>
+            <p className="mt-3 text-[12px] leading-relaxed text-slate-300 whitespace-pre-line">
+              {t('earn.communityDesc')}
+            </p>
+            {/* Q coin emblem */}
+            <div className="mt-4 flex items-center gap-3">
+              <div className="w-12 h-12 rounded-full flex items-center justify-center text-[22px] font-black
+                              bg-gradient-to-br from-amber-300 to-yellow-600 text-black
+                              shadow-[0_0_22px_-2px_rgba(234,179,8,0.7)] ring-2 ring-amber-200/40">
+                Q
               </div>
-            ))}
+              <div className="flex-1 h-px bg-gradient-to-r from-amber-400/60 via-sky-400/40 to-transparent" />
+            </div>
           </div>
 
-          {/* format / rules note */}
-          <ul className="mt-3 space-y-1 text-[11px] text-exchange-text-third leading-relaxed">
-            <li>• {t('earn.matchNote1')}</li>
-            <li>• {t('earn.matchNote2')}</li>
-            <li>• {t('earn.matchNote3')}</li>
-            <li>• {t('earn.matchNote4')}</li>
-          </ul>
+          {/* RIGHT — 1:1 matching diagram */}
+          <div className="flex-1 px-5 py-5 md:py-6">
+            <div className="text-[13px] font-bold text-amber-200">
+              {t('earn.communityMatchTitle')}
+            </div>
+            <div className="text-[10.5px] text-slate-400 mt-0.5 mb-4">
+              {t('earn.communityMatchSub')}
+            </div>
+
+            <div className="flex items-center justify-center gap-2">
+              {/* LEFT SALES card */}
+              <div className="flex-1 rounded-xl border border-sky-400/50 bg-sky-500/5
+                              shadow-[inset_0_0_18px_-6px_rgba(56,189,248,0.6)] px-2 py-3 text-center">
+                <div className="text-[10px] font-bold text-sky-300 tracking-wide">LEFT SALES</div>
+                <Users size={22} className="mx-auto my-1.5 text-sky-300" />
+                <div className="text-[11px] font-semibold text-slate-200">{t('earn.communityLeftKo')}</div>
+                <div className="text-[9.5px] text-slate-400">(Large Volume)</div>
+              </div>
+
+              {/* 1:1 MATCHING circle */}
+              <div className="shrink-0 w-16 h-16 rounded-full flex flex-col items-center justify-center
+                              border-2 border-amber-400 bg-black/40
+                              shadow-[0_0_20px_-4px_rgba(234,179,8,0.8)]">
+                <span className="text-[15px] font-black text-amber-300 leading-none">1:1</span>
+                <span className="text-[7px] font-bold text-amber-200 tracking-widest mt-0.5">MATCHING</span>
+              </div>
+
+              {/* RIGHT SALES card */}
+              <div className="flex-1 rounded-xl border border-lime-400/50 bg-lime-500/5
+                              shadow-[inset_0_0_18px_-6px_rgba(163,230,53,0.6)] px-2 py-3 text-center">
+                <div className="text-[10px] font-bold text-lime-300 tracking-wide">RIGHT SALES</div>
+                <Users size={22} className="mx-auto my-1.5 text-lime-300" />
+                <div className="text-[11px] font-semibold text-slate-200">{t('earn.communityRightKo')}</div>
+                <div className="text-[9.5px] text-slate-400">(Small Volume)</div>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setRateModalOpen(true)}
+              className="mt-4 w-full text-[11px] font-semibold py-2 rounded-lg
+                         border border-exchange-yellow/50 text-exchange-yellow
+                         hover:bg-exchange-yellow hover:text-black transition-colors"
+            >
+              {t('earn.communityRateBtn')}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -405,7 +439,91 @@ export default function EarnPage() {
           onDone={async () => { setWithdrawOpen(false); await refreshAll(); }}
         />
       )}
+
+      {rateModalOpen && <MatchRateModal onClose={() => setRateModalOpen(false)} />}
     </DesktopPageLayout>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Matching-bonus rate table modal (opened by the "?" on the Community Bonus
+// banner). Shows the 6-tier bonus rate table + how-it-works guidance.
+// ---------------------------------------------------------------------------
+function MatchRateModal({ onClose }: { onClose: () => void }) {
+  const { t } = useI18n();
+  const rows = [
+    { band: '$100 ~ $999', rate: '2%' },
+    { band: '$1,000 ~ $4,999', rate: '3%' },
+    { band: '$5,000 ~ $9,999', rate: '4%' },
+    { band: '$10,000 ~ $49,999', rate: '5%' },
+    { band: '$50,000 ~ $99,999', rate: '6%' },
+    { band: '$100,000 ~', rate: '7%' },
+  ];
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-end sm:items-center sm:justify-center">
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-[2px] animate-fade-in" onClick={onClose} />
+      <div className="relative w-full sm:max-w-md bg-exchange-card border-t sm:border border-exchange-border rounded-t-2xl sm:rounded-2xl animate-sheet-up max-h-[88vh] overflow-y-auto">
+        <div className="flex justify-center pt-3 sm:hidden"><div className="w-10 h-1 rounded-full bg-exchange-border" /></div>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-exchange-border sticky top-0 bg-exchange-card z-10">
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-lg bg-exchange-yellow/15 flex items-center justify-center">
+              <Scale size={15} className="text-exchange-yellow" />
+            </div>
+            <div>
+              <div className="text-[15px] font-bold text-exchange-text">{t('earn.matchTitle')}</div>
+              <div className="text-[11px] text-exchange-text-third">{t('earn.matchSubtitle')}</div>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-exchange-text-third hover:text-exchange-text"><X size={20} /></button>
+        </div>
+
+        <div className="px-5 py-5">
+          {/* how-it-works intro */}
+          <p className="text-[12px] text-exchange-text-secondary leading-relaxed mb-4">
+            {t('earn.matchIntro')}
+          </p>
+
+          {/* rate table */}
+          <div className="rounded-xl border border-exchange-border/70 overflow-hidden">
+            <div className="grid grid-cols-2 bg-exchange-bg/60 text-[11px] font-bold text-exchange-text-third uppercase tracking-wider">
+              <div className="px-3 py-2 border-r border-exchange-border/70">{t('earn.matchColAmount')}</div>
+              <div className="px-3 py-2 text-right">{t('earn.matchColRate')}</div>
+            </div>
+            {rows.map((row, i) => (
+              <div
+                key={row.band}
+                className={`grid grid-cols-2 text-[13px] ${
+                  i % 2 === 0 ? 'bg-transparent' : 'bg-exchange-bg/30'
+                } border-t border-exchange-border/50`}
+              >
+                <div className="px-3 py-2.5 tabular-nums text-exchange-text border-r border-exchange-border/50">
+                  {row.band}
+                </div>
+                <div className="px-3 py-2.5 text-right tabular-nums font-bold text-exchange-buy">
+                  {row.rate}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* guidance notes */}
+          <ul className="mt-4 space-y-1.5 text-[11px] text-exchange-text-third leading-relaxed">
+            <li>• {t('earn.matchNote1')}</li>
+            <li>• {t('earn.matchNote2')}</li>
+            <li>• {t('earn.matchNote3')}</li>
+            <li>• {t('earn.matchNote4')}</li>
+          </ul>
+
+          <button
+            onClick={onClose}
+            className="mt-5 w-full py-2.5 rounded-xl bg-exchange-yellow text-black font-bold text-[13px] hover:opacity-90 transition-opacity"
+          >
+            {t('common.confirm')}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
   );
 }
 
