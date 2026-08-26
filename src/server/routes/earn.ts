@@ -463,12 +463,25 @@ app.post('/withdraw-dividend', authMiddleware, async (c) => {
     return c.json({ error: 'Valid destination (0x...) address required' }, 400);
   }
 
-  const feeQta = amountQta * WITHDRAW_FEE;   // 5% fee on the QTA amount
-  const netQta = amountQta - feeQta;         // e.g. 95 on 100
-
   // Live prices at THIS moment.
   const qPrice = await qtaPrice(c);          // QTA price in USD
   const uPrice = await usdtPrice(c);         // USDT price in USD (≈1)
+
+  // ★★★★★★★ Boss's minimum-withdrawal rule (2026-08-26): $50 USD equivalent,
+  //   valued at the QTA live price. Below $50 is hard-blocked server-side.
+  const MIN_WITHDRAW_USD = 50;
+  const requestUsd = amountQta * qPrice;
+  if (qPrice > 0 && requestUsd < MIN_WITHDRAW_USD) {
+    return c.json({
+      error: `Minimum withdrawal is $${MIN_WITHDRAW_USD} (valued at the current live price).`,
+      code: 'BELOW_MIN_WITHDRAWAL',
+      min_usd: MIN_WITHDRAW_USD,
+      requested_usd: Math.round(requestUsd * 100) / 100,
+    }, 400);
+  }
+
+  const feeQta = amountQta * WITHDRAW_FEE;   // 5% fee on the QTA amount
+  const netQta = amountQta - feeQta;         // e.g. 95 on 100
 
   // Atomically lock the requested QTA from the user's QTA available balance.
   const lock = await c.env.DB.prepare(

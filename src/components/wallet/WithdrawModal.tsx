@@ -76,12 +76,26 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
   const availableInitial = Number((wallet as any)?.available_initial || 0);
   const withdrawable = Math.max(0, available - availableInitial);
 
+  // ★★★★★★★ Boss's withdrawal-fee rule (2026-08-26):
+  //   • Flat 5% withdrawal fee — the user always receives 95% of what they
+  //     request. This REPLACES the old per-network flat withdrawFee.
+  //   • Minimum withdrawal = $50 USD equivalent, valued at the coin's live
+  //     USD price that day. Below $50 -> hard-blocked with a warning.
+  const WITHDRAW_FEE_RATE = 0.05;         // 5%
+  const MIN_WITHDRAW_USD = 50;            // $50 minimum
+
   const numAmount = parseFloat(amount) || 0;
-  const fee = network?.withdrawFee || 0;
-  const receiveAmount = Math.max(0, numAmount - fee);
-  const totalDebit = numAmount;
   const priceUsd = wallet?.price_usd || 0;
   const valueUsd = numAmount * priceUsd;
+  // 5% fee, expressed in the withdrawn coin.
+  const fee = numAmount * WITHDRAW_FEE_RATE;
+  const receiveAmount = Math.max(0, numAmount - fee);
+  const totalDebit = numAmount;
+  // Minimum amount in the withdrawn coin = $50 / live price. Guard against a
+  // zero/missing price (fall back so the field still works, never letting the
+  // $50 floor evaporate to 0).
+  const minAmountCoin = priceUsd > 0 ? MIN_WITHDRAW_USD / priceUsd : Infinity;
+  const belowMinUsd = numAmount > 0 && valueUsd < MIN_WITHDRAW_USD;
 
   // ── Payout-coin choice (boss's 2026-08-26 rule): the user CHOOSES to
   //    receive their withdrawal value as QTA or USDT, converted at THIS
@@ -118,11 +132,12 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
 
   const amountValid = useMemo(() => {
     if (!numAmount) return null;
-    if (numAmount < network.minWithdraw) return false;
+    // $50 USD minimum (valued at the coin's live price that day).
+    if (belowMinUsd) return false;
     if (numAmount > withdrawable) return false;
     if (numAmount <= fee) return false;
     return true;
-  }, [numAmount, network, withdrawable, fee]);
+  }, [numAmount, withdrawable, fee, belowMinUsd]);
 
   const canProceed =
     addressValid === true &&
@@ -198,6 +213,15 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
         {/* Step: FORM */}
         {step === 'form' && (
           <div className="p-5 space-y-4">
+            {/* ★ Withdrawal notice — 5% fee + $50 minimum (boss rule 2026-08-26) */}
+            <div className="bg-exchange-yellow/10 border border-exchange-yellow/30 rounded-lg p-3 flex items-start gap-2">
+              <Info size={14} className="text-exchange-yellow shrink-0 mt-0.5" />
+              <div className="text-[11px] leading-relaxed text-exchange-text-secondary">
+                <p className="font-semibold text-exchange-yellow mb-0.5">{t('wallet.noticeTitle')}</p>
+                <p>{t('wallet.noticeFee')}</p>
+                <p>{t('wallet.noticeMin')}</p>
+              </div>
+            </div>
             {/* Coin Select */}
             <div>
               <label className="text-xs text-exchange-text-third mb-1.5 block font-medium">
@@ -263,7 +287,7 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
                     <div className="flex items-center justify-between">
                       <span className="font-semibold">{n.shortName}</span>
                       <span className="text-[10px] text-exchange-text-third tabular-nums">
-                        {t('wallet.fee')}: {n.withdrawFee}
+                        {t('wallet.fee')}: 5%
                       </span>
                     </div>
                     <div className="text-[10px] text-exchange-text-third mt-0.5">{n.name}</div>
@@ -390,7 +414,7 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
               <label className="text-xs text-exchange-text-third mb-1.5 block font-medium flex justify-between">
                 <span>{t('wallet.withdrawAmount')}</span>
                 <span className="text-exchange-text-third">
-                  {t('wallet.min')}: <span className="tabular-nums">{network?.minWithdraw} {coin}</span>
+                  {t('wallet.min')}: <span className="tabular-nums">$50{minAmountCoin !== Infinity ? ` ≈ ${formatAmount(minAmountCoin)} ${coin}` : ''}</span>
                 </span>
               </label>
               <div className="relative">
@@ -426,8 +450,8 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
                     ? (availableInitial > 0
                         ? t('wallet.insufficientWithdrawable')
                         : t('wallet.insufficientBalance'))
-                    : numAmount < network.minWithdraw
-                    ? t('wallet.belowMinWithdraw', { min: network.minWithdraw, coin })
+                    : belowMinUsd
+                    ? t('wallet.belowMinUsd', { usd: MIN_WITHDRAW_USD })
                     : t('wallet.amountMustExceedFee')}
                 </p>
               )}
@@ -436,9 +460,9 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
             {/* Summary */}
             <div className="bg-exchange-bg/50 rounded-lg border border-exchange-border/50 p-3 space-y-1.5">
               <div className="flex justify-between text-xs">
-                <span className="text-exchange-text-third">{t('wallet.networkFee')}</span>
+                <span className="text-exchange-text-third">{t('wallet.feePercent')}</span>
                 <span className="tabular-nums text-exchange-text-secondary">
-                  {fee} {coin}
+                  {formatAmount(fee)} {coin} (5%)
                 </span>
               </div>
               <div className="flex justify-between text-xs">
@@ -470,8 +494,16 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
             </div>
 
             <button
-              disabled={!canProceed}
-              onClick={() => setStep('confirm')}
+              onClick={() => {
+                // ★ Hard warning popup for sub-$50 attempts (boss rule).
+                if (belowMinUsd) {
+                  showToast('error', t('wallet.minWarnTitle'), t('wallet.minWarnBody', { usd: MIN_WITHDRAW_USD }));
+                  return;
+                }
+                if (!canProceed) return;
+                setStep('confirm');
+              }}
+              disabled={!canProceed && !belowMinUsd}
               className="btn-sell w-full py-3 rounded-lg text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {t('wallet.continue')}
@@ -514,8 +546,8 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
                 <span className="tabular-nums text-exchange-text">{formatAmount(numAmount)} {coin}</span>
               </div>
               <div className="flex justify-between text-xs">
-                <span className="text-exchange-text-third">{t('wallet.networkFee')}</span>
-                <span className="tabular-nums text-exchange-text-secondary">{fee} {coin}</span>
+                <span className="text-exchange-text-third">{t('wallet.feePercent')}</span>
+                <span className="tabular-nums text-exchange-text-secondary">{formatAmount(fee)} {coin} (5%)</span>
               </div>
               <div className="flex justify-between text-sm font-semibold pt-2 border-t border-exchange-border">
                 <span className="text-exchange-text">{t('wallet.youWillReceive')}</span>

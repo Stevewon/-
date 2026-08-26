@@ -612,13 +612,18 @@ function WithdrawDividendModal({ qtaBalance, qtaPrice, usdtPrice, onClose, onDon
     return () => { document.body.style.overflow = ''; window.removeEventListener('keydown', onEsc); };
   }, [onClose]);
 
+  // ★ Boss's minimum-withdrawal rule (2026-08-26): $50 USD equivalent, valued
+  //   at the QTA live price. Below $50 -> blocked with a warning popup.
+  const MIN_WITHDRAW_USD = 50;
   const num = parseFloat(amount) || 0;
   const in100 = num % 100 === 0 && num > 0;
   const enough = num <= qtaBalance;
   const addrOk = /^0x[0-9a-fA-F]{40}$/.test(address);
+  const requestUsd = num * qtaPrice;
+  const belowMinUsd = num > 0 && qtaPrice > 0 && requestUsd < MIN_WITHDRAW_USD;
   const feeQta = num * 0.05;
   const netQta = num - feeQta;
-  const valid = in100 && enough && addrOk && ack;
+  const valid = in100 && enough && addrOk && ack && !belowMinUsd;
 
   // Live conversion of the net QTA into the chosen payout coin.
   const uPrice = usdtPrice > 0 ? usdtPrice : 1;
@@ -626,6 +631,11 @@ function WithdrawDividendModal({ qtaBalance, qtaPrice, usdtPrice, onClose, onDon
   const receiveAmount = payoutCoin === 'USDT' ? netUsdt : netQta;
 
   const submit = async () => {
+    // ★ Hard warning popup for sub-$50 attempts (boss rule).
+    if (belowMinUsd) {
+      showToast('error', t('earn.minWarnTitle'), t('earn.minWarnBody', { usd: MIN_WITHDRAW_USD }));
+      return;
+    }
     if (!valid) return;
     setBusy(true);
     try {
@@ -657,6 +667,7 @@ function WithdrawDividendModal({ qtaBalance, qtaPrice, usdtPrice, onClose, onDon
               <AlertTriangle size={15} /> {t('earn.feeTitle')}
             </div>
             <p className="text-[12px] text-exchange-text-secondary">{t('earn.feeWarn')}</p>
+            <p className="text-[12px] text-exchange-text-secondary mt-1">{t('earn.minNotice')}</p>
           </div>
 
           <div>
@@ -749,11 +760,12 @@ function WithdrawDividendModal({ qtaBalance, qtaPrice, usdtPrice, onClose, onDon
 
           <button
             onClick={submit}
-            disabled={!valid || busy}
+            disabled={(!valid && !belowMinUsd) || busy}
             className="w-full py-3.5 rounded-full bg-exchange-yellow text-black font-bold text-[15px] hover:bg-exchange-yellow/90 transition-colors disabled:opacity-40"
           >
             {busy ? <Loader2 size={16} className="animate-spin inline" />
               : !in100 ? t('earn.unit100qta')
+              : belowMinUsd ? t('earn.belowMinUsd', { usd: MIN_WITHDRAW_USD })
               : !enough ? t('earn.insufficient')
               : !addrOk ? t('earn.enterQtaAddr')
               : !ack ? t('earn.mustAck')

@@ -362,6 +362,17 @@ app.post('/withdraw', authMiddleware, rlWithdraw, requireKyc('approved'), async 
   const tier: keyof typeof DAILY_WITHDRAW_USD_LIMIT = 'approved';
   const usdPerUnit = Number(coin.price_usd || 0);
   const notional = usdPerUnit * amount;
+  // ★★★★★★★ Boss's minimum-withdrawal rule (2026-08-26): $50 USD equivalent,
+  //   valued at the coin's live price. Below $50 is hard-blocked server-side.
+  const MIN_WITHDRAW_USD = 50;
+  if (usdPerUnit > 0 && notional < MIN_WITHDRAW_USD) {
+    return c.json({
+      error: `Minimum withdrawal is $${MIN_WITHDRAW_USD} (valued at the current live price).`,
+      code: 'BELOW_MIN_WITHDRAWAL',
+      min_usd: MIN_WITHDRAW_USD,
+      requested_usd: Math.round(notional * 100) / 100,
+    }, 400);
+  }
   if (PER_REQUEST_USD_LIMIT[tier] > 0 && notional > PER_REQUEST_USD_LIMIT[tier]) {
     return c.json({ error: `Per-request limit exceeded (max ${PER_REQUEST_USD_LIMIT[tier]} USD)` }, 400);
   }
@@ -406,7 +417,9 @@ app.post('/withdraw', authMiddleware, rlWithdraw, requireKyc('approved'), async 
     }, 400);
   }
 
-  const fee = amount * 0.001;
+  // ★★★★★★★ Boss's withdrawal-fee rule (2026-08-26): flat 5% fee. The user
+  //   always receives 95% of the requested amount. (Replaces the old 0.1%.)
+  const fee = amount * 0.05;
   const withdrawalId = uuid();
   const assetSymbol = String(coin_symbol).toUpperCase();
 
