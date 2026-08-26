@@ -3,6 +3,7 @@ import type { AppEnv } from '../index';
 import { generateToken, authMiddleware } from '../middleware/auth';
 import { rateLimit } from '../middleware/rateLimit';
 import { requireTurnstile } from '../middleware/turnstile';
+import { placeInBinaryTree } from '../lib/binary-matching';
 import {
   sendMail,
   templateBasic,
@@ -446,6 +447,12 @@ app.post('/register', rlRegister, turnstile, async (c) => {
       l2Credited = credited.l2;
       l3Credited = credited.l3;
       referrerCreditedQx = credited.l1; // legacy field — direct referrer only
+
+      // Binary matching: auto-place the new member into the sponsor's smaller
+      // leg. Never blocks signup.
+      try {
+        await placeInBinaryTree(c.env.DB, id, referrer.id);
+      } catch (e) { console.warn('[register] binary placement failed:', e); }
 
       // Best-effort notification to the direct (L1) referrer (does not block signup).
       try {
@@ -1188,6 +1195,11 @@ app.post('/google', rlLogin, async (c) => {
         // Self-referral guard — refCode owner cannot equal new user.
         if (refRow && refRow.id !== id) {
           await creditUplineRewards(c.env.DB, refRow, id, refCode);
+          // Binary matching: auto-place the new member into the sponsor's
+          // smaller leg. Never blocks signup.
+          try {
+            await placeInBinaryTree(c.env.DB, id, refRow.id);
+          } catch (e) { console.warn('[oauth] binary placement failed:', e); }
           // Best-effort notify direct (L1) referrer.
           try {
             const ctx = c.executionCtx as any;
@@ -1413,6 +1425,81 @@ app.get('/referrals', authMiddleware, async (c) => {
     },
     by_level: byLevel,
   });
+});
+
+// --------------------------------------------------------------------------
+// GET /referrals/binary — the caller's binary left/right leg volumes + match
+// summary. Powers the "matching bonus" panel on the referral page.
+// --------------------------------------------------------------------------
+app.get('/referrals/binary', authMiddleware, async (c) => {
+  const u = c.get('user');
+  let left = 0, right = 0, matched = 0;
+  try {
+    const vol = await c.env.DB.prepare(
+      `SELECT left_usd, right_usd, matched_usd FROM binary_volume WHERE user_id = ?`
+    ).bind(u.id).first<any>();
+    left = Number(vol?.left_usd || 0);
+    right = Number(vol?.right_usd || 0);
+    matched = Number(vol?.matched_usd || 0);
+  } catch { /* table may not exist yet (pre-0048); return zeros */ }
+
+  // Lifetime bonus totals.
+  let totalBonusQta = 0, totalBonusUsd = 0, payoutCount = 0;
+  try {
+    const agg = await c.env.DB.prepare(
+      `SELECT COALESCE(SUM(bonus_qta),0) AS qta, COALESCE(SUM(bonus_usd),0) AS usd,
+              COUNT(*) AS n
+         FROM binary_match_bonuses WHERE user_id = ?`
+    ).bind(u.id).first<any>();
+    totalBonusQta = Number(agg?.qta || 0);
+    totalBonusUsd = Number(agg?.usd || 0);
+    payoutCount = Number(agg?.n || 0);
+  } catch { /* ignore */ }
+
+  const weakSide = Math.min(left, right);
+  const pendingMatchable = Math.max(0, weakSide - matched);
+
+  return c.json({
+    left_usd: left,
+    right_usd: right,
+    matched_usd: matched,
+    // Unmatched (carry) volume on each leg — what still needs a pair.
+    left_carry_usd: Math.max(0, left - matched),
+    right_carry_usd: Math.max(0, right - matched),
+    pending_matchable_usd: pendingMatchable,
+    total_bonus_qta: totalBonusQta,
+    total_bonus_usd: totalBonusUsd,
+    payout_count: payoutCount,
+    // The bonus-rate table (so the UI can render it live).
+    tiers: [
+      { min: 100, max: 999, rate: 0.02 },
+      { min: 1000, max: 4999, rate: 0.03 },
+      { min: 5000, max: 9999, rate: 0.04 },
+      { min: 10000, max: 49999, rate: 0.05 },
+      { min: 50000, max: 99999, rate: 0.06 },
+      { min: 100000, max: null, rate: 0.07 },
+    ],
+  });
+});
+
+// --------------------------------------------------------------------------
+// GET /referrals/match-bonuses — the caller's matching-bonus payout history.
+// --------------------------------------------------------------------------
+app.get('/referrals/match-bonuses', authMiddleware, async (c) => {
+  const u = c.get('user');
+  let rows: any[] = [];
+  try {
+    const r = await c.env.DB.prepare(
+      `SELECT id, matched_usd, rate, bonus_usd, bonus_qta, qta_price,
+              left_total, right_total, matched_total, created_at
+         FROM binary_match_bonuses
+        WHERE user_id = ?
+        ORDER BY created_at DESC
+        LIMIT 200`
+    ).bind(u.id).all<any>();
+    rows = r.results || [];
+  } catch { /* table may not exist yet; return empty */ }
+  return c.json({ bonuses: rows });
 });
 
 // Public live-check used during signup. Returns just whether the code is

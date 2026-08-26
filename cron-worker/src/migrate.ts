@@ -199,6 +199,41 @@ const MIGRATIONS: Migration[] = [
         ('vip_2','QTA','fixed',1.80,360,5000,1000000,5000,1000000,360,0.005,'QTA',4,1)`,
     ],
   },
+  {
+    // 0048 — Binary (left/right) matching-bonus program. Adds tree-position
+    // columns to users, a per-user leg-volume table, the payout ledger, and
+    // deposit idempotency markers. Mirrors /migrations/0048_binary_matching_bonus.sql.
+    // Idempotent (dup-column / already-exists swallowed).
+    id: '0048_binary_matching_bonus',
+    statements: [
+      `ALTER TABLE users ADD COLUMN binary_parent_id TEXT`,
+      `ALTER TABLE users ADD COLUMN binary_leg TEXT`,
+      `CREATE INDEX IF NOT EXISTS idx_users_binary_parent ON users(binary_parent_id)`,
+      `CREATE TABLE IF NOT EXISTS binary_volume (
+        user_id      TEXT PRIMARY KEY,
+        left_usd     REAL NOT NULL DEFAULT 0,
+        right_usd    REAL NOT NULL DEFAULT 0,
+        matched_usd  REAL NOT NULL DEFAULT 0,
+        updated_at   TEXT DEFAULT (datetime('now'))
+      )`,
+      `CREATE TABLE IF NOT EXISTS binary_match_bonuses (
+        id            TEXT PRIMARY KEY,
+        user_id       TEXT NOT NULL,
+        matched_usd   REAL NOT NULL,
+        rate          REAL NOT NULL,
+        bonus_usd     REAL NOT NULL,
+        bonus_qta     REAL NOT NULL,
+        qta_price     REAL NOT NULL,
+        left_total    REAL NOT NULL DEFAULT 0,
+        right_total   REAL NOT NULL DEFAULT 0,
+        matched_total REAL NOT NULL DEFAULT 0,
+        created_at    TEXT DEFAULT (datetime('now'))
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_binary_match_user ON binary_match_bonuses(user_id, created_at DESC)`,
+      `ALTER TABLE ext_deposits ADD COLUMN binary_counted_at TEXT`,
+      `ALTER TABLE deposits ADD COLUMN binary_counted_at TEXT`,
+    ],
+  },
 ];
 
 export interface MigrateResult {

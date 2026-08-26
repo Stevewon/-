@@ -7,7 +7,7 @@ import { showToast } from '../components/common/Toast';
 import DesktopPageLayout from '../components/common/DesktopPageLayout';
 import {
   Gift, Copy, Check, Users, TrendingUp, Share2, ChevronLeft,
-  CheckCircle2, Clock, Mail,
+  CheckCircle2, Clock, Mail, Scale, Layers, Award,
 } from 'lucide-react';
 
 interface InvitedRow {
@@ -22,6 +22,32 @@ interface InvitedRow {
 }
 
 interface LevelStat { count: number; reward_qx: number; }
+
+interface BinaryTier { min: number; max: number | null; rate: number; }
+interface BinaryData {
+  left_usd: number;
+  right_usd: number;
+  matched_usd: number;
+  left_carry_usd: number;
+  right_carry_usd: number;
+  pending_matchable_usd: number;
+  total_bonus_qta: number;
+  total_bonus_usd: number;
+  payout_count: number;
+  tiers: BinaryTier[];
+}
+interface MatchBonusRow {
+  id: string;
+  matched_usd: number;
+  rate: number;
+  bonus_usd: number;
+  bonus_qta: number;
+  qta_price: number;
+  left_total: number;
+  right_total: number;
+  matched_total: number;
+  created_at: string;
+}
 
 interface ReferralData {
   code: string | null;
@@ -47,6 +73,8 @@ export default function ReferralPage() {
   const { t } = useI18n();
   const { user } = useStore();
   const [data, setData] = useState<ReferralData | null>(null);
+  const [binary, setBinary] = useState<BinaryData | null>(null);
+  const [bonuses, setBonuses] = useState<MatchBonusRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [copiedCode, setCopiedCode] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
@@ -58,7 +86,15 @@ export default function ReferralPage() {
       .then(r => setData(r.data))
       .catch(() => showToast('error', t('common.error'), t('referral.loadFailed')))
       .finally(() => setLoading(false));
+    // Binary matching-bonus data (best-effort; silent on error).
+    api.get('/auth/referrals/binary').then(r => setBinary(r.data)).catch(() => {});
+    api.get('/auth/referrals/match-bonuses').then(r => setBonuses(r.data.bonuses || [])).catch(() => {});
   }, [user]);
+
+  const fmtUsd = (n: number) =>
+    `$${Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
+  const fmtQta = (n: number) =>
+    Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 2 });
 
   if (!user) {
     return (
@@ -497,6 +533,141 @@ export default function ReferralPage() {
                 })}
               </div>
             )}
+          </div>
+
+          {/* ══════════════════════════════════════════════════════════════
+              BINARY LEFT/RIGHT MATCHING BONUS — full width
+             ══════════════════════════════════════════════════════════════ */}
+          <div
+            className="bg-exchange-card border border-exchange-border rounded-xl overflow-hidden"
+            style={{ marginTop: '4px' }}
+          >
+            <div
+              className="flex items-center gap-2 border-b border-exchange-border bg-exchange-bg/40"
+              style={{ padding: '14px 20px' }}
+            >
+              <Scale size={16} className="text-exchange-yellow" />
+              <h3 className="text-sm font-bold text-exchange-text">{t('referral.matchTitle')}</h3>
+            </div>
+
+            <div style={{ padding: '20px' }} className="space-y-5">
+              <p className="text-xs text-exchange-text-secondary leading-relaxed">
+                {t('referral.matchIntro')}
+              </p>
+
+              {/* Left / Right leg volumes */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-exchange-bg/40 border border-exchange-border/60 rounded-xl p-4 text-center">
+                  <div className="flex items-center justify-center gap-1.5 text-[11px] uppercase tracking-wider text-exchange-text-third mb-1">
+                    <Layers size={12} /> {t('referral.leftLeg')}
+                  </div>
+                  <div className="text-2xl font-bold text-exchange-buy tabular-nums">
+                    {fmtUsd(binary?.left_usd || 0)}
+                  </div>
+                  <div className="text-[10px] text-exchange-text-third mt-1">
+                    {t('referral.unmatched')}: {fmtUsd(binary?.left_carry_usd || 0)}
+                  </div>
+                </div>
+                <div className="bg-exchange-bg/40 border border-exchange-border/60 rounded-xl p-4 text-center">
+                  <div className="flex items-center justify-center gap-1.5 text-[11px] uppercase tracking-wider text-exchange-text-third mb-1">
+                    <Layers size={12} /> {t('referral.rightLeg')}
+                  </div>
+                  <div className="text-2xl font-bold text-exchange-sell tabular-nums">
+                    {fmtUsd(binary?.right_usd || 0)}
+                  </div>
+                  <div className="text-[10px] text-exchange-text-third mt-1">
+                    {t('referral.unmatched')}: {fmtUsd(binary?.right_carry_usd || 0)}
+                  </div>
+                </div>
+              </div>
+
+              {/* Matched + lifetime bonus */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-exchange-bg/40 border border-exchange-border/60 rounded-xl p-4">
+                  <div className="text-[11px] uppercase tracking-wider text-exchange-text-third mb-1">
+                    {t('referral.matchedTotal')}
+                  </div>
+                  <div className="text-xl font-bold text-exchange-text tabular-nums">
+                    {fmtUsd(binary?.matched_usd || 0)}
+                  </div>
+                </div>
+                <div className="bg-exchange-yellow/10 border border-exchange-yellow/30 rounded-xl p-4">
+                  <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-exchange-yellow mb-1">
+                    <Award size={12} /> {t('referral.bonusEarned')}
+                  </div>
+                  <div className="text-xl font-bold text-exchange-yellow tabular-nums">
+                    {fmtQta(binary?.total_bonus_qta || 0)} <span className="text-xs font-medium">QTA</span>
+                  </div>
+                  <div className="text-[10px] text-exchange-text-third mt-0.5">
+                    ≈ {fmtUsd(binary?.total_bonus_usd || 0)} · {binary?.payout_count || 0} {t('referral.payouts')}
+                  </div>
+                </div>
+              </div>
+
+              {/* Bonus rate table */}
+              <div>
+                <div className="text-[11px] uppercase tracking-wider text-exchange-text-third mb-2">
+                  {t('referral.rateTableTitle')}
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {(binary?.tiers || [
+                    { min: 100, max: 999, rate: 0.02 },
+                    { min: 1000, max: 4999, rate: 0.03 },
+                    { min: 5000, max: 9999, rate: 0.04 },
+                    { min: 10000, max: 49999, rate: 0.05 },
+                    { min: 50000, max: 99999, rate: 0.06 },
+                    { min: 100000, max: null, rate: 0.07 },
+                  ]).map((tier, i) => (
+                    <div key={i} className="flex items-center justify-between bg-exchange-bg/40 border border-exchange-border/40 rounded-lg px-3 py-2">
+                      <span className="text-[11px] text-exchange-text-secondary tabular-nums">
+                        {fmtUsd(tier.min)}{tier.max ? `~${fmtUsd(tier.max)}` : '+'}
+                      </span>
+                      <span className="text-xs font-bold text-exchange-yellow tabular-nums">
+                        {(tier.rate * 100).toFixed(0)}%
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Bonus payout history */}
+              <div>
+                <div className="text-[11px] uppercase tracking-wider text-exchange-text-third mb-2">
+                  {t('referral.bonusHistoryTitle')} ({bonuses.length})
+                </div>
+                {bonuses.length === 0 ? (
+                  <div className="py-8 text-center bg-exchange-bg/30 rounded-lg">
+                    <Award size={30} className="mx-auto text-exchange-text-third mb-2 opacity-40" />
+                    <p className="text-xs text-exchange-text-secondary">{t('referral.noBonusYet')}</p>
+                  </div>
+                ) : (
+                  <div className="border border-exchange-border/40 rounded-lg overflow-hidden">
+                    <div className="hidden sm:flex items-center text-[11px] text-exchange-text-third font-medium border-b border-exchange-border/40 bg-exchange-bg/20 px-3 py-2">
+                      <span style={{ width: '28%' }}>{t('referral.colMatched')}</span>
+                      <span style={{ width: '14%' }} className="text-center">{t('referral.colRate')}</span>
+                      <span style={{ width: '30%' }} className="text-right">{t('referral.colBonus')}</span>
+                      <span style={{ width: '28%' }} className="text-right">{t('referral.colDate')}</span>
+                    </div>
+                    {bonuses.map((b) => (
+                      <div key={b.id} className="flex items-center border-b border-exchange-border/20 last:border-0 hover:bg-exchange-hover/20 transition-colors px-3 py-2.5 text-sm">
+                        <span style={{ width: '28%' }} className="tabular-nums text-exchange-text">
+                          {fmtUsd(b.matched_usd)}
+                        </span>
+                        <span style={{ width: '14%' }} className="text-center tabular-nums text-exchange-text-secondary">
+                          {(b.rate * 100).toFixed(0)}%
+                        </span>
+                        <span style={{ width: '30%' }} className="text-right tabular-nums font-semibold text-exchange-yellow">
+                          +{fmtQta(b.bonus_qta)} QTA
+                        </span>
+                        <span style={{ width: '28%' }} className="text-right text-xs text-exchange-text-third tabular-nums">
+                          {new Date(b.created_at).toLocaleDateString()}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}

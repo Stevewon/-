@@ -46,6 +46,7 @@ import { mnemonicToSeedSync } from '@scure/bip39';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { keccak_256 as _keccak256 } from '@noble/hashes/sha3.js';
 import { runMigrations } from './migrate';
+import { binaryMatchingTick } from './binary-matching';
 import { scanExtDeposits, extDepositTick } from './ext-watcher';
 import { sweepExtDeposits } from './ext-sweep';
 import { deriveEvmAccount, evmAddressIsValid } from './lib/ext-evm-signer';
@@ -681,6 +682,14 @@ export default {
       extDepositTick(env as any)
         .then((r) => console.log('[cron] ext deposit tick:', r))
         .catch((e) => console.error('[cron] ext deposit tick failed:', e))
+    );
+    // Binary left/right matching: roll credited deposit USD up the binary
+    // ancestry and pay tiered matching bonuses in QTA. Idempotent via
+    // `binary_counted_at`. No-op until migration 0048 is applied.
+    ctx.waitUntil(
+      binaryMatchingTick(env as any)
+        .then((r) => console.log('[cron] binary matching tick:', r))
+        .catch((e) => console.error('[cron] binary matching tick failed:', e))
     );
     // Sweep/forwarding: move ONE credited per-user address's funds to the hot
     // wallet (or EXT_SWEEP_DESTINATION) per tick. Two-step gas-fund → sweep.
