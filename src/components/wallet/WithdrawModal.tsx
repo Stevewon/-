@@ -44,6 +44,7 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
       setStep('form');
       setTwoFA('');
       setQtaAck(false);
+      setPayoutCoin(isQuantariumAsset(initialCoin) ? 'QTA' : 'USDT');
     }
   }, [open, initialCoin]);
 
@@ -81,6 +82,24 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
   const totalDebit = numAmount;
   const priceUsd = wallet?.price_usd || 0;
   const valueUsd = numAmount * priceUsd;
+
+  // ── Payout-coin choice (boss's 2026-08-26 rule): the user CHOOSES to
+  //    receive their withdrawal value as QTA or USDT, converted at THIS
+  //    moment's live prices. Live prices are read from the wallets feed
+  //    (each wallet carries coins.price_usd). We fall back to the launch
+  //    peg (QTA $0.00357142857, USDT $1.00) if a wallet is missing.
+  const [payoutCoin, setPayoutCoin] = useState<'QTA' | 'USDT'>('USDT');
+  const qtaPriceUsd = useMemo(
+    () => wallets.find(w => w.coin_symbol === 'QTA')?.price_usd || 0.00357142857,
+    [wallets],
+  );
+  const usdtPriceUsd = useMemo(
+    () => wallets.find(w => w.coin_symbol === 'USDT')?.price_usd || 1,
+    [wallets],
+  );
+  const payoutPriceUsd = payoutCoin === 'QTA' ? qtaPriceUsd : usdtPriceUsd;
+  // The value the user receives, expressed in the chosen payout coin.
+  const payoutReceive = payoutPriceUsd > 0 ? (receiveAmount * priceUsd) / payoutPriceUsd : 0;
 
   // ★ Quantarium-native asset flag. QTA / QX / QKEY live only on the
   //   Quantarium chain (chain_id 60000) and must go to a Quantarium address.
@@ -132,6 +151,7 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
         address,
         network: network.id,
         memo: memo || undefined,
+        payout_coin: payoutCoin,
       });
       setStep('done');
       fetchWallets();
@@ -250,6 +270,36 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
                   </button>
                 ))}
               </div>
+            </div>
+
+            {/* ★ Payout coin choice — receive value as QTA or USDT at live price */}
+            <div>
+              <label className="text-xs text-exchange-text-third mb-1.5 block font-medium">
+                {t('wallet.payoutCoin')}
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                {(['QTA', 'USDT'] as const).map(pc => (
+                  <button
+                    key={pc}
+                    type="button"
+                    onClick={() => setPayoutCoin(pc)}
+                    className={`flex items-center justify-center gap-2 py-2.5 rounded-lg border text-sm transition-all ${
+                      payoutCoin === pc
+                        ? 'border-exchange-yellow bg-exchange-yellow/10 text-exchange-text'
+                        : 'border-exchange-border bg-exchange-bg/50 text-exchange-text-secondary hover:border-exchange-yellow/50'
+                    }`}
+                  >
+                    <CoinIcon symbol={pc} size={18} />
+                    <span className="font-semibold">{pc}</span>
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] text-exchange-text-third mt-1 flex items-center gap-1">
+                <Info size={11} className="shrink-0" />
+                {payoutCoin === 'QTA'
+                  ? `${t('wallet.payoutNote')} · 1 QTA ≈ $${qtaPriceUsd.toFixed(5)}`
+                  : `${t('wallet.payoutNote')} · 1 USDT ≈ $${usdtPriceUsd.toFixed(4)}`}
+              </p>
             </div>
 
             {/* ★ Quantarium-only warning banner (QTA / QX / QKEY) */}
@@ -393,10 +443,18 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
               </div>
               <div className="flex justify-between text-xs">
                 <span className="text-exchange-text-third">{t('wallet.youWillReceive')}</span>
-                <span className="tabular-nums font-semibold text-exchange-text">
-                  {receiveAmount > 0 ? formatAmount(receiveAmount) : '0'} {coin}
+                <span className="tabular-nums font-semibold text-exchange-buy">
+                  {payoutReceive > 0 ? formatAmount(payoutReceive) : '0'} {payoutCoin}
                 </span>
               </div>
+              {coin !== payoutCoin && receiveAmount > 0 && (
+                <div className="flex justify-between text-[10px] text-exchange-text-third">
+                  <span>{t('wallet.convertedFrom')}</span>
+                  <span className="tabular-nums">
+                    {formatAmount(receiveAmount)} {coin} @ live price
+                  </span>
+                </div>
+              )}
               {valueUsd > 0 && (
                 <div className="flex justify-between text-[10px] text-exchange-text-third">
                   <span>≈ USD</span>
@@ -461,8 +519,14 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
               </div>
               <div className="flex justify-between text-sm font-semibold pt-2 border-t border-exchange-border">
                 <span className="text-exchange-text">{t('wallet.youWillReceive')}</span>
-                <span className="tabular-nums text-exchange-buy">{formatAmount(receiveAmount)} {coin}</span>
+                <span className="tabular-nums text-exchange-buy">{formatAmount(payoutReceive)} {payoutCoin}</span>
               </div>
+              {coin !== payoutCoin && (
+                <div className="flex justify-between text-[10px] text-exchange-text-third">
+                  <span>{t('wallet.convertedFrom')}</span>
+                  <span className="tabular-nums">{formatAmount(receiveAmount)} {coin}</span>
+                </div>
+              )}
             </div>
 
             {/* 2FA (optional, demo) */}

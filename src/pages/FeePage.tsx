@@ -413,7 +413,7 @@ export default function FeePage() {
               <div className="card p-5">
                 <div className="flex items-center gap-2 mb-3">
                   <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center">
-                    <span className="text-sm font-bold text-blue-400">₩</span>
+                    <span className="text-sm font-bold text-blue-400">$</span>
                   </div>
                   <h4 className="font-semibold text-sm">{t('fee.fiatDeposit')}</h4>
                 </div>

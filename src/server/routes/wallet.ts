@@ -275,6 +275,15 @@ app.post('/withdraw', authMiddleware, rlWithdraw, requireKyc('approved'), async 
     return c.json({ error: 'Invalid request' }, 400);
   }
 
+  // ── Payout-coin choice (boss's 2026-08-26 rule) ────────────────────────
+  // The user debits `coin_symbol` from their wallet but may CHOOSE to receive
+  // the value paid out as QTA or USDT, converted at THIS moment's live prices.
+  // Default: pay out in the same coin being withdrawn (no conversion).
+  const payoutCoinRaw = String(body.payout_coin || coin_symbol).toUpperCase();
+  const payoutCoin = (payoutCoinRaw === 'QTA' || payoutCoinRaw === 'USDT')
+    ? payoutCoinRaw
+    : String(coin_symbol).toUpperCase();
+
   // ─── COIN-FAMILY WALLET ROUTING (boss's 2026-08-13 default) ────────────
   // QuantaEX bridges two worlds:
   //   • Quantarium-native assets (QTA coin + QX / QKEY tokens we issued on
@@ -401,6 +410,31 @@ app.post('/withdraw', authMiddleware, rlWithdraw, requireKyc('approved'), async 
   const withdrawalId = uuid();
   const assetSymbol = String(coin_symbol).toUpperCase();
 
+  // ── Live payout conversion. The user is debited `amount` of `coin_symbol`
+  //    (net of the coin's own fee), but the payout is settled in `payoutCoin`
+  //    at THIS moment's live prices:
+  //        payout_amount = (amount - fee) * price(coin_symbol) / price(payoutCoin)
+  //    If the payout coin == withdrawn coin, this is a no-op (ratio 1).
+  const netCoin = amount - fee;
+  let payoutPriceUsd = usdPerUnit;         // price of the coin being withdrawn
+  let payoutFee = fee;
+  if (payoutCoin !== assetSymbol) {
+    const payoutRow = await c.env.DB.prepare(
+      'SELECT price_usd FROM coins WHERE symbol = ?'
+    ).bind(payoutCoin).first<any>();
+    payoutPriceUsd = Number(payoutRow?.price_usd || 0) || (payoutCoin === 'USDT' ? 1 : 0);
+    if (payoutPriceUsd <= 0) {
+      return c.json({ error: `Payout coin ${payoutCoin} price unavailable` }, 400);
+    }
+  }
+  // Value the user actually receives, denominated in payoutCoin.
+  const payoutNet = payoutCoin === assetSymbol
+    ? netCoin
+    : (netCoin * usdPerUnit) / payoutPriceUsd;
+  if (payoutCoin !== assetSymbol) {
+    payoutFee = (fee * usdPerUnit) / payoutPriceUsd;
+  }
+
   // Move to `locked` (NOT subtracted) so admin reject cleanly refunds without
   // a race window. Admin/cron approve will do the final deduction.
   //
@@ -417,9 +451,15 @@ app.post('/withdraw', authMiddleware, rlWithdraw, requireKyc('approved'), async 
   //   Only when the lock actually happened (changes === 1) do we insert the
   //   pending withdrawal row. If it didn't, the wallet is untouched and we
   //   return without creating any queue entry.
-  if (routeQuantarium) {
+  // Address format: QTA payout (Quantarium) and USDT-BEP20 payout both require
+  // a 0x EVM-style address (0x + 40 hex). Enforce when the settlement coin is
+  // one of these (either the withdrawn coin is Quantarium-native, or the user
+  // chose a QTA/USDT payout that differs from the withdrawn coin).
+  const needs0xAddr = routeQuantarium || payoutCoin === 'QTA'
+    || (payoutCoin === 'USDT' && payoutCoin !== assetSymbol);
+  if (needs0xAddr) {
     if (!/^0x[0-9a-fA-F]{40}$/.test(String(address))) {
-      return c.json({ error: 'Invalid Quantarium address (expected 0x + 40 hex)' }, 400);
+      return c.json({ error: 'Invalid destination address (expected 0x + 40 hex)' }, 400);
     }
   }
   const lockRes = await c.env.DB.prepare(
@@ -445,16 +485,24 @@ app.post('/withdraw', authMiddleware, rlWithdraw, requireKyc('approved'), async 
     return c.json({ error: 'Insufficient balance' }, 400);
   }
 
-  if (routeQuantarium) {
+  // Settlement queue is chosen by the PAYOUT coin (what the user receives):
+  //   • QTA payout  → qta_withdrawals (cron SPHINCS+ signer), 0x address
+  //   • USDT payout → withdrawals table (admin approval), BEP-20 network
+  //   • payout == withdrawn coin → original routing (routeQuantarium)
+  const settleAsQta = payoutCoin === 'QTA' || (payoutCoin === assetSymbol && routeQuantarium);
+  if (settleAsQta) {
     await c.env.DB.prepare(
       `INSERT INTO qta_withdrawals (id, user_id, to_address, amount, fee, asset, status, network)
        VALUES (?, ?, ?, ?, ?, ?, 'pending', 'qta-mainnet')`
-    ).bind(withdrawalId, user.id, String(address), String(amount - fee), String(fee), assetSymbol).run();
+    ).bind(withdrawalId, user.id, String(address), String(payoutNet), String(payoutFee), payoutCoin).run();
   } else {
+    // USDT (or same-coin standard) payout → legacy withdrawals table.
+    const settleCoin = payoutCoin === assetSymbol ? coin_symbol : payoutCoin;
+    const settleNetwork = payoutCoin === assetSymbol ? (network || null) : 'bep20';
     await c.env.DB.prepare(
       `INSERT INTO withdrawals (id, user_id, coin_symbol, amount, fee, address, network, memo, status)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')`
-    ).bind(withdrawalId, user.id, coin_symbol, amount - fee, fee, address, network || null, memo || null).run();
+    ).bind(withdrawalId, user.id, settleCoin, payoutNet, payoutFee, address, settleNetwork, memo || null).run();
   }
 
   // S3-6: withdrawal-submitted confirmation email

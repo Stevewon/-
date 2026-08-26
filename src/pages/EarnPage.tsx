@@ -85,6 +85,7 @@ export default function EarnPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [positions, setPositions] = useState<Position[]>([]);
   const [qtaPrice, setQtaPrice] = useState(0.00357142857);
+  const [usdtPrice, setUsdtPrice] = useState(1.0);
   const [loading, setLoading] = useState(true);
   const [subscribeTarget, setSubscribeTarget] = useState<Product | null>(null);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
@@ -101,6 +102,19 @@ export default function EarnPage() {
     finally { setLoading(false); }
   }, []);
 
+  // Live USDT price (usually $1.00) — read from the public market coins list
+  // so QTA→USDT withdrawal conversion uses the moment's real peg.
+  const loadUsdtPrice = useCallback(async () => {
+    try {
+      const res = await api.get('/market/coins');
+      const list = Array.isArray(res.data) ? res.data : (res.data?.coins || []);
+      const u = list.find((x: any) => x.symbol === 'USDT');
+      const q = list.find((x: any) => x.symbol === 'QTA');
+      if (u && Number(u.price_usd) > 0) setUsdtPrice(Number(u.price_usd));
+      if (q && Number(q.price_usd) > 0) setQtaPrice(Number(q.price_usd));
+    } catch { /* keep defaults */ }
+  }, []);
+
   const loadPositions = useCallback(async () => {
     if (!user) { setPositions([]); return; }
     try {
@@ -110,11 +124,11 @@ export default function EarnPage() {
     } catch { /* not logged in */ }
   }, [user]);
 
-  useEffect(() => { loadProducts(); }, [loadProducts]);
+  useEffect(() => { loadProducts(); loadUsdtPrice(); }, [loadProducts, loadUsdtPrice]);
   useEffect(() => { loadPositions(); if (user) fetchWallets(); }, [user, loadPositions]);
 
   const refreshAll = async () => {
-    await Promise.all([loadPositions(), fetchWallets(), loadProducts()]);
+    await Promise.all([loadPositions(), fetchWallets(), loadProducts(), loadUsdtPrice()]);
   };
 
   const handleClaim = async (p: Position) => {
@@ -182,9 +196,6 @@ export default function EarnPage() {
             <div className="text-exchange-text-third">{t('earn.qtaPrice')}</div>
             <div className="text-[15px] font-bold text-exchange-text tabular-nums leading-tight mt-0.5">
               ${qtaPrice.toFixed(5)}
-              <span className="text-[11px] text-exchange-text-third ml-1">
-                ≈ ₩{Math.round(qtaPrice * 1400).toLocaleString()}
-              </span>
             </div>
           </div>
           {user && (
@@ -339,6 +350,8 @@ export default function EarnPage() {
       {withdrawOpen && (
         <WithdrawDividendModal
           qtaBalance={qtaBalance}
+          qtaPrice={qtaPrice}
+          usdtPrice={usdtPrice}
           onClose={() => setWithdrawOpen(false)}
           onDone={async () => { setWithdrawOpen(false); await refreshAll(); }}
         />
@@ -576,12 +589,13 @@ function SubscribeModal({ product, qtaBalance, qtaPrice, onClose, onDone }: {
 // ---------------------------------------------------------------------------
 // Withdraw dividend (QTA) modal — 100-QTA units, 5% fee
 // ---------------------------------------------------------------------------
-function WithdrawDividendModal({ qtaBalance, onClose, onDone }: {
-  qtaBalance: number; onClose: () => void; onDone: () => void;
+function WithdrawDividendModal({ qtaBalance, qtaPrice, usdtPrice, onClose, onDone }: {
+  qtaBalance: number; qtaPrice: number; usdtPrice: number; onClose: () => void; onDone: () => void;
 }) {
   const { t } = useI18n();
   const [amount, setAmount] = useState('100');
   const [address, setAddress] = useState('');
+  const [payoutCoin, setPayoutCoin] = useState<'QTA' | 'USDT'>('QTA');
   const [ack, setAck] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -596,17 +610,23 @@ function WithdrawDividendModal({ qtaBalance, onClose, onDone }: {
   const in100 = num % 100 === 0 && num > 0;
   const enough = num <= qtaBalance;
   const addrOk = /^0x[0-9a-fA-F]{40}$/.test(address);
-  const fee = num * 0.05;
-  const net = num - fee;
+  const feeQta = num * 0.05;
+  const netQta = num - feeQta;
   const valid = in100 && enough && addrOk && ack;
+
+  // Live conversion of the net QTA into the chosen payout coin.
+  const uPrice = usdtPrice > 0 ? usdtPrice : 1;
+  const netUsdt = (netQta * qtaPrice) / uPrice;
+  const receiveAmount = payoutCoin === 'USDT' ? netUsdt : netQta;
 
   const submit = async () => {
     if (!valid) return;
     setBusy(true);
     try {
-      const res = await api.post('/earn/withdraw-dividend', { amount_qta: num, address });
+      const res = await api.post('/earn/withdraw-dividend',
+        { amount_qta: num, address, payout_coin: payoutCoin });
       showToast('success', t('earn.withdrawRequested'),
-        `${formatAmount(res.data.net_qta)} QTA (${t('earn.afterFee')})`);
+        `${formatAmount(res.data.payout_amount)} ${res.data.payout_coin} (${t('earn.afterFee')})`);
       onDone();
     } catch (err: any) {
       showToast('error', t('earn.withdrawFailed'), err.response?.data?.error || '');
@@ -647,6 +667,33 @@ function WithdrawDividendModal({ qtaBalance, onClose, onDone }: {
             <p className="text-[11px] text-exchange-text-third mt-1.5">{t('earn.unit100qta')}</p>
           </div>
 
+          {/* Payout coin choice — receive as QTA or USDT at live prices */}
+          <div>
+            <div className="text-[12px] text-exchange-text-third mb-1.5">{t('earn.payoutCoin')}</div>
+            <div className="grid grid-cols-2 gap-2">
+              {(['QTA', 'USDT'] as const).map((coin) => (
+                <button
+                  key={coin}
+                  type="button"
+                  onClick={() => setPayoutCoin(coin)}
+                  className={`flex items-center justify-center gap-2 py-3 rounded-xl border-2 transition-colors ${
+                    payoutCoin === coin
+                      ? 'border-exchange-yellow bg-exchange-yellow/10 text-exchange-text'
+                      : 'border-exchange-border bg-exchange-input text-exchange-text-secondary hover:border-exchange-text-third'
+                  }`}
+                >
+                  <CoinIcon symbol={coin} size={20} />
+                  <span className="font-bold text-[14px]">{coin}</span>
+                </button>
+              ))}
+            </div>
+            <p className="text-[11px] text-exchange-text-third mt-1.5">
+              {payoutCoin === 'USDT'
+                ? `${t('earn.payoutUsdtNote')} · 1 QTA ≈ $${qtaPrice.toFixed(5)}`
+                : t('earn.payoutQtaNote')}
+            </p>
+          </div>
+
           <div className="rounded-xl bg-exchange-input p-4 space-y-2 text-[13px]">
             <div className="flex justify-between">
               <span className="text-exchange-text-third">{t('earn.requested')}</span>
@@ -654,16 +701,30 @@ function WithdrawDividendModal({ qtaBalance, onClose, onDone }: {
             </div>
             <div className="flex justify-between">
               <span className="text-exchange-text-third">{t('earn.fee5')}</span>
-              <span className="text-exchange-sell tabular-nums">− {formatAmount(fee)} QTA</span>
+              <span className="text-exchange-sell tabular-nums">− {formatAmount(feeQta)} QTA</span>
             </div>
+            {payoutCoin === 'USDT' && (
+              <div className="flex justify-between">
+                <span className="text-exchange-text-third">{t('earn.convertRate')}</span>
+                <span className="text-exchange-text-secondary tabular-nums">
+                  {formatAmount(netQta)} QTA → USDT
+                </span>
+              </div>
+            )}
             <div className="flex justify-between border-t border-exchange-border pt-2">
               <span className="text-exchange-text font-bold">{t('earn.youReceive')}</span>
-              <span className="text-exchange-buy font-bold tabular-nums">{formatAmount(net)} QTA</span>
+              <span className="text-exchange-buy font-bold tabular-nums">
+                {payoutCoin === 'USDT'
+                  ? `${formatAmount(receiveAmount)} USDT`
+                  : `${formatAmount(receiveAmount)} QTA`}
+              </span>
             </div>
           </div>
 
           <div>
-            <label className="text-[12px] text-exchange-text-secondary mb-1.5 block">{t('earn.qtaAddress')}</label>
+            <label className="text-[12px] text-exchange-text-secondary mb-1.5 block">
+              {payoutCoin === 'USDT' ? t('earn.usdtAddress') : t('earn.qtaAddress')}
+            </label>
             <input
               value={address}
               onChange={(e) => setAddress(e.target.value)}

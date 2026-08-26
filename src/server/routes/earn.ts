@@ -46,6 +46,16 @@ async function qtaPrice(c: any): Promise<number> {
   return p > 0 ? p : 0.01; // fallback so we never divide by zero
 }
 
+// Live USDT price (USD). Normally 1.00, but read from coins so a peg change
+// is respected. Fallback 1.00.
+async function usdtPrice(c: any): Promise<number> {
+  const row = await c.env.DB.prepare(
+    `SELECT price_usd FROM coins WHERE symbol = 'USDT'`
+  ).first<any>();
+  const p = row?.price_usd || 0;
+  return p > 0 ? p : 1.0;
+}
+
 // Accrued dividend in USD for a position, capped at the full term.
 function accruedUsd(p: {
   principal_usd: number;
@@ -427,28 +437,40 @@ app.post('/redeem', authMiddleware, async (c) => {
 });
 
 // --------------------------------------------------------------------------
-// POST /withdraw-dividend { amount_qta }
+// POST /withdraw-dividend { amount_qta, address, payout_coin? }
 // Withdraws staking-dividend QTA. 100-QTA increments, flat 5% fee.
-// Creates a normal QTA withdrawal request (operator pays out manually).
+// The dividend is always denominated in QTA, but the user CHOOSES the payout
+// coin: 'QTA' (default) or 'USDT'. When USDT is chosen, the net QTA is
+// converted at that moment's LIVE QTA and USDT prices:
+//     usdt_amount = net_qta * qta_price / usdt_price
+// Creates a normal withdrawal request in the chosen asset (operator settles).
 // --------------------------------------------------------------------------
 app.post('/withdraw-dividend', authMiddleware, async (c) => {
   const user = c.get('user');
   const body = await c.req.json().catch(() => ({}));
   const amountQta = Number(body.amount_qta);
   const address = String(body.address || '').trim();
+  const payoutCoin = String(body.payout_coin || 'QTA').toUpperCase();
 
   if (!isFinite(amountQta) || amountQta <= 0) return c.json({ error: 'Invalid amount' }, 400);
   if (amountQta % WITHDRAW_UNIT_QTA !== 0) {
     return c.json({ error: `Amount must be in ${WITHDRAW_UNIT_QTA}-QTA increments` }, 400);
   }
+  if (payoutCoin !== 'QTA' && payoutCoin !== 'USDT') {
+    return c.json({ error: 'payout_coin must be QTA or USDT' }, 400);
+  }
   if (!/^0x[0-9a-fA-F]{40}$/.test(address)) {
-    return c.json({ error: 'Valid Quantarium (0x...) address required' }, 400);
+    return c.json({ error: 'Valid destination (0x...) address required' }, 400);
   }
 
-  const fee = amountQta * WITHDRAW_FEE;    // 5%
-  const net = amountQta - fee;             // e.g. 95 on 100
+  const feeQta = amountQta * WITHDRAW_FEE;   // 5% fee on the QTA amount
+  const netQta = amountQta - feeQta;         // e.g. 95 on 100
 
-  // Atomically lock the requested QTA from available.
+  // Live prices at THIS moment.
+  const qPrice = await qtaPrice(c);          // QTA price in USD
+  const uPrice = await usdtPrice(c);         // USDT price in USD (≈1)
+
+  // Atomically lock the requested QTA from the user's QTA available balance.
   const lock = await c.env.DB.prepare(
     `UPDATE wallets SET available = available - ?, locked = COALESCE(locked,0) + ?
       WHERE user_id = ? AND coin_symbol = 'QTA' AND available >= ?`
@@ -459,15 +481,42 @@ app.post('/withdraw-dividend', authMiddleware, async (c) => {
 
   const id = uuid();
   const nowIso = new Date().toISOString();
-  // Record as a QTA withdrawal (manual-withdrawal mode; operator settles).
+
+  // Determine the settled payout in the chosen asset.
+  let payoutAmount: number;
+  let payoutFee: number;
+  let network: string;
+  if (payoutCoin === 'USDT') {
+    // Convert net QTA -> USDT at live prices.
+    payoutAmount = (netQta * qPrice) / uPrice;
+    payoutFee = (feeQta * qPrice) / uPrice;
+    network = 'bep20';               // USDT settles on BEP-20 (BSC)
+  } else {
+    payoutAmount = netQta;
+    payoutFee = feeQta;
+    network = 'qta-mainnet';
+  }
+
+  // Record as a withdrawal request (manual-withdrawal mode; operator settles).
   // amount/fee are TEXT columns in qta_withdrawals — store as strings.
   await c.env.DB.prepare(
     `INSERT INTO qta_withdrawals
        (id, user_id, asset, amount, fee, to_address, status, network, created_at)
-     VALUES (?,?, 'QTA', ?, ?, ?, 'pending', 'qta-mainnet', ?)`
-  ).bind(id, user.id, String(net), String(fee), address, nowIso).run();
+     VALUES (?,?, ?, ?, ?, ?, 'pending', ?, ?)`
+  ).bind(id, user.id, payoutCoin, String(payoutAmount), String(payoutFee), address, network, nowIso).run();
 
-  return c.json({ ok: true, withdrawal_id: id, requested_qta: amountQta, fee_qta: fee, net_qta: net });
+  return c.json({
+    ok: true,
+    withdrawal_id: id,
+    payout_coin: payoutCoin,
+    requested_qta: amountQta,
+    fee_qta: feeQta,
+    net_qta: netQta,
+    qta_price: qPrice,
+    usdt_price: uPrice,
+    payout_amount: payoutAmount,
+    payout_fee: payoutFee,
+  });
 });
 
 // --------------------------------------------------------------------------
