@@ -449,9 +449,14 @@ app.post('/register', rlRegister, turnstile, async (c) => {
       referrerCreditedQx = credited.l1; // legacy field — direct referrer only
 
       // Binary matching: auto-place the new member into the sponsor's smaller
-      // leg. Never blocks signup.
+      // leg. Never blocks signup. If the sponsor's downline is already at the
+      // 2x cap, placement is still recorded but flagged (deposit rollup will
+      // drop any over-cap volume until the sponsor raises their own value).
       try {
-        await placeInBinaryTree(c.env.DB, id, referrer.id);
+        const placement = await placeInBinaryTree(c.env.DB, id, referrer.id);
+        if (placement.capped) {
+          console.warn(`[register] sponsor ${referrer.id} downline full (2x cap): self=${placement.self_usd} downline=${placement.downline_usd}`);
+        }
       } catch (e) { console.warn('[register] binary placement failed:', e); }
 
       // Best-effort notification to the direct (L1) referrer (does not block signup).
@@ -1196,9 +1201,12 @@ app.post('/google', rlLogin, async (c) => {
         if (refRow && refRow.id !== id) {
           await creditUplineRewards(c.env.DB, refRow, id, refCode);
           // Binary matching: auto-place the new member into the sponsor's
-          // smaller leg. Never blocks signup.
+          // smaller leg. Never blocks signup. Flag if sponsor downline is full.
           try {
-            await placeInBinaryTree(c.env.DB, id, refRow.id);
+            const placement = await placeInBinaryTree(c.env.DB, id, refRow.id);
+            if (placement.capped) {
+              console.warn(`[oauth] sponsor ${refRow.id} downline full (2x cap): self=${placement.self_usd} downline=${placement.downline_usd}`);
+            }
           } catch (e) { console.warn('[oauth] binary placement failed:', e); }
           // Best-effort notify direct (L1) referrer.
           try {
@@ -1433,15 +1441,26 @@ app.get('/referrals', authMiddleware, async (c) => {
 // --------------------------------------------------------------------------
 app.get('/referrals/binary', authMiddleware, async (c) => {
   const u = c.get('user');
-  let left = 0, right = 0, matched = 0;
+  let left = 0, right = 0, matched = 0, selfUsd = 0;
   try {
     const vol = await c.env.DB.prepare(
-      `SELECT left_usd, right_usd, matched_usd FROM binary_volume WHERE user_id = ?`
+      `SELECT left_usd, right_usd, matched_usd, self_usd FROM binary_volume WHERE user_id = ?`
     ).bind(u.id).first<any>();
     left = Number(vol?.left_usd || 0);
     right = Number(vol?.right_usd || 0);
     matched = Number(vol?.matched_usd || 0);
-  } catch { /* table may not exist yet (pre-0048); return zeros */ }
+    selfUsd = Number(vol?.self_usd || 0);
+  } catch {
+    // self_usd column may not exist yet (pre-0049) — retry without it.
+    try {
+      const vol = await c.env.DB.prepare(
+        `SELECT left_usd, right_usd, matched_usd FROM binary_volume WHERE user_id = ?`
+      ).bind(u.id).first<any>();
+      left = Number(vol?.left_usd || 0);
+      right = Number(vol?.right_usd || 0);
+      matched = Number(vol?.matched_usd || 0);
+    } catch { /* table may not exist yet (pre-0048); return zeros */ }
+  }
 
   // Lifetime bonus totals.
   let totalBonusQta = 0, totalBonusUsd = 0, payoutCount = 0;
@@ -1459,6 +1478,15 @@ app.get('/referrals/binary', authMiddleware, async (c) => {
   const weakSide = Math.min(left, right);
   const pendingMatchable = Math.max(0, weakSide - matched);
 
+  // ── Downline 2x cap ("몸값"/self-value cap, owner rule 2026-08-26) ──
+  // A user's downline (left+right) may grow to at most 2 * self_usd. Raising
+  // their own deposit value raises this cap.
+  const DOWNLINE_CAP_MULTIPLE = 2;
+  const downlineUsd = left + right;
+  const capUsd = selfUsd * DOWNLINE_CAP_MULTIPLE;
+  const capRemainingUsd = Math.max(0, capUsd - downlineUsd);
+  const capFull = selfUsd > 0 && downlineUsd >= capUsd;
+
   return c.json({
     left_usd: left,
     right_usd: right,
@@ -1470,6 +1498,13 @@ app.get('/referrals/binary', authMiddleware, async (c) => {
     total_bonus_qta: totalBonusQta,
     total_bonus_usd: totalBonusUsd,
     payout_count: payoutCount,
+    // Downline 2x cap fields.
+    self_usd: selfUsd,
+    downline_usd: downlineUsd,
+    cap_multiple: DOWNLINE_CAP_MULTIPLE,
+    cap_usd: capUsd,
+    cap_remaining_usd: capRemainingUsd,
+    cap_full: capFull,
     // The bonus-rate table (so the UI can render it live).
     tiers: [
       { min: 100, max: 999, rate: 0.02 },

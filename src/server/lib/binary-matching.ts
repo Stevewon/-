@@ -57,22 +57,41 @@ function uuid(): string {
 // only the direct child sits on the sponsor's leg, but the member's future
 // VOLUME rolls up the whole ancestry (see rollUpDepositVolume).
 // ---------------------------------------------------------------------------
+// The downline (left+right) can grow to at most this multiple of the user's
+// own deposit total (self_usd / "몸값"). Owner rule (2026-08-26): 2x.
+export const DOWNLINE_CAP_MULTIPLE = 2;
+
 export async function placeInBinaryTree(
   db: any,
   newUserId: string,
   sponsorId: string,
-): Promise<'L' | 'R'> {
-  if (!sponsorId || sponsorId === newUserId) return 'L';
-  // Look at the sponsor's current leg volumes to pick the lighter side.
+): Promise<{ leg: 'L' | 'R'; capped: boolean; self_usd: number; downline_usd: number }> {
+  if (!sponsorId || sponsorId === newUserId) {
+    return { leg: 'L', capped: false, self_usd: 0, downline_usd: 0 };
+  }
+  // Look at the sponsor's current leg volumes to pick the lighter side, and
+  // check the 2x downline cap against the sponsor's own deposit total.
   let leg: 'L' | 'R' = 'L';
+  let selfUsd = 0;
+  let downlineUsd = 0;
   try {
     const vol = await db.prepare(
-      `SELECT left_usd, right_usd FROM binary_volume WHERE user_id = ?`
+      `SELECT left_usd, right_usd, self_usd FROM binary_volume WHERE user_id = ?`
     ).bind(sponsorId).first();
     const left = Number(vol?.left_usd || 0);
     const right = Number(vol?.right_usd || 0);
+    selfUsd = Number(vol?.self_usd || 0);
+    downlineUsd = left + right;
     leg = right < left ? 'R' : 'L'; // tie -> Left
   } catch { /* volume table might be empty; default Left */ }
+
+  // Downline is "full" when accumulated left+right already reached 2x the
+  // sponsor's own deposit value. We STILL record the tree position (so the
+  // member is attached and can be counted once the sponsor raises their own
+  // value), but flag it so the UI can warn. Deposit rollup enforces the hard
+  // cap on volume (see rollUpDepositVolume).
+  const cap = selfUsd * DOWNLINE_CAP_MULTIPLE;
+  const capped = selfUsd > 0 && downlineUsd >= cap;
 
   try {
     await db.prepare(
@@ -81,7 +100,7 @@ export async function placeInBinaryTree(
   } catch (e) {
     console.warn('[binary] placement failed:', e);
   }
-  return leg;
+  return { leg, capped, self_usd: selfUsd, downline_usd: downlineUsd };
 }
 
 // ---------------------------------------------------------------------------
@@ -96,6 +115,20 @@ export async function rollUpDepositVolume(
   if (!(usdValue > 0)) return;
 
   const price = await qtaPriceUsd(db);
+
+  // 1) The depositor's OWN self value ("몸값") grows by this deposit. This
+  //    raises THEIR downline cap (2x self_usd) so more downline can accumulate.
+  try {
+    await db.prepare(
+      `INSERT INTO binary_volume (user_id, left_usd, right_usd, matched_usd, self_usd, updated_at)
+       VALUES (?, 0, 0, 0, ?, datetime('now'))
+       ON CONFLICT(user_id) DO UPDATE SET
+         self_usd = self_usd + ?, updated_at = datetime('now')`
+    ).bind(memberId, usdValue, usdValue).run();
+  } catch (e) {
+    console.warn('[binary] self_usd bump failed:', e);
+  }
+
   const seen = new Set<string>([memberId]);
   let childId = memberId;
   let depth = 0;
@@ -114,23 +147,37 @@ export async function rollUpDepositVolume(
     if (!parentId || seen.has(parentId)) break;
     seen.add(parentId);
 
-    // Ensure a volume row exists, then add to the correct leg.
+    // Ensure a volume row exists, then add to the correct leg — but only up to
+    // the 2x cap. The parent's downline (left+right) may not exceed
+    // 2 * self_usd. Any excess spillover is dropped (never counts).
     try {
       await db.prepare(
-        `INSERT INTO binary_volume (user_id, left_usd, right_usd, matched_usd, updated_at)
-         VALUES (?, 0, 0, 0, datetime('now'))
+        `INSERT INTO binary_volume (user_id, left_usd, right_usd, matched_usd, self_usd, updated_at)
+         VALUES (?, 0, 0, 0, 0, datetime('now'))
          ON CONFLICT(user_id) DO NOTHING`
       ).bind(parentId).run();
-      const col = leg === 'R' ? 'right_usd' : 'left_usd';
-      await db.prepare(
-        `UPDATE binary_volume SET ${col} = ${col} + ?, updated_at = datetime('now') WHERE user_id = ?`
-      ).bind(usdValue, parentId).run();
+
+      const cur = await db.prepare(
+        `SELECT left_usd, right_usd, self_usd FROM binary_volume WHERE user_id = ?`
+      ).bind(parentId).first();
+      const left = Number(cur?.left_usd || 0);
+      const right = Number(cur?.right_usd || 0);
+      const selfUsd = Number(cur?.self_usd || 0);
+      const cap = selfUsd * DOWNLINE_CAP_MULTIPLE;
+      const room = Math.max(0, cap - (left + right)); // remaining capacity
+      const add = Math.min(usdValue, room);            // capped contribution
+
+      if (add > 0) {
+        const col = leg === 'R' ? 'right_usd' : 'left_usd';
+        await db.prepare(
+          `UPDATE binary_volume SET ${col} = ${col} + ?, updated_at = datetime('now') WHERE user_id = ?`
+        ).bind(add, parentId).run();
+        // Only worth re-checking the match if we actually added volume.
+        await runMatchForUser(db, parentId, price);
+      }
     } catch (e) {
       console.warn('[binary] volume bump failed:', e);
     }
-
-    // Run the match check for this ancestor.
-    await runMatchForUser(db, parentId, price);
 
     childId = parentId;
   }

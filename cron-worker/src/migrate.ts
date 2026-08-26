@@ -234,6 +234,42 @@ const MIGRATIONS: Migration[] = [
       `ALTER TABLE deposits ADD COLUMN binary_counted_at TEXT`,
     ],
   },
+  {
+    // 0049 — Binary downline 2x cap ("몸값"/self-value cap). Adds self_usd to
+    // binary_volume (a user's own accumulated deposit total). The downline
+    // (left+right) can grow to at most 2 * self_usd; excess spillover is
+    // dropped at rollup time, and rises again when the user deposits more.
+    // Mirrors /migrations/0049_binary_downline_cap.sql. NOT a seed → runs once.
+    id: '0049_binary_downline_cap',
+    statements: [
+      `ALTER TABLE binary_volume ADD COLUMN self_usd REAL NOT NULL DEFAULT 0`,
+      // Backfill self_usd from already-counted deposits (runs once). External:
+      `INSERT INTO binary_volume (user_id, left_usd, right_usd, matched_usd, self_usd, updated_at)
+       SELECT d.user_id, 0, 0, 0,
+              COALESCE(SUM(CAST(d.amount AS REAL) * COALESCE(c.price_usd, 1)), 0),
+              datetime('now')
+         FROM ext_deposits d
+         LEFT JOIN coins c ON c.symbol = d.coin_symbol
+        WHERE d.status IN ('credited','swept') AND d.binary_counted_at IS NOT NULL
+        GROUP BY d.user_id
+       ON CONFLICT(user_id) DO UPDATE SET
+         self_usd = binary_volume.self_usd + excluded.self_usd,
+         updated_at = datetime('now')`,
+      // Internal completed deposits (excluding admin-* compensation credits):
+      `INSERT INTO binary_volume (user_id, left_usd, right_usd, matched_usd, self_usd, updated_at)
+       SELECT d.user_id, 0, 0, 0,
+              COALESCE(SUM(d.amount * COALESCE(c.price_usd, 1)), 0),
+              datetime('now')
+         FROM deposits d
+         LEFT JOIN coins c ON c.symbol = d.coin_symbol
+        WHERE d.status = 'completed' AND d.binary_counted_at IS NOT NULL
+          AND COALESCE(d.tx_hash, '') NOT LIKE 'admin-%'
+        GROUP BY d.user_id
+       ON CONFLICT(user_id) DO UPDATE SET
+         self_usd = binary_volume.self_usd + excluded.self_usd,
+         updated_at = datetime('now')`,
+    ],
+  },
 ];
 
 export interface MigrateResult {

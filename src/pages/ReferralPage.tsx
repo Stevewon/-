@@ -7,7 +7,7 @@ import { showToast } from '../components/common/Toast';
 import DesktopPageLayout from '../components/common/DesktopPageLayout';
 import {
   Gift, Copy, Check, Users, TrendingUp, Share2, ChevronLeft,
-  CheckCircle2, Clock, Mail, Scale, Layers, Award,
+  CheckCircle2, Clock, Mail, Scale, Layers, Award, AlertTriangle,
 } from 'lucide-react';
 
 interface InvitedRow {
@@ -35,6 +35,13 @@ interface BinaryData {
   total_bonus_usd: number;
   payout_count: number;
   tiers: BinaryTier[];
+  // Downline 2x cap ("몸값"/self-value cap).
+  self_usd?: number;
+  downline_usd?: number;
+  cap_multiple?: number;
+  cap_usd?: number;
+  cap_remaining_usd?: number;
+  cap_full?: boolean;
 }
 interface MatchBonusRow {
   id: string;
@@ -554,6 +561,52 @@ export default function ReferralPage() {
               <p className="text-xs text-exchange-text-secondary leading-relaxed">
                 {t('referral.matchIntro')}
               </p>
+
+              {/* ── Downline 2x cap ("몸값"/self-value cap) ── */}
+              <div className="bg-exchange-bg/40 border border-exchange-border/60 rounded-xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="text-[11px] uppercase tracking-wider text-exchange-text-third">
+                    {t('referral.selfValue')}
+                  </div>
+                  <div className="text-lg font-bold text-exchange-text tabular-nums">
+                    {fmtUsd(binary?.self_usd || 0)}
+                  </div>
+                </div>
+                <div className="flex items-center justify-between">
+                  <div className="text-[11px] uppercase tracking-wider text-exchange-text-third">
+                    {t('referral.downlineCap', { x: binary?.cap_multiple || 2 })}
+                  </div>
+                  <div className="text-sm font-semibold text-exchange-text-secondary tabular-nums">
+                    {fmtUsd(binary?.downline_usd || 0)} / {fmtUsd(binary?.cap_usd || 0)}
+                  </div>
+                </div>
+                {/* Capacity progress bar */}
+                <div className="h-2 rounded-full bg-exchange-border/60 overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all ${
+                      binary?.cap_full ? 'bg-exchange-sell' : 'bg-exchange-buy'
+                    }`}
+                    style={{
+                      width: `${Math.min(100, (binary?.cap_usd || 0) > 0
+                        ? ((binary?.downline_usd || 0) / (binary!.cap_usd || 1)) * 100
+                        : 0)}%`,
+                    }}
+                  />
+                </div>
+                <div className="text-[10px] text-exchange-text-third">
+                  {t('referral.capRemaining')}: <span className="tabular-nums text-exchange-buy">{fmtUsd(binary?.cap_remaining_usd || 0)}</span>
+                </div>
+                {/* Downline-full warning */}
+                {binary?.cap_full && (
+                  <div className="flex items-start gap-2 bg-exchange-sell/10 border border-exchange-sell/40 rounded-lg p-3">
+                    <AlertTriangle size={14} className="text-exchange-sell shrink-0 mt-0.5" />
+                    <p className="text-[11px] leading-relaxed text-exchange-text-secondary">
+                      <span className="font-bold text-exchange-sell">{t('referral.capFullTitle')}</span>{' '}
+                      {t('referral.capFullBody', { x: binary?.cap_multiple || 2 })}
+                    </p>
+                  </div>
+                )}
+              </div>
 
               {/* Left / Right leg volumes */}
               <div className="grid grid-cols-2 gap-3">

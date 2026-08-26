@@ -29,6 +29,10 @@ function matchBonusRate(matchedUsd: number): number {
 
 const MATCH_UNIT_USD = 100;
 
+// Downline (left+right) may grow to at most this multiple of the user's own
+// deposit total (self_usd / "몸값"). Owner rule (2026-08-26): 2x.
+const DOWNLINE_CAP_MULTIPLE = 2;
+
 function uuid(): string {
   return (globalThis as any).crypto?.randomUUID?.() ??
     'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (ch) => {
@@ -112,6 +116,16 @@ async function runMatchForUser(env: Env, userId: string, qtaPrice: number): Prom
 // --------------------------------------------------------------------------
 async function rollUp(env: Env, memberId: string, usdValue: number, qtaPrice: number): Promise<void> {
   if (!(usdValue > 0)) return;
+
+  // 1) The depositor's OWN self value ("몸값") grows by this deposit, raising
+  //    THEIR downline cap (2x self_usd) so more downline can accumulate.
+  await env.DB.prepare(
+    `INSERT INTO binary_volume (user_id, left_usd, right_usd, matched_usd, self_usd, updated_at)
+     VALUES (?, 0, 0, 0, ?, datetime('now'))
+     ON CONFLICT(user_id) DO UPDATE SET
+       self_usd = self_usd + ?, updated_at = datetime('now')`
+  ).bind(memberId, usdValue, usdValue).run();
+
   const seen = new Set<string>([memberId]);
   let childId = memberId;
   let depth = 0;
@@ -127,16 +141,30 @@ async function rollUp(env: Env, memberId: string, usdValue: number, qtaPrice: nu
     seen.add(parentId);
 
     await env.DB.prepare(
-      `INSERT INTO binary_volume (user_id, left_usd, right_usd, matched_usd, updated_at)
-       VALUES (?, 0, 0, 0, datetime('now'))
+      `INSERT INTO binary_volume (user_id, left_usd, right_usd, matched_usd, self_usd, updated_at)
+       VALUES (?, 0, 0, 0, 0, datetime('now'))
        ON CONFLICT(user_id) DO NOTHING`
     ).bind(parentId).run();
-    const col = leg === 'R' ? 'right_usd' : 'left_usd';
-    await env.DB.prepare(
-      `UPDATE binary_volume SET ${col} = ${col} + ?, updated_at = datetime('now') WHERE user_id = ?`
-    ).bind(usdValue, parentId).run();
 
-    await runMatchForUser(env, parentId, qtaPrice);
+    // Enforce the 2x cap: the parent's downline (left+right) may not exceed
+    // 2 * self_usd. Any excess spillover is dropped (never counts).
+    const cur = await env.DB.prepare(
+      `SELECT left_usd, right_usd, self_usd FROM binary_volume WHERE user_id = ?`
+    ).bind(parentId).first<any>();
+    const left = Number(cur?.left_usd || 0);
+    const right = Number(cur?.right_usd || 0);
+    const selfUsd = Number(cur?.self_usd || 0);
+    const cap = selfUsd * DOWNLINE_CAP_MULTIPLE;
+    const room = Math.max(0, cap - (left + right));
+    const add = Math.min(usdValue, room);
+
+    if (add > 0) {
+      const col = leg === 'R' ? 'right_usd' : 'left_usd';
+      await env.DB.prepare(
+        `UPDATE binary_volume SET ${col} = ${col} + ?, updated_at = datetime('now') WHERE user_id = ?`
+      ).bind(add, parentId).run();
+      await runMatchForUser(env, parentId, qtaPrice);
+    }
     childId = parentId;
   }
 }
