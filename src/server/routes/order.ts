@@ -113,6 +113,77 @@ app.post('/', authMiddleware, rlPlaceOrder, requireKyc('approved'), async (c) =>
   }
 
   // ============================================================================
+  // TEMPORARY QTA DAILY SELL CAP  (회사 정책: 당분간 일반 매도자 하루 매도 제한)
+  // ----------------------------------------------------------------------------
+  //  • Applies ONLY to SELL orders on the QTA base market (QTA-*).
+  //  • Cap = KRW 50,000 valued at that day's USDT price → $35.71 (@1,400 KRW/$).
+  //  • FILL-BASED: we sum the seller's ALREADY-FILLED QTA notional for the
+  //    current KST day (from `trades`) and add this order's max notional; if the
+  //    total would exceed the cap the order is rejected up-front.
+  //  • The COMPANY account (admin@quantaex.io / role='admin') is fully EXEMPT —
+  //    it can sell any quantity, any time (treasury / market-making).
+  // ============================================================================
+  const isCompanyAccount = user.role === 'admin' || user.email === 'admin@quantaex.io';
+  if (side === 'sell' && base === 'QTA' && !isCompanyAccount) {
+    // 50,000 KRW ÷ 1,400 KRW/USD = $35.7142857…  (USDT ≈ $1 → USDT notional)
+    const QTA_DAILY_SELL_CAP_USDT = 50000 / 1400;
+
+    // KST (UTC+9) day boundary expressed in UTC for the SQLite `created_at`
+    // comparison. The KST day starts at UTC 15:00 of the previous calendar day.
+    const nowKst = new Date(Date.now() + 9 * 3600 * 1000);
+    const kstMidnightUtcMs = Date.UTC(
+      nowKst.getUTCFullYear(), nowKst.getUTCMonth(), nowKst.getUTCDate(),
+    ) - 9 * 3600 * 1000;
+    const dayStartUtc = new Date(kstMidnightUtcMs).toISOString().slice(0, 19).replace('T', ' ');
+
+    // Already-filled QTA sell notional (quote = USDT) for this seller today.
+    const filledRow = await c.env.DB.prepare(
+      `SELECT COALESCE(SUM(t.total), 0) AS filled
+         FROM trades t
+         JOIN markets m ON m.id = t.market_id
+        WHERE t.seller_id = ?
+          AND m.base_coin = 'QTA'
+          AND t.created_at >= ?`
+    ).bind(user.id, dayStartUtc).first<{ filled: number }>().catch(() => null);
+    const filledTodayUsdt = Number(filledRow?.filled || 0);
+
+    // Estimated notional of THIS order (worst case → best-bid / limit price).
+    let newNotionalUsdt = 0;
+    if (isPricedOrder) {
+      newNotionalUsdt = price * amount; // quote units (USDT)
+    } else {
+      // Market sell: value at current best bid, falling back to the coin's
+      // reference USD price so a thin book can't bypass the cap.
+      const bestBid = await c.env.DB.prepare(
+        `SELECT MAX(price) AS p FROM orders
+          WHERE market_id = ? AND side = 'buy' AND status IN ('open','partial')`
+      ).bind(market.id).first<{ p: number }>().catch(() => null);
+      const refPrice = await c.env.DB.prepare(
+        'SELECT price_usd FROM coins WHERE symbol = ?'
+      ).bind(base).first<{ price_usd: number }>().catch(() => null);
+      const estPrice = (bestBid?.p && bestBid.p > 0)
+        ? bestBid.p
+        : (refPrice?.price_usd && refPrice.price_usd > 0 ? refPrice.price_usd : 0);
+      newNotionalUsdt = estPrice * amount;
+    }
+
+    if (filledTodayUsdt + newNotionalUsdt > QTA_DAILY_SELL_CAP_USDT + 1e-9) {
+      const remaining = Math.max(0, QTA_DAILY_SELL_CAP_USDT - filledTodayUsdt);
+      return c.json(
+        {
+          error: 'QTA_DAILY_SELL_LIMIT',
+          message: 'Daily QTA sell limit reached. You can sell QTA worth up to 50,000 KRW (~$35.71 in USDT) per day. This limit is temporary.',
+          cap_usdt: QTA_DAILY_SELL_CAP_USDT,
+          cap_krw: 50000,
+          filled_today_usdt: filledTodayUsdt,
+          remaining_usdt: remaining,
+        },
+        400,
+      );
+    }
+  }
+
+  // ============================================================================
   // Balance check & lock
   // ----------------------------------------------------------------------------
   // For LIMIT orders we know the exact cost up-front and lock accordingly.

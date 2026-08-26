@@ -271,6 +271,7 @@ const en = {
   'trade.nextTier': 'Next tier at',
   'trade.postOnlyRejected': 'Post-Only rejected — would take liquidity',
   'trade.fokRejected': 'FOK rejected — cannot fully fill',
+  'trade.qtaSellLimit': 'Daily QTA sell limit reached. You can sell QTA worth up to {krw} KRW (~${usd} in USDT) per day (temporary policy). Remaining today: about {remainKrw} KRW.',
   'trade.stopPending': 'Stop order pending — waiting for trigger',
 
   // Market Info

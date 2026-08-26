@@ -271,6 +271,7 @@ const ko = {
   'trade.nextTier': '다음 등급까지',
   'trade.postOnlyRejected': 'Post-Only 거절됨 — 즉시 체결 가능 상태',
   'trade.fokRejected': 'FOK 거절됨 — 전량 체결 불가',
+  'trade.qtaSellLimit': 'QTA 일일 매도 한도에 도달했습니다. 하루에 최대 {krw}원(테더 시세 기준 약 ${usd})까지만 매도할 수 있습니다(당분간 적용되는 정책). 오늘 남은 한도: 약 {remainKrw}원.',
   'trade.stopPending': '스톱 주문 접수됨 — 트리거 대기 중',
 
   // Market Info

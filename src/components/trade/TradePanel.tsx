@@ -106,11 +106,21 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
       fetchOpenOrders(symbol);
       if (onComplete) setTimeout(onComplete, 1500);
     } catch (err: any) {
-      const rawErr = err.response?.data?.error || err.response?.data?.message || t('trade.orderFailed');
+      const data = err.response?.data || {};
+      const rawErr = data.error || data.message || t('trade.orderFailed');
       let shown = rawErr;
       // Friendly mapping for TIF rejections
       const lower = String(rawErr).toLowerCase();
-      if (lower.includes('post_only') || lower.includes('post-only')) shown = t('trade.postOnlyRejected');
+      if (rawErr === 'QTA_DAILY_SELL_LIMIT') {
+        const remaining = Number(data.remaining_usdt || 0);
+        const remainKrw = Math.max(0, Math.floor(remaining * 1400));
+        shown = t('trade.qtaSellLimit', {
+          krw: '50,000',
+          usd: '35.71',
+          remainKrw: remainKrw.toLocaleString('en-US'),
+        });
+      }
+      else if (lower.includes('post_only') || lower.includes('post-only')) shown = t('trade.postOnlyRejected');
       else if (lower.includes('fok') || lower.includes('fill or kill')) shown = t('trade.fokRejected');
       setMessage(shown);
       showToast('error', t('trade.orderFailed'), shown);
