@@ -88,7 +88,15 @@ async function creditQta(c: any, userId: string, qta: number) {
 }
 
 // Pay referral match bonuses for a dividend of `usdValue` earned by `stakerId`.
+//
+// ★ RETIRED (owner rule 2026-08-26): the old L1 10% / L2 5% dividend-match
+//   program has been replaced by the binary left/right MATCHING BONUS. The old
+//   "Referral Match — Level 1/Level 2" panel was removed from the Earn page and
+//   this payout is now DISABLED. Kept as a no-op (guarded below) for audit
+//   history; flip DIVIDEND_REFERRAL_MATCH_ENABLED to re-enable if ever needed.
+const DIVIDEND_REFERRAL_MATCH_ENABLED = false;
 async function payReferralMatch(c: any, stakerId: string, usdValue: number, price: number, positionId: string) {
+  if (!DIVIDEND_REFERRAL_MATCH_ENABLED) return; // retired — see note above
   if (usdValue <= 0) return;
   // L1: who referred the staker?
   const l1 = await c.env.DB.prepare(

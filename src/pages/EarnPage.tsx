@@ -8,7 +8,7 @@ import DesktopPageLayout from '../components/common/DesktopPageLayout';
 import CoinIcon from '../components/common/CoinIcon';
 import { showToast } from '../components/common/Toast';
 import { formatAmount } from '../utils/format';
-import { X, Lock, Loader2, Star, Crown, ShieldCheck, Gift, TrendingUp, Wallet, AlertTriangle, Users } from 'lucide-react';
+import { X, Lock, Loader2, Star, Crown, ShieldCheck, Gift, TrendingUp, Wallet, AlertTriangle, Scale } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
 // QTA ADVANCED EARN — STAKE. EARN. GROW.
@@ -316,17 +316,66 @@ export default function EarnPage() {
         </div>
       )}
 
-      {/* Referral match info */}
-      <div className="bg-exchange-card/60 border border-exchange-border rounded-2xl p-4 mb-4">
-        <div className="flex items-center gap-2 mb-2">
-          <Users size={16} className="text-exchange-yellow" />
-          <span className="text-[14px] font-bold text-exchange-text">{t('earn.referralMatch')}</span>
+      {/* ══════════════════════════════════════════════════════════════
+          BINARY LEFT/RIGHT MATCHING BONUS — rate table
+          (replaces the retired 1대/2대 Referral Match panel)
+         ══════════════════════════════════════════════════════════════ */}
+      <div className="bg-exchange-card/60 border border-exchange-border rounded-2xl overflow-hidden mb-4">
+        <div className="flex items-center gap-2 px-4 pt-4 pb-2">
+          <div className="w-8 h-8 rounded-lg bg-exchange-yellow/15 flex items-center justify-center">
+            <Scale size={16} className="text-exchange-yellow" />
+          </div>
+          <div>
+            <div className="text-[14px] font-bold text-exchange-text">{t('earn.matchTitle')}</div>
+            <div className="text-[11px] text-exchange-text-third">{t('earn.matchSubtitle')}</div>
+          </div>
         </div>
-        <div className="flex gap-6 text-[13px]">
-          <div><span className="text-exchange-text-third">{t('earn.level1')}: </span><span className="text-exchange-buy font-bold">10%</span></div>
-          <div><span className="text-exchange-text-third">{t('earn.level2')}: </span><span className="text-exchange-buy font-bold">5%</span></div>
+
+        {/* Intro / how-it-works */}
+        <p className="px-4 pb-3 text-[11px] text-exchange-text-secondary leading-relaxed">
+          {t('earn.matchIntro')}
+        </p>
+
+        {/* Rate table */}
+        <div className="px-4 pb-4">
+          <div className="rounded-xl border border-exchange-border/70 overflow-hidden">
+            {/* header row */}
+            <div className="grid grid-cols-2 bg-exchange-bg/60 text-[11px] font-bold text-exchange-text-third uppercase tracking-wider">
+              <div className="px-3 py-2 border-r border-exchange-border/70">{t('earn.matchColAmount')}</div>
+              <div className="px-3 py-2 text-right">{t('earn.matchColRate')}</div>
+            </div>
+            {[
+              { band: '$100 ~ $999', rate: '2%' },
+              { band: '$1,000 ~ $4,999', rate: '3%' },
+              { band: '$5,000 ~ $9,999', rate: '4%' },
+              { band: '$10,000 ~ $49,999', rate: '5%' },
+              { band: '$50,000 ~ $99,999', rate: '6%' },
+              { band: '$100,000 ~', rate: '7%' },
+            ].map((row, i) => (
+              <div
+                key={row.band}
+                className={`grid grid-cols-2 text-[13px] ${
+                  i % 2 === 0 ? 'bg-transparent' : 'bg-exchange-bg/30'
+                } border-t border-exchange-border/50`}
+              >
+                <div className="px-3 py-2.5 tabular-nums text-exchange-text border-r border-exchange-border/50">
+                  {row.band}
+                </div>
+                <div className="px-3 py-2.5 text-right tabular-nums font-bold text-exchange-buy">
+                  {row.rate}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* format / rules note */}
+          <ul className="mt-3 space-y-1 text-[11px] text-exchange-text-third leading-relaxed">
+            <li>• {t('earn.matchNote1')}</li>
+            <li>• {t('earn.matchNote2')}</li>
+            <li>• {t('earn.matchNote3')}</li>
+            <li>• {t('earn.matchNote4')}</li>
+          </ul>
         </div>
-        <p className="text-[11px] text-exchange-text-third mt-2">{t('earn.referralNote')}</p>
       </div>
 
       {/* Rules note */}
