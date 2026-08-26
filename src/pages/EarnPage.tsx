@@ -384,8 +384,8 @@ function TierCard({ product, price, onStake }: { product: Product; price: number
   const Icon = meta.icon;
 
   const bandLabel = product.max_usd >= 1_000_000
-    ? `$${formatAmount(product.min_usd)}+`
-    : `$${formatAmount(product.min_usd)} ~ $${formatAmount(product.max_usd)}`;
+    ? `$${product.min_usd.toLocaleString('en-US')}+`
+    : `$${product.min_usd.toLocaleString('en-US')} ~ $${product.max_usd.toLocaleString('en-US')}`;
 
   const minQta = usdToQta(product.min_usd, price);
   const maxQta = usdToQta(product.max_usd, price);
@@ -493,8 +493,14 @@ function SubscribeModal({ product, qtaBalance, qtaPrice, onClose, onDone }: {
   };
 
   const maxUsdForBalance = qtaBalance * qtaPrice;
-  const quickTargets = [product.min_usd, Math.round((product.min_usd + product.max_usd) / 2), product.max_usd]
-    .filter((v, i, a) => a.indexOf(v) === i && v <= (product.max_usd >= 1_000_000 ? product.min_usd * 4 : product.max_usd));
+  // Fixed quick-add increments requested by the owner: $100 / $1,000 / $5,000.
+  // Only show the increments that fit inside this tier's USD band; tapping a
+  // chip ADDS its value to the current target (accumulates), clamped to max.
+  const quickIncrements = [100, 1000, 5000].filter((v) => v <= product.max_usd);
+  const addUsd = (inc: number) => {
+    const next = Math.min(product.max_usd, (parseFloat(usd) || 0) + inc);
+    setUsd(String(next));
+  };
 
   return createPortal(
     <div className="fixed inset-0 z-[100] flex items-end sm:items-center sm:justify-center">
@@ -521,17 +527,17 @@ function SubscribeModal({ product, qtaBalance, qtaPrice, onClose, onDone }: {
               placeholder={`$${product.min_usd}`}
             />
             <div className="flex gap-2 mt-2">
-              {quickTargets.map((v) => (
-                <button key={v} onClick={() => setUsd(String(v))}
-                  className="flex-1 text-[12px] py-1.5 rounded-lg bg-exchange-input text-exchange-text-secondary hover:text-exchange-yellow">
-                  ${formatAmount(v)}
+              {quickIncrements.map((v) => (
+                <button key={v} onClick={() => addUsd(v)}
+                  className="flex-1 text-[12px] py-1.5 rounded-lg bg-exchange-input text-exchange-text-secondary hover:text-exchange-yellow font-semibold tabular-nums">
+                  +${v.toLocaleString('en-US')}
                 </button>
               ))}
             </div>
             <p className="text-[11px] text-exchange-text-third mt-1.5">
               {t('earn.rangeHint', {
-                min: `$${formatAmount(product.min_usd)}`,
-                max: product.max_usd >= 1_000_000 ? '∞' : `$${formatAmount(product.max_usd)}`,
+                min: `$${product.min_usd.toLocaleString('en-US')}`,
+                max: product.max_usd >= 1_000_000 ? '∞' : `$${product.max_usd.toLocaleString('en-US')}`,
               })}
             </p>
           </div>
@@ -545,7 +551,7 @@ function SubscribeModal({ product, qtaBalance, qtaPrice, onClose, onDone }: {
               </span>
             </div>
             <div className="text-[10px] text-exchange-text-third mt-1 text-right">
-              @ ${qtaPrice.toFixed(5)} / QTA · ≈ ${formatAmount(targetUsd)}
+              @ ${qtaPrice.toFixed(5)} / QTA · ≈ ${targetUsd.toLocaleString('en-US')}
             </div>
           </div>
 
