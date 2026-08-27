@@ -3,6 +3,7 @@ import ko from './ko';
 import en from './en';
 import ja from './ja';
 import zh from './zh';
+import zhTW from './zh-TW';
 import { LANGUAGE_CODES, RTL_LANGS, isSelectableLang } from './languages';
 
 /**
@@ -29,7 +30,7 @@ const translations: Record<string, Record<string, string>> = {
   // Major-country languages fall back to English until dedicated bundles are
   // added. They are listed so `t()` resolves and the selector works today.
   zh,
-  'zh-TW': en,
+  'zh-TW': zhTW,
   ja,
   es: en,
   pt: en,
