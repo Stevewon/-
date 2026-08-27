@@ -48,8 +48,11 @@ function priceOf(sym) {
 }
 
 function runMatchForUser(userId, qtaPrice) {
-  const vol = db.prepare('SELECT left_usd,right_usd,matched_usd FROM binary_volume WHERE user_id=?').get(userId);
+  const vol = db.prepare('SELECT left_usd,right_usd,matched_usd,self_usd FROM binary_volume WHERE user_id=?').get(userId);
   if (!vol) return;
+  // OWNER RULE (2026-08-27): no self-stake (self_usd<=0) -> no payout at all.
+  const selfUsd = Number(vol.self_usd||0);
+  if (selfUsd <= 0) { console.log(`  [blocked] user=${userId} self_usd=0 -> not staked, no bonus`); return; }
   const left = Number(vol.left_usd||0), right = Number(vol.right_usd||0), matched = Number(vol.matched_usd||0);
   const pairable = Math.min(left, right) - matched;
   if (pairable < MATCH_UNIT_USD) return;

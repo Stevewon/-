@@ -59,9 +59,17 @@ async function priceOf(env: Env, symbol: string): Promise<number> {
 // --------------------------------------------------------------------------
 async function runMatchForUser(env: Env, userId: string, qtaPrice: number): Promise<void> {
   const vol = await env.DB.prepare(
-    `SELECT left_usd, right_usd, matched_usd FROM binary_volume WHERE user_id = ?`
+    `SELECT left_usd, right_usd, matched_usd, self_usd FROM binary_volume WHERE user_id = ?`
   ).bind(userId).first<any>();
   if (!vol) return;
+
+  // ⚑ OWNER RULE (2026-08-27): a member earns NOTHING from their downline's
+  //   staking/deposits unless THEY THEMSELVES have staked/deposited. If the
+  //   member's own value (self_usd, "몸값") is 0, matching is fully blocked —
+  //   no bonus, no dividend, not a single unit. Volume still accumulates so it
+  //   can be matched later once the member stakes; it is simply not paid now.
+  const selfUsd = Number(vol.self_usd || 0);
+  if (selfUsd <= 0) return; // not staked -> not eligible for any payout
 
   const left = Number(vol.left_usd || 0);
   const right = Number(vol.right_usd || 0);

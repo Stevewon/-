@@ -214,6 +214,36 @@ app.post('/subscribe', authMiddleware, async (c) => {
   ).bind(productId).first<any>();
   if (!product) return c.json({ error: 'Product not found' }, 404);
 
+  // ── OWNER RULE (2026-08-27): SPONSOR-MUST-STAKE-FIRST gate ────────────────
+  // A member may stake ONLY IF their DIRECT sponsor (binary_parent_id) has
+  // themselves staked (holds at least one ACTIVE staking position). If the
+  // sponsor has not staked, the whole downline is blocked from staking at all
+  // — not just from earning. Top-level users (no sponsor) are unaffected.
+  try {
+    const me = await c.env.DB.prepare(
+      `SELECT binary_parent_id FROM users WHERE id = ?`
+    ).bind(user.id).first<any>();
+    const sponsorId = me?.binary_parent_id || null;
+    if (sponsorId && sponsorId !== user.id) {
+      const sponsorStake = await c.env.DB.prepare(
+        `SELECT 1 FROM staking_positions
+          WHERE user_id = ? AND status = 'active' LIMIT 1`
+      ).bind(sponsorId).first<any>();
+      if (!sponsorStake) {
+        return c.json({
+          error: 'SPONSOR_NOT_STAKED',
+          message: '추천인(스폰서)이 먼저 스테이킹을 완료해야 스테이킹이 가능합니다.',
+        }, 403);
+      }
+    }
+  } catch (e) {
+    // If the sponsor lookup itself fails (schema gap), fail SAFE = block,
+    // since the owner rule is a hard gate. Log for diagnosis.
+    console.warn('[earn] sponsor-stake gate lookup failed:', e);
+    return c.json({ error: 'SPONSOR_CHECK_FAILED' }, 503);
+  }
+  // ──────────────────────────────────────────────────────────────────────────
+
   // Resolve the stake into a QTA quantity + its USD value at the live price.
   // Prefer an explicit QTA quantity; otherwise convert the USD target.
   let qtaQty = Number(body.amount_qta);
