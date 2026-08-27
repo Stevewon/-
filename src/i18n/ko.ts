@@ -1434,6 +1434,8 @@ const ko = {
   'auth.verifyEmailBannerTitle': '이메일을 인증해 주세요',
   'auth.verifyEmailBannerDesc': '인증 완료 시 100 QX 보너스가 지급됩니다.',
   'auth.verifyEmailBannerBtn': '메일 재전송',
+  'auth.verifyEmailBannerError': '전송에 실패했습니다. 다시 시도해 주세요.',
+  'auth.verifyEmailBannerRetry': '다시 시도',
   'auth.kycRequiredTitle': '신원 인증이 필요합니다',
   'auth.kycRequiredDesc': 'KYC 를 완료하면 거래와 출금이 가능합니다.',
   'auth.kycRequiredBtn': 'KYC 시작',

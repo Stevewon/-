@@ -1632,6 +1632,54 @@ app.post('/request-verification', rlReqVerify, turnstile, async (c) => {
   return c.json({ ok: true, message: 'If the email exists, a verification link was sent.' });
 });
 
+// POST /api/auth/resend-verification (logged-in only) -> resends token link
+// to the JWT user's OWN email. No Turnstile required because the caller is
+// already authenticated (this is what the in-app EmailVerifyBanner uses).
+app.post('/resend-verification', rlReqVerify, authMiddleware, async (c) => {
+  const u = c.get('user');
+  const user = await c.env.DB.prepare(
+    'SELECT id, email, email_verified_at FROM users WHERE id = ?'
+  ).bind(u.id).first<{ id: string; email: string; email_verified_at: string | null }>();
+
+  if (!user) return c.json({ error: 'User not found' }, 404);
+  if (user.email_verified_at) {
+    return c.json({ ok: true, alreadyVerified: true, message: 'Email already verified' });
+  }
+
+  const token = randomToken(32);
+  const tokenHash = await sha256Hex(token);
+  const expires = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
+  try {
+    await c.env.DB.prepare(
+      `INSERT INTO email_verifications (id, user_id, email, token_hash, expires_at)
+       VALUES (?, ?, ?, ?, ?)`
+    ).bind(uuid(), user.id, user.email, tokenHash, expires).run();
+  } catch (e) {
+    console.error('[resend-verification] insert failed:', e);
+    return c.json({ error: 'Service temporarily unavailable' }, 500);
+  }
+
+  const appUrl = (c.env as any).APP_URL || 'https://quantaex.io';
+  const link = `${appUrl}/verify-email?token=${token}`;
+  const mail = await sendMail(c.env as any, {
+    to: user.email,
+    subject: 'Verify your QuantaEX email',
+    html: templateBasic(
+      'Verify your email',
+      `Click the button below to confirm this is your email address. The link expires in 24 hours.`,
+      { label: 'Verify email', url: link },
+    ),
+    text: `Verify: ${link}`,
+  });
+
+  return c.json({
+    ok: true,
+    message: 'Verification email sent',
+    sent: mail.sent,
+    ...(mail.sent ? {} : { dev_token: token, dev_url: link }),
+  });
+});
+
 app.post('/verify-email', async (c) => {
   const { token } = await c.req.json().catch(() => ({ token: '' }));
   if (!token) return c.json({ error: 'Token required' }, 400);

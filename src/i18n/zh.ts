@@ -1332,6 +1332,8 @@ const zh = {
   'auth.verifyEmailBannerTitle': '请验证您的邮箱',
   'auth.verifyEmailBannerDesc': '在完成验证前，您的 100 QX 奖励将被锁定。',
   'auth.verifyEmailBannerBtn': '重新发送链接',
+  'auth.verifyEmailBannerError': '发送失败，请重试。',
+  'auth.verifyEmailBannerRetry': '重试',
   'auth.kycRequiredTitle': '需要进行身份验证',
   'auth.kycRequiredDesc': '完成 KYC 以解锁交易和提现。',
   'auth.kycRequiredBtn': '开始 KYC',

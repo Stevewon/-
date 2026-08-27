@@ -17,6 +17,7 @@ export default function EmailVerifyBanner() {
   );
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
+  const [error, setError] = useState(false);
 
   if (!user) return null;
   // Anything truthy (verified) hides the banner
@@ -24,11 +25,16 @@ export default function EmailVerifyBanner() {
   if (dismissed) return null;
 
   const resend = async () => {
-    if (!user.email) return;
     setSending(true);
+    setError(false);
     try {
-      await api.post('/auth/request-verification', { email: user.email });
+      // Logged-in endpoint: no Turnstile required, resolves the user's own
+      // email server-side from the JWT.
+      await api.post('/auth/resend-verification', {});
       setSent(true);
+    } catch (e) {
+      console.error('[EmailVerifyBanner] resend failed:', e);
+      setError(true);
     } finally {
       setSending(false);
     }
@@ -52,12 +58,17 @@ export default function EmailVerifyBanner() {
           <span className="text-[11px] opacity-80 whitespace-nowrap">✓ sent</span>
         ) : (
           <>
+            {error && (
+              <span className="text-[11px] text-red-400 whitespace-nowrap">
+                {t('auth.verifyEmailBannerError')}
+              </span>
+            )}
             <button
               onClick={resend}
               disabled={sending}
               className="px-2.5 py-1 rounded bg-exchange-yellow text-black font-semibold text-[11px] hover:bg-[#d9a60a] disabled:opacity-60 whitespace-nowrap"
             >
-              {t('auth.verifyEmailBannerBtn')}
+              {sending ? '...' : (error ? t('auth.verifyEmailBannerRetry') : t('auth.verifyEmailBannerBtn'))}
             </button>
             <Link
               to="/verify-email"

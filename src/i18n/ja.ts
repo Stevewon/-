@@ -1445,6 +1445,8 @@ const ja = {
   'auth.verifyEmailBannerTitle': 'メールアドレスを認証してください',
   'auth.verifyEmailBannerDesc': '認証が完了するまで、100 QXボーナスはロックされます。',
   'auth.verifyEmailBannerBtn': 'リンクを再送信',
+  'auth.verifyEmailBannerError': '送信に失敗しました。もう一度お試しください。',
+  'auth.verifyEmailBannerRetry': '再試行',
   'auth.kycRequiredTitle': '本人確認が必要です',
   'auth.kycRequiredDesc': 'KYCを完了すると、取引と出金が利用できます。',
   'auth.kycRequiredBtn': 'KYCを開始',

@@ -1445,6 +1445,8 @@ const en = {
   'auth.verifyEmailBannerTitle': 'Please verify your email',
   'auth.verifyEmailBannerDesc': 'Your 100 QX bonus is locked until you verify.',
   'auth.verifyEmailBannerBtn': 'Resend link',
+  'auth.verifyEmailBannerError': 'Failed to send. Please try again.',
+  'auth.verifyEmailBannerRetry': 'Retry',
   'auth.kycRequiredTitle': 'Identity verification required',
   'auth.kycRequiredDesc': 'Complete KYC to unlock trading and withdrawals.',
   'auth.kycRequiredBtn': 'Start KYC',
