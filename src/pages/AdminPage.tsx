@@ -1056,12 +1056,68 @@ function ManualDepositModal({ onClose, onSuccess, t }: any) {
   const [submitting, setSubmitting] = useState(false);
   const [coins, setCoins] = useState<any[]>([]);
 
+  // --- User search / autocomplete state ---
+  const [search, setSearch] = useState('');            // text typed into the box
+  const [results, setResults] = useState<any[]>([]);   // matched users
+  const [searching, setSearching] = useState(false);
+  const [showDropdown, setShowDropdown] = useState(false);
+  const [selectedUser, setSelectedUser] = useState<any>(null); // chosen user object
+
+  const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
   useEffect(() => {
     api.get('/admin/coins').then(r => setCoins(r.data.filter((c: any) => c.is_active))).catch(() => {});
   }, []);
 
+  // Debounced search by nickname / email against GET /admin/users?q=
+  useEffect(() => {
+    const term = search.trim();
+    // A raw UUID pasted directly is used as-is (no lookup needed).
+    if (UUID_RE.test(term)) {
+      setUserId(term);
+      setSelectedUser(null);
+      setResults([]);
+      setShowDropdown(false);
+      return;
+    }
+    // Typing changed away from the selected user -> clear the locked selection.
+    if (selectedUser) { setSelectedUser(null); setUserId(''); }
+    if (term.length < 2) { setResults([]); setShowDropdown(false); return; }
+    let cancelled = false;
+    setSearching(true);
+    const timer = setTimeout(async () => {
+      try {
+        const res = await api.get(`/admin/users?q=${encodeURIComponent(term)}&limit=8`);
+        if (cancelled) return;
+        setResults(res.data.rows || []);
+        setShowDropdown(true);
+      } catch {
+        if (!cancelled) { setResults([]); setShowDropdown(false); }
+      } finally {
+        if (!cancelled) setSearching(false);
+      }
+    }, 300);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [search]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const pickUser = (u: any) => {
+    setSelectedUser(u);
+    setUserId(u.id);
+    setSearch(u.nickname || u.email || u.id);
+    setShowDropdown(false);
+    setResults([]);
+  };
+
+  const clearUser = () => {
+    setSelectedUser(null);
+    setUserId('');
+    setSearch('');
+    setResults([]);
+    setShowDropdown(false);
+  };
+
   const submit = async () => {
-    if (!userId.trim() || !amount || Number(amount) <= 0) {
+    if (!userId.trim() || !UUID_RE.test(userId.trim()) || !amount || Number(amount) <= 0) {
       showToast('warning', t('common.error'), t('admin.manualDepositInvalid'));
       return;
     }
@@ -1090,9 +1146,52 @@ function ManualDepositModal({ onClose, onSuccess, t }: any) {
           <button onClick={onClose} className="text-exchange-text-third hover:text-exchange-text"><X size={18} /></button>
         </div>
         <div className="space-y-3">
-          <div>
-            <label className="text-xs text-exchange-text-third mb-1 block">User ID</label>
-            <input type="text" value={userId} onChange={e => setUserId(e.target.value)} className="input-field text-xs font-mono" placeholder="c12951f6-..." />
+          <div className="relative">
+            <label className="text-xs text-exchange-text-third mb-1 block">{t('admin.manualDepositRecipient')}</label>
+            {selectedUser ? (
+              // Locked-in selected user chip
+              <div className="input-field text-sm flex items-center justify-between gap-2 !py-2">
+                <div className="min-w-0">
+                  <div className="truncate font-medium">{selectedUser.nickname || '—'}</div>
+                  <div className="truncate text-[11px] text-exchange-text-third">{selectedUser.email} · <span className="font-mono">{String(selectedUser.id).slice(0, 8)}…</span></div>
+                </div>
+                <button type="button" onClick={clearUser} className="text-exchange-text-third hover:text-exchange-text shrink-0"><X size={16} /></button>
+              </div>
+            ) : (
+              <div className="relative">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-exchange-text-third pointer-events-none" />
+                <input
+                  type="text"
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  onFocus={() => { if (results.length) setShowDropdown(true); }}
+                  className="input-field text-sm !pl-9"
+                  placeholder={t('admin.manualDepositSearchPh')}
+                  autoComplete="off"
+                />
+                {searching && <RefreshCw size={13} className="absolute right-3 top-1/2 -translate-y-1/2 text-exchange-text-third animate-spin" />}
+              </div>
+            )}
+            {showDropdown && !selectedUser && (
+              <div className="absolute z-10 mt-1 w-full max-h-56 overflow-y-auto bg-exchange-card border border-exchange-border rounded-lg shadow-lg">
+                {results.length === 0 ? (
+                  <div className="px-3 py-2.5 text-xs text-exchange-text-third">{t('admin.manualDepositNoResults')}</div>
+                ) : results.map((u: any) => (
+                  <button
+                    key={u.id}
+                    type="button"
+                    onClick={() => pickUser(u)}
+                    className="w-full text-left px-3 py-2 hover:bg-exchange-hover flex items-center justify-between gap-2 border-b border-exchange-border/50 last:border-0"
+                  >
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium">{u.nickname || '—'}</div>
+                      <div className="truncate text-[11px] text-exchange-text-third">{u.email}</div>
+                    </div>
+                    <span className="font-mono text-[10px] text-exchange-text-third shrink-0">{String(u.id).slice(0, 8)}…</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           <div>
             <label className="text-xs text-exchange-text-third mb-1 block">{t('admin.coin')}</label>
