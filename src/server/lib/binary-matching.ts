@@ -10,24 +10,22 @@
 //   the scheduled cron tick (binaryMatchingTick). Do NOT re-implement roll-up /
 //   match logic here — it caused a duplicate/dead-code confusion before.
 //
-// Policy (owner, 2026-08-27 — supersedes the volume-tie rule):
-//   • Each user is AUTO-PLACED under their sponsor by ALTERNATING left/right
-//     (좌우 번갈아). We balance by the sponsor's current head-count per leg and
-//     alternate on ties, so members never pile onto one side before deposits.
+// Policy (owner, 2026-08-27 — MANUAL sponsor-chosen placement):
+//   • At signup we ONLY attach the new member to their sponsor
+//     (binary_parent_id). We DO NOT auto-pick a leg. binary_leg stays NULL
+//     ("미배치") until the SPONSOR themselves chooses Left or Right — exactly
+//     ONCE, irreversibly — from their dashboard (see assignBinaryLeg).
+//   • A member's VOLUME only rolls up once their leg is assigned (NULL leg =>
+//     not yet counted). See cron-worker/src/binary-matching.ts.
 //   • Downline (left+right) may grow to at most 2x the user's own deposit
 //     total (self_usd / "몸값"). Enforced on roll-up in the cron worker.
 // ============================================================================
 
 // ---------------------------------------------------------------------------
-// PLACEMENT — put a new user into their sponsor's leg, ALTERNATING left/right.
-// The sponsor is the direct referrer (matched by ref_code at signup).
-// We count how many members the sponsor already has on each leg and place the
-// new member on the side with FEWER members; on a tie we ALTERNATE (the tie is
-// broken by the parity of the current head count, so consecutive signups under
-// an empty sponsor go L, R, L, R, ...). This removes the old left-skew where
-// everyone piled onto Left before any deposits existed. Deeper spillover is not
-// used; only the direct child sits on the sponsor's leg, but the member's future
-// VOLUME rolls up the whole ancestry (see cron-worker/src/binary-matching.ts).
+// PLACEMENT (signup) — attach a new user UNDER their sponsor, leg UNASSIGNED.
+// The sponsor is the direct referrer (matched by ref_code at signup). We set
+// binary_parent_id but leave binary_leg = NULL so the sponsor can later choose
+// the side (once). Never blocks signup.
 // ---------------------------------------------------------------------------
 // The downline (left+right) can grow to at most this multiple of the user's
 // own deposit total (self_usd / "몸값"). Owner rule (2026-08-26): 2x.
@@ -37,37 +35,14 @@ export async function placeInBinaryTree(
   db: any,
   newUserId: string,
   sponsorId: string,
-): Promise<{ leg: 'L' | 'R'; capped: boolean; self_usd: number; downline_usd: number }> {
+): Promise<{ leg: 'L' | 'R' | null; capped: boolean; self_usd: number; downline_usd: number }> {
   if (!sponsorId || sponsorId === newUserId) {
-    return { leg: 'L', capped: false, self_usd: 0, downline_usd: 0 };
+    return { leg: null, capped: false, self_usd: 0, downline_usd: 0 };
   }
-  // Pick the side by HEAD COUNT (how many members already sit on each leg),
-  // alternating on ties. This keeps the tree balanced even before any deposits
-  // exist (old bug: volume-based tie always chose Left -> everyone left-skewed).
-  let leg: 'L' | 'R' = 'L';
-  let selfUsd = 0;
-  let downlineUsd = 0;
-  try {
-    const counts = await db.prepare(
-      `SELECT
-         SUM(CASE WHEN binary_leg = 'L' THEN 1 ELSE 0 END) AS l,
-         SUM(CASE WHEN binary_leg = 'R' THEN 1 ELSE 0 END) AS r
-       FROM users WHERE binary_parent_id = ?`
-    ).bind(sponsorId).first();
-    const lCount = Number(counts?.l || 0);
-    const rCount = Number(counts?.r || 0);
-    if (rCount < lCount) {
-      leg = 'R';
-    } else if (lCount < rCount) {
-      leg = 'L';
-    } else {
-      // Tie -> ALTERNATE. Parity of the total head count decides: 0 members -> L,
-      // 1 -> R, 2 -> L, ... so consecutive empty-sponsor signups go L, R, L, R.
-      leg = ((lCount + rCount) % 2 === 0) ? 'L' : 'R';
-    }
-  } catch { /* users table lookup failed; default Left */ }
 
   // Read the sponsor's own deposit total for the 2x downline-cap warning flag.
+  let selfUsd = 0;
+  let downlineUsd = 0;
   try {
     const vol = await db.prepare(
       `SELECT left_usd, right_usd, self_usd FROM binary_volume WHERE user_id = ?`
@@ -78,20 +53,59 @@ export async function placeInBinaryTree(
     downlineUsd = left + right;
   } catch { /* volume table might be empty */ }
 
-  // Downline is "full" when accumulated left+right already reached 2x the
-  // sponsor's own deposit value. We STILL record the tree position (so the
-  // member is attached and can be counted once the sponsor raises their own
-  // value), but flag it so the UI can warn. Deposit rollup enforces the hard
-  // cap on volume (see cron-worker/src/binary-matching.ts rollUp).
   const cap = selfUsd * DOWNLINE_CAP_MULTIPLE;
   const capped = selfUsd > 0 && downlineUsd >= cap;
 
+  // Attach to the sponsor but DO NOT assign a leg — the sponsor picks it later.
   try {
     await db.prepare(
-      `UPDATE users SET binary_parent_id = ?, binary_leg = ? WHERE id = ?`
-    ).bind(sponsorId, leg, newUserId).run();
+      `UPDATE users SET binary_parent_id = ?, binary_leg = NULL WHERE id = ?`
+    ).bind(sponsorId, newUserId).run();
   } catch (e) {
-    console.warn('[binary] placement failed:', e);
+    console.warn('[binary] placement (attach) failed:', e);
   }
-  return { leg, capped, self_usd: selfUsd, downline_usd: downlineUsd };
+  return { leg: null, capped, self_usd: selfUsd, downline_usd: downlineUsd };
+}
+
+// ---------------------------------------------------------------------------
+// LEG ASSIGNMENT (sponsor-chosen, ONCE) — the sponsor assigns one of their
+// UNPLACED direct downline members to their Left or Right leg. Irreversible:
+// only succeeds when the member currently has binary_leg IS NULL AND the caller
+// is that member's direct sponsor (binary_parent_id). Returns a discriminated
+// result so the route can map it to a precise HTTP status/message.
+// ---------------------------------------------------------------------------
+export type AssignLegResult =
+  | { ok: true; member_id: string; leg: 'L' | 'R' }
+  | { ok: false; code: 'INVALID_LEG' | 'NOT_YOUR_DOWNLINE' | 'ALREADY_PLACED' | 'MEMBER_NOT_FOUND' | 'ERROR' };
+
+export async function assignBinaryLeg(
+  db: any,
+  sponsorId: string,
+  memberId: string,
+  leg: 'L' | 'R',
+): Promise<AssignLegResult> {
+  if (leg !== 'L' && leg !== 'R') return { ok: false, code: 'INVALID_LEG' };
+  if (!sponsorId || !memberId || sponsorId === memberId) return { ok: false, code: 'NOT_YOUR_DOWNLINE' };
+  try {
+    const member = await db.prepare(
+      `SELECT binary_parent_id, binary_leg FROM users WHERE id = ?`
+    ).bind(memberId).first();
+    if (!member) return { ok: false, code: 'MEMBER_NOT_FOUND' };
+    if (member.binary_parent_id !== sponsorId) return { ok: false, code: 'NOT_YOUR_DOWNLINE' };
+    if (member.binary_leg === 'L' || member.binary_leg === 'R') {
+      return { ok: false, code: 'ALREADY_PLACED' }; // one-time only
+    }
+    // Guarded UPDATE: only flips when the leg is still NULL (idempotent / race-safe).
+    const upd = await db.prepare(
+      `UPDATE users SET binary_leg = ?
+        WHERE id = ? AND binary_parent_id = ? AND binary_leg IS NULL`
+    ).bind(leg, memberId, sponsorId).run();
+    if (!upd?.meta || upd.meta.changes === 0) {
+      return { ok: false, code: 'ALREADY_PLACED' };
+    }
+    return { ok: true, member_id: memberId, leg };
+  } catch (e) {
+    console.warn('[binary] assignBinaryLeg failed:', e);
+    return { ok: false, code: 'ERROR' };
+  }
 }

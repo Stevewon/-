@@ -203,8 +203,17 @@ async function rollUp(env: Env, memberId: string, usdValue: number, qtaPrice: nu
       `SELECT binary_parent_id, binary_leg FROM users WHERE id = ?`
     ).bind(childId).first<any>();
     const parentId: string | null = node?.binary_parent_id || null;
-    const leg = node?.binary_leg === 'R' ? 'R' : 'L';
     if (!parentId || seen.has(parentId)) break;
+
+    // ⚑ OWNER RULE (2026-08-27): a member's volume rolls up to their parent ONLY
+    //   after the SPONSOR has explicitly assigned this member to their Left or
+    //   Right leg. While binary_leg is NULL ("미배치"), the sponsor has not yet
+    //   chosen a side, so we STOP the roll-up here — nothing is counted or parked
+    //   on the parent until the sponsor picks a leg (assignBinaryLeg). This makes
+    //   placement 100% sponsor-controlled and one-time.
+    const rawLeg = node?.binary_leg;
+    if (rawLeg !== 'L' && rawLeg !== 'R') break; // unassigned -> do not roll up
+    const leg: 'L' | 'R' = rawLeg;
     seen.add(parentId);
 
     await env.DB.prepare(

@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../index';
 import { authMiddleware } from '../middleware/auth';
+import { assignBinaryLeg } from '../lib/binary-matching';
 
 // ---------------------------------------------------------------------------
 // QTA Staking API (official tier plan)
@@ -593,6 +594,96 @@ app.get('/dividends', authMiddleware, async (c) => {
       ORDER BY created_at DESC LIMIT 100`
   ).bind(user.id).all();
   return c.json({ dividends: results || [] });
+});
+
+// --------------------------------------------------------------------------
+// GET /binary/tree — the caller's own binary summary:
+//   • left_usd / right_usd / total downline volume (좌우 볼륨 총액) + self 몸값
+//   • the two assigned legs (who is on Left, who is on Right)
+//   • UNPLACED direct downline (binary_leg IS NULL) that the sponsor must still
+//     choose a side for (single, irreversible choice).
+// --------------------------------------------------------------------------
+app.get('/binary/tree', authMiddleware, async (c) => {
+  const user = c.get('user');
+
+  // Volume totals (may be absent if the user has no binary_volume row yet).
+  const vol = await c.env.DB.prepare(
+    `SELECT left_usd, right_usd, matched_usd, self_usd,
+            pending_left_usd, pending_right_usd
+       FROM binary_volume WHERE user_id = ?`
+  ).bind(user.id).first<any>().catch(() => null);
+
+  const leftUsd = Number(vol?.left_usd || 0);
+  const rightUsd = Number(vol?.right_usd || 0);
+  const pendingLeft = Number(vol?.pending_left_usd || 0);
+  const pendingRight = Number(vol?.pending_right_usd || 0);
+  const selfUsd = Number(vol?.self_usd || 0);
+  const matchedUsd = Number(vol?.matched_usd || 0);
+
+  // Direct downline split by leg. Unassigned members (leg IS NULL) go to the
+  // "pending placement" list the sponsor must act on.
+  const { results: downline } = await c.env.DB.prepare(
+    `SELECT id, nickname, email, binary_leg, created_at
+       FROM users WHERE binary_parent_id = ?
+      ORDER BY created_at ASC`
+  ).bind(user.id).all<any>().catch(() => ({ results: [] as any[] }));
+
+  const left: any[] = [];
+  const right: any[] = [];
+  const unplaced: any[] = [];
+  for (const m of (downline || [])) {
+    const row = { id: m.id, nickname: m.nickname, joined_at: m.created_at };
+    if (m.binary_leg === 'L') left.push(row);
+    else if (m.binary_leg === 'R') right.push(row);
+    else unplaced.push(row);
+  }
+
+  return c.json({
+    volume: {
+      self_usd: selfUsd,                 // 본인 몸값
+      left_usd: leftUsd,                 // 좌 볼륨 총액
+      right_usd: rightUsd,               // 우 볼륨 총액
+      total_usd: leftUsd + rightUsd,     // 좌우 볼륨 총액
+      matched_usd: matchedUsd,
+      pending_left_usd: pendingLeft,     // 캡 초과로 보관 중(좌)
+      pending_right_usd: pendingRight,   // 캡 초과로 보관 중(우)
+      cap_usd: selfUsd * 2,              // 2x 몸값 캡
+    },
+    left_members: left,
+    right_members: right,
+    unplaced_members: unplaced,          // 사장님이 좌/우 선택해야 하는 신규 하부
+  });
+});
+
+// --------------------------------------------------------------------------
+// POST /binary/assign-leg — the sponsor assigns ONE of their unplaced direct
+// downline members to their Left or Right leg. ONE-TIME, irreversible.
+// Body: { member_id: string, leg: 'L' | 'R' }
+// --------------------------------------------------------------------------
+app.post('/binary/assign-leg', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const body = await c.req.json().catch(() => ({} as any));
+  const memberId = body?.member_id ? String(body.member_id) : '';
+  const legRaw = body?.leg ? String(body.leg).toUpperCase() : '';
+  const leg = legRaw === 'L' || legRaw === 'R' ? (legRaw as 'L' | 'R') : null;
+
+  if (!memberId || !leg) {
+    return c.json({ error: 'INVALID_INPUT', message: 'member_id와 leg(L 또는 R)가 필요합니다.' }, 400);
+  }
+
+  const res = await assignBinaryLeg(c.env.DB, user.id, memberId, leg);
+  if (res.ok) {
+    return c.json({ ok: true, member_id: res.member_id, leg: res.leg });
+  }
+  const map: Record<string, { status: 400 | 403 | 404 | 409 | 500; message: string }> = {
+    INVALID_LEG:       { status: 400, message: 'leg는 L 또는 R만 가능합니다.' },
+    NOT_YOUR_DOWNLINE: { status: 403, message: '본인 직속 하부만 배치할 수 있습니다.' },
+    ALREADY_PLACED:    { status: 409, message: '이미 좌/우가 확정된 회원입니다. (1회만 선택 가능)' },
+    MEMBER_NOT_FOUND:  { status: 404, message: '해당 회원을 찾을 수 없습니다.' },
+    ERROR:             { status: 500, message: '배치 처리 중 오류가 발생했습니다.' },
+  };
+  const e = map[res.code] || map.ERROR;
+  return c.json({ error: res.code, message: e.message }, e.status);
 });
 
 export default app;

@@ -107,8 +107,11 @@ function rollUp(memberId, usdValue, qtaPrice) {
     depth++;
     const node = db.prepare('SELECT binary_parent_id,binary_leg FROM users WHERE id=?').get(childId);
     const parentId = node && node.binary_parent_id;
-    const leg = (node && node.binary_leg === 'R') ? 'R' : 'L';
     if (!parentId || seen.has(parentId)) break;
+    // OWNER RULE (2026-08-27): roll up only when the sponsor has assigned a leg.
+    const rawLeg = node && node.binary_leg;
+    if (rawLeg !== 'L' && rawLeg !== 'R') { console.log(`  [skip] ${childId} unassigned leg -> stop rollup`); break; }
+    const leg = rawLeg;
     seen.add(parentId);
     db.prepare(`INSERT INTO binary_volume (user_id,left_usd,right_usd,matched_usd,self_usd,updated_at) VALUES (?,0,0,0,0,datetime('now')) ON CONFLICT(user_id) DO NOTHING`).run(parentId);
     const cur = db.prepare('SELECT left_usd,right_usd,self_usd FROM binary_volume WHERE user_id=?').get(parentId);
