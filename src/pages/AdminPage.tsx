@@ -7,6 +7,7 @@ import {
   FileText, Receipt, Server, Database, HardDrive,
   Shield, AlertTriangle, Zap, Plus, Trash2,
   Repeat, ArrowRightLeft, Pause, Play,
+  BadgePercent, Building2, Dice5,
 } from 'lucide-react';
 import useStore from '../store/useStore';
 import { useI18n } from '../i18n';
@@ -702,8 +703,107 @@ function UsersTab({ t, onUpdate }: any) {
   );
 }
 
+// ============================================================================
+// Fee-exemption panel (Owner request 2026-08-27)
+//   - Exchange / Casino shareholder flags → admin-set (trade + withdrawal exempt)
+//   - QX holding is AUTOMATIC: 100k~499,999 → trade only, >=500k → trade+withdrawal
+//     (shown as read-only status; the qx flags below are manual overrides).
+// ============================================================================
+const QX_TRADE_MIN = 100_000;
+const QX_ALL_MIN = 500_000;
+
+function FeeExemptionPanel({ user, onChange, t }: any) {
+  const [saving, setSaving] = useState<string | null>(null);
+  const qx = Number(user.qx_balance || 0);
+
+  // Effective (live) status = admin flags OR automatic QX thresholds.
+  const holderFull = !!user.fee_exempt_exchange_holder || !!user.fee_exempt_casino_holder;
+  const qxAllEff = !!user.fee_exempt_qx_all || qx >= QX_ALL_MIN;
+  const qxTradeEff = !!user.fee_exempt_qx_trade || qx >= QX_TRADE_MIN;
+  const tradeExempt = holderFull || qxAllEff || qxTradeEff;
+  const withdrawExempt = holderFull || qxAllEff;
+
+  const setFlag = async (key: string, val: boolean) => {
+    setSaving(key);
+    try {
+      const res = await api.post(`/admin/users/${user.id}/fee-exemption`, { [key]: val });
+      onChange({ ...user, ...res.data });
+      showToast('success', t('common.save'), t('admin.feeExemptSaved'));
+    } catch (e: any) {
+      showToast('error', t('common.error'), e.response?.data?.error || 'Update failed');
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  const Toggle = ({ label, desc, icon, on, k, disabled }: any) => (
+    <label className={`flex items-start gap-2 p-2.5 rounded-lg border cursor-pointer transition-colors ${
+      on ? 'border-exchange-yellow/50 bg-exchange-yellow/10' : 'border-exchange-border bg-exchange-hover/20 hover:bg-exchange-hover/40'
+    } ${disabled ? 'opacity-60 cursor-not-allowed' : ''}`}>
+      <input
+        type="checkbox"
+        className="mt-0.5 accent-exchange-yellow"
+        checked={on}
+        disabled={disabled || saving === k}
+        onChange={e => !disabled && setFlag(k, e.target.checked)}
+      />
+      <div className="flex-1 min-w-0">
+        <div className="text-[11px] font-medium flex items-center gap-1">{icon} {label}</div>
+        <div className="text-[10px] text-exchange-text-third leading-tight mt-0.5">{desc}</div>
+      </div>
+      {saving === k && <RefreshCw size={11} className="animate-spin text-exchange-yellow mt-0.5" />}
+    </label>
+  );
+
+  return (
+    <div className="border-t border-exchange-border/50 pt-3">
+      <h4 className="text-xs font-semibold text-exchange-text-secondary mb-2 flex items-center gap-1.5">
+        <BadgePercent size={12} className="text-exchange-yellow" /> {t('admin.feeExemptTitle')}
+      </h4>
+
+      {/* Live effective status */}
+      <div className="flex flex-wrap items-center gap-2 mb-2.5 text-[10px]">
+        <span className={`px-2 py-0.5 rounded ${tradeExempt ? 'bg-exchange-buy/20 text-exchange-buy' : 'bg-exchange-input text-exchange-text-third'}`}>
+          {t('admin.feeExemptTrade')}: {tradeExempt ? t('admin.feeExemptOn') : t('admin.feeExemptOff')}
+        </span>
+        <span className={`px-2 py-0.5 rounded ${withdrawExempt ? 'bg-exchange-buy/20 text-exchange-buy' : 'bg-exchange-input text-exchange-text-third'}`}>
+          {t('admin.feeExemptWithdraw')}: {withdrawExempt ? t('admin.feeExemptOn') : t('admin.feeExemptOff')}
+        </span>
+        <span className="px-2 py-0.5 rounded bg-exchange-input text-exchange-text-secondary tabular-nums">
+          QX: {formatPrice(qx)}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+        <Toggle
+          k="exchange_holder"
+          on={!!user.fee_exempt_exchange_holder}
+          icon={<Building2 size={11} className="text-blue-400" />}
+          label={t('admin.feeExemptExchange')}
+          desc={t('admin.feeExemptExchangeDesc')}
+        />
+        <Toggle
+          k="casino_holder"
+          on={!!user.fee_exempt_casino_holder}
+          icon={<Dice5 size={11} className="text-purple-400" />}
+          label={t('admin.feeExemptCasino')}
+          desc={t('admin.feeExemptCasinoDesc')}
+        />
+      </div>
+
+      {/* QX auto rules — read-only info */}
+      <div className="mt-2 p-2 rounded-lg bg-exchange-hover/20 border border-exchange-border text-[10px] text-exchange-text-third leading-relaxed">
+        <div className="font-medium text-exchange-text-secondary mb-0.5">{t('admin.feeExemptQxAuto')}</div>
+        <div>· {t('admin.feeExemptQxTradeRule')} {qx >= QX_TRADE_MIN && qx < QX_ALL_MIN && <span className="text-exchange-buy">✓</span>}</div>
+        <div>· {t('admin.feeExemptQxAllRule')} {qx >= QX_ALL_MIN && <span className="text-exchange-buy">✓</span>}</div>
+      </div>
+    </div>
+  );
+}
+
 function UserDetailModal({ detail, onClose, t }: any) {
-  const { user, wallets, recentOrders, logins } = detail;
+  const { wallets, recentOrders, logins } = detail;
+  const [user, setUser] = useState<any>(detail.user);
   const [bdCoin, setBdCoin] = useState<string | null>(null);
   const loadAdminBreakdown = async (coin: string): Promise<BalanceBreakdown> => {
     const r = await api.get(`/admin/users/${user.id}/balance/${coin}`);
@@ -743,6 +843,8 @@ function UserDetailModal({ detail, onClose, t }: any) {
               </div>
             </div>
           )}
+
+          <FeeExemptionPanel user={user} onChange={(u: any) => setUser(u)} t={t} />
 
           <div className="border-t border-exchange-border/50 pt-3">
             <h4 className="text-xs font-semibold text-exchange-text-secondary mb-2 flex items-center gap-1.5"><Wallet size={12} /> {t('admin.wallets')} ({wallets?.length || 0}) <span className="text-[10px] text-exchange-text-third font-normal">· {t('wallet.balanceDetail')}</span></h4>

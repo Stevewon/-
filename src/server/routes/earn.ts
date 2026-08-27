@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { AppEnv } from '../index';
 import { authMiddleware } from '../middleware/auth';
 import { assignBinaryLeg } from '../lib/binary-matching';
+import { getFeeExemption } from '../utils/fees';
 
 // ---------------------------------------------------------------------------
 // QTA Staking API (official tier plan)
@@ -531,7 +532,10 @@ app.post('/withdraw-dividend', authMiddleware, async (c) => {
     }, 400);
   }
 
-  const feeQta = amountQta * WITHDRAW_FEE;   // 5% fee on the QTA amount
+  // Owner request (2026-08-27): shareholders (exchange/casino) and QX>=500k
+  //   holders are EXEMPT from the withdrawal fee (feeQta = 0 → net = full).
+  const divExemption = await getFeeExemption(c.env.DB, user.id);
+  const feeQta = divExemption.withdrawExempt ? 0 : amountQta * WITHDRAW_FEE;   // 5% fee on the QTA amount
   const netQta = amountQta - feeQta;         // e.g. 95 on 100
 
   // Atomically lock the requested QTA from the user's QTA available balance.

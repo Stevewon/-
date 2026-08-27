@@ -8,6 +8,7 @@ import { tmplWithdrawSubmitted, fireAndForgetMail, metaFromReq } from '../utils/
 import { getRiskState } from '../lib/risk';
 import { isQuantariumAsset } from '../lib/asset-routing';
 import { computeBalanceBreakdown } from '../lib/balance-breakdown';
+import { getFeeExemption } from '../utils/fees';
 
 const app = new Hono<AppEnv>();
 
@@ -419,7 +420,10 @@ app.post('/withdraw', authMiddleware, rlWithdraw, requireKyc('approved'), async 
 
   // ★★★★★★★ Boss's withdrawal-fee rule (2026-08-26): flat 5% fee. The user
   //   always receives 95% of the requested amount. (Replaces the old 0.1%.)
-  const fee = amount * 0.05;
+  // Owner request (2026-08-27): shareholders (exchange/casino) and QX>=500k
+  //   holders are EXEMPT from the withdrawal fee (fee = 0 → user gets 100%).
+  const feeExemption = await getFeeExemption(c.env.DB, user.id);
+  const fee = feeExemption.withdrawExempt ? 0 : amount * 0.05;
   const withdrawalId = uuid();
   const assetSymbol = String(coin_symbol).toUpperCase();
 
