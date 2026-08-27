@@ -198,20 +198,28 @@ app.get('/users', async (c) => {
     conds.push('COALESCE(fee_exempt_qx_all,0)=1');
   }
 
+  // NOTE: `conds` reference bare column names that live only on `users`; the QX
+  // subquery below exposes just (user_id, qx) so there is no column ambiguity
+  // when we alias the base table as `u`.
   const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
-  const totalRow = await db.prepare(`SELECT COUNT(*) AS cnt FROM users ${where}`)
+  const totalRow = await db.prepare(`SELECT COUNT(*) AS cnt FROM users u ${where}`)
     .bind(...params).first<{ cnt: number }>();
 
   const { results } = await db.prepare(`
-    SELECT id, email, nickname, role, kyc_status, is_active,
-           two_factor_enabled, created_at, kyc_submitted_at,
-           COALESCE(fee_exempt_exchange_holder, 0) AS fee_exempt_exchange_holder,
-           COALESCE(fee_exempt_casino_holder, 0)   AS fee_exempt_casino_holder,
-           COALESCE(fee_exempt_qx_trade, 0)        AS fee_exempt_qx_trade,
-           COALESCE(fee_exempt_qx_all, 0)          AS fee_exempt_qx_all
-    FROM users
+    SELECT u.id, u.email, u.nickname, u.role, u.kyc_status, u.is_active,
+           u.two_factor_enabled, u.created_at, u.kyc_submitted_at,
+           COALESCE(u.fee_exempt_exchange_holder, 0) AS fee_exempt_exchange_holder,
+           COALESCE(u.fee_exempt_casino_holder, 0)   AS fee_exempt_casino_holder,
+           COALESCE(u.fee_exempt_qx_trade, 0)        AS fee_exempt_qx_trade,
+           COALESCE(u.fee_exempt_qx_all, 0)          AS fee_exempt_qx_all,
+           COALESCE(qx.qx, 0)                        AS qx_balance
+    FROM users u
+    LEFT JOIN (
+      SELECT user_id, SUM(available + locked) AS qx
+        FROM wallets WHERE coin_symbol = 'QX' GROUP BY user_id
+    ) qx ON qx.user_id = u.id
     ${where}
-    ORDER BY created_at DESC
+    ORDER BY u.created_at DESC
     LIMIT ? OFFSET ?
   `).bind(...params, limit, offset).all();
 

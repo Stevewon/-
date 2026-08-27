@@ -17,6 +17,7 @@ import { showToast } from '../components/common/Toast';
 import CoinIcon from '../components/common/CoinIcon';
 import AdminLayout, { type AdminTab } from '../components/layout/AdminLayout';
 import BalanceBreakdownModal, { type BalanceBreakdown } from '../components/wallet/BalanceBreakdownModal';
+import MemberTierBadge from '../components/common/MemberTierBadge';
 
 type Tab = AdminTab;
 
@@ -651,7 +652,10 @@ function UsersTab({ t, onUpdate }: any) {
               <tr key={u.id} className="border-b border-exchange-border/50 hover:bg-exchange-hover/30">
                 <td className="px-3 py-2 text-xs">{u.email}</td>
                 <td className="px-3 py-2 text-xs">
-                  <button onClick={() => openDetail(u.id)} className="hover:text-exchange-yellow hover:underline">{u.nickname}</button>
+                  <button onClick={() => openDetail(u.id)} className="inline-flex items-center gap-1 hover:text-exchange-yellow hover:underline">
+                    <MemberTierBadge user={u} t={t} variant="icon" />
+                    <span>{u.nickname}</span>
+                  </button>
                 </td>
                 <td className="px-3 py-2">
                   <span className={`text-[10px] px-1.5 py-0.5 rounded ${u.role === 'admin' ? 'bg-exchange-yellow/20 text-exchange-yellow' : 'bg-exchange-input text-exchange-text-secondary'}`}>
@@ -892,6 +896,7 @@ function UserDetailModal({ detail, onClose, t }: any) {
         <div className="flex items-center justify-between p-4 border-b border-exchange-border sticky top-0 bg-exchange-card z-10">
           <div className="flex items-center gap-2">
             <Users size={18} className="text-exchange-yellow" />
+            <MemberTierBadge user={user} t={t} variant="full" />
             <h3 className="font-semibold">{user.nickname}</h3>
             <span className="text-xs text-exchange-text-third">{user.email}</span>
           </div>
