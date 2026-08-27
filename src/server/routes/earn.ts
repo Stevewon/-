@@ -384,11 +384,23 @@ app.post('/redeem', authMiddleware, async (c) => {
   let penaltyQta = 0;           // QTA principal forfeited (early only)
 
   if (isEarly) {
-    // Early exit: 30% penalty on the QTA PRINCIPAL; forfeit the accrued
-    // dividend entirely (dividend already claimed stays with the user). The
-    // remaining 70% of the staked QTA is returned. No USDT is involved.
-    penaltyQta = principalQta * EARLY_PENALTY;      // 30% of principal QTA
-    returnedQta = Math.max(0, principalQta - penaltyQta);   // 70% back
+    // ★★★ Boss's early-exit rule: the 30% penalty is charged on the FULL
+    // base = (principal + accrued dividend), NOT the principal alone.
+    //   e.g. principal 100 + accrued interest 10 = base 110
+    //        penalty  = 110 * 30% = 33
+    //        returned = 110 - 33 = 77   (paid as QTA)
+    // Everything is denominated in QTA for wallet consistency: the accrued
+    // dividend (USD) is converted to QTA at today's price, and any dividend
+    // the user ALREADY claimed is netted out of the base so it isn't paid
+    // twice.
+    const totalDivUsd = accruedUsd(pos, now);                 // total interest so far (USD)
+    const alreadyPaidUsd = pos.accrued_dividend_usd || 0;      // dividend already taken (USD)
+    const remainingDivUsd = Math.max(0, totalDivUsd - alreadyPaidUsd);
+    const remainingDivQta = price > 0 ? remainingDivUsd / price : 0;
+
+    const baseQta = principalQta + remainingDivQta;           // 원금 + 적립이자 (QTA)
+    penaltyQta = baseQta * EARLY_PENALTY;                      // 30% of (principal + dividend)
+    returnedQta = Math.max(0, baseQta - penaltyQta);          // remaining 70%, paid as QTA
   } else {
     // Matured: return the full QTA principal + pay remaining unpaid dividend
     // (valued in USD, paid as QTA at today's price).
