@@ -704,10 +704,18 @@ function UsersTab({ t, onUpdate }: any) {
 }
 
 // ============================================================================
-// Fee-exemption panel (Owner request 2026-08-27)
-//   - Exchange / Casino shareholder flags → admin-set (trade + withdrawal exempt)
-//   - QX holding is AUTOMATIC: 100k~499,999 → trade only, >=500k → trade+withdrawal
-//     (shown as read-only status; the qx flags below are manual overrides).
+// Fee-exemption panel (Owner request 2026-08-27, extended 2026-08-27b)
+//   Four exemption conditions, all admin-toggleable, running in PARALLEL with
+//   the automatic QX-balance detection:
+//     1. 거래소 지분권자   → trade + withdrawal exempt (admin-set)
+//     2. 카지노 지분권자   → trade + withdrawal exempt (admin-set)
+//     3. QX 10만~49.9만    → trade fee exempt   (AUTO by exchange QX balance,
+//                            OR manual grant for external-wallet holders)
+//     4. QX 50만 이상      → trade + withdrawal (AUTO by exchange QX balance,
+//                            OR manual grant for external-wallet holders)
+//   The manual QX toggles exist because some members hold QX in EXTERNAL
+//   wallets — the exchange can't see that balance, so the admin verifies it
+//   and grants the exemption by hand. Auto + manual are OR-combined server-side.
 // ============================================================================
 const QX_TRADE_MIN = 100_000;
 const QX_ALL_MIN = 500_000;
@@ -716,10 +724,20 @@ function FeeExemptionPanel({ user, onChange, t }: any) {
   const [saving, setSaving] = useState<string | null>(null);
   const qx = Number(user.qx_balance || 0);
 
-  // Effective (live) status = admin flags OR automatic QX thresholds.
-  const holderFull = !!user.fee_exempt_exchange_holder || !!user.fee_exempt_casino_holder;
-  const qxAllEff = !!user.fee_exempt_qx_all || qx >= QX_ALL_MIN;
-  const qxTradeEff = !!user.fee_exempt_qx_trade || qx >= QX_TRADE_MIN;
+  // Automatic (exchange-held QX) detection.
+  const qxAutoAll = qx >= QX_ALL_MIN;
+  const qxAutoTrade = qx >= QX_TRADE_MIN && qx < QX_ALL_MIN;
+
+  // Manual admin flags.
+  const mExchange = !!user.fee_exempt_exchange_holder;
+  const mCasino = !!user.fee_exempt_casino_holder;
+  const mQxTrade = !!user.fee_exempt_qx_trade;
+  const mQxAll = !!user.fee_exempt_qx_all;
+
+  // Effective (live) status = manual flags OR automatic QX thresholds.
+  const holderFull = mExchange || mCasino;
+  const qxAllEff = mQxAll || qxAutoAll;
+  const qxTradeEff = mQxTrade || qx >= QX_TRADE_MIN;
   const tradeExempt = holderFull || qxAllEff || qxTradeEff;
   const withdrawExempt = holderFull || qxAllEff;
 
@@ -736,7 +754,7 @@ function FeeExemptionPanel({ user, onChange, t }: any) {
     }
   };
 
-  const Toggle = ({ label, desc, icon, on, k, disabled }: any) => (
+  const Toggle = ({ label, desc, icon, on, k, auto, disabled }: any) => (
     <label className={`flex items-start gap-2 p-2.5 rounded-lg border cursor-pointer transition-colors ${
       on ? 'border-exchange-yellow/50 bg-exchange-yellow/10' : 'border-exchange-border bg-exchange-hover/20 hover:bg-exchange-hover/40'
     } ${disabled ? 'opacity-60 cursor-not-allowed' : ''}`}>
@@ -748,7 +766,14 @@ function FeeExemptionPanel({ user, onChange, t }: any) {
         onChange={e => !disabled && setFlag(k, e.target.checked)}
       />
       <div className="flex-1 min-w-0">
-        <div className="text-[11px] font-medium flex items-center gap-1">{icon} {label}</div>
+        <div className="text-[11px] font-medium flex items-center gap-1 flex-wrap">
+          {icon} {label}
+          {auto && (
+            <span className="text-[9px] px-1 py-0 rounded bg-exchange-buy/20 text-exchange-buy">
+              {t('admin.feeExemptAutoActive')}
+            </span>
+          )}
+        </div>
         <div className="text-[10px] text-exchange-text-third leading-tight mt-0.5">{desc}</div>
       </div>
       {saving === k && <RefreshCw size={11} className="animate-spin text-exchange-yellow mt-0.5" />}
@@ -769,33 +794,59 @@ function FeeExemptionPanel({ user, onChange, t }: any) {
         <span className={`px-2 py-0.5 rounded ${withdrawExempt ? 'bg-exchange-buy/20 text-exchange-buy' : 'bg-exchange-input text-exchange-text-third'}`}>
           {t('admin.feeExemptWithdraw')}: {withdrawExempt ? t('admin.feeExemptOn') : t('admin.feeExemptOff')}
         </span>
-        <span className="px-2 py-0.5 rounded bg-exchange-input text-exchange-text-secondary tabular-nums">
-          QX: {formatPrice(qx)}
+        <span className="px-2 py-0.5 rounded bg-exchange-input text-exchange-text-secondary tabular-nums" title={t('admin.feeExemptQxOnExchange')}>
+          {t('admin.feeExemptQxOnExchange')}: {formatPrice(qx)}
         </span>
       </div>
 
+      {/* 1 & 2 — shareholder (admin-set) */}
+      <div className="text-[10px] font-medium text-exchange-text-third mb-1">{t('admin.feeExemptShareholderGroup')}</div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
         <Toggle
           k="exchange_holder"
-          on={!!user.fee_exempt_exchange_holder}
+          on={mExchange}
           icon={<Building2 size={11} className="text-blue-400" />}
           label={t('admin.feeExemptExchange')}
           desc={t('admin.feeExemptExchangeDesc')}
         />
         <Toggle
           k="casino_holder"
-          on={!!user.fee_exempt_casino_holder}
+          on={mCasino}
           icon={<Dice5 size={11} className="text-purple-400" />}
           label={t('admin.feeExemptCasino')}
           desc={t('admin.feeExemptCasinoDesc')}
         />
       </div>
 
-      {/* QX auto rules — read-only info */}
+      {/* 3 & 4 — QX holding (auto + manual grant) */}
+      <div className="text-[10px] font-medium text-exchange-text-third mt-3 mb-1">
+        {t('admin.feeExemptQxGroup')}
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+        <Toggle
+          k="qx_trade"
+          on={mQxTrade}
+          auto={qxAutoTrade}
+          icon={<Coins size={11} className="text-exchange-yellow" />}
+          label={t('admin.feeExemptQxTrade')}
+          desc={t('admin.feeExemptQxTradeManualDesc')}
+        />
+        <Toggle
+          k="qx_all"
+          on={mQxAll}
+          auto={qxAutoAll}
+          icon={<Coins size={11} className="text-exchange-buy" />}
+          label={t('admin.feeExemptQxAll')}
+          desc={t('admin.feeExemptQxAllManualDesc')}
+        />
+      </div>
+
+      {/* Explanation of auto vs manual (external-wallet) */}
       <div className="mt-2 p-2 rounded-lg bg-exchange-hover/20 border border-exchange-border text-[10px] text-exchange-text-third leading-relaxed">
-        <div className="font-medium text-exchange-text-secondary mb-0.5">{t('admin.feeExemptQxAuto')}</div>
-        <div>· {t('admin.feeExemptQxTradeRule')} {qx >= QX_TRADE_MIN && qx < QX_ALL_MIN && <span className="text-exchange-buy">✓</span>}</div>
-        <div>· {t('admin.feeExemptQxAllRule')} {qx >= QX_ALL_MIN && <span className="text-exchange-buy">✓</span>}</div>
+        <div className="flex items-start gap-1.5">
+          <AlertTriangle size={11} className="text-exchange-yellow mt-0.5 shrink-0" />
+          <div>{t('admin.feeExemptExternalNote')}</div>
+        </div>
       </div>
     </div>
   );
