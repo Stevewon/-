@@ -120,6 +120,60 @@ async function runMatchForUser(env: Env, userId: string, qtaPrice: number): Prom
 }
 
 // --------------------------------------------------------------------------
+// Reclaim parked (over-cap) volume once an ancestor's own 몸값 (self_usd) rose.
+// ----------------------------------------------------------------------------
+// ⚑ OWNER RULE (2026-08-27): "상부 몸값이 상승하면 재계산이 당연히 되는게 맞지!"
+//   When a member stakes/deposits, their downline cap (2 × self_usd) rises.
+//   Any volume that was previously parked in pending_left/right (because it
+//   exceeded the cap at the time — e.g. the upline hadn't staked yet) is pulled
+//   back into the live left_usd / right_usd up to the new cap, and matching is
+//   re-run. This makes matching independent of deposit/stake ORDER. Volume is
+//   NEVER dropped anymore — only parked until there is cap room for it.
+// --------------------------------------------------------------------------
+async function reclaimPending(env: Env, userId: string, qtaPrice: number): Promise<void> {
+  const cur = await env.DB.prepare(
+    `SELECT left_usd, right_usd, self_usd, pending_left_usd, pending_right_usd
+       FROM binary_volume WHERE user_id = ?`
+  ).bind(userId).first<any>();
+  if (!cur) return;
+
+  let left = Number(cur.left_usd || 0);
+  let right = Number(cur.right_usd || 0);
+  const selfUsd = Number(cur.self_usd || 0);
+  let pendLeft = Number(cur.pending_left_usd || 0);
+  let pendRight = Number(cur.pending_right_usd || 0);
+  if (pendLeft <= 0 && pendRight <= 0) return;
+
+  const cap = selfUsd * DOWNLINE_CAP_MULTIPLE;
+  const room = Math.max(0, cap - (left + right));
+  if (room <= 0) return;
+
+  // Fill from both parked legs proportionally to the room available, keeping
+  // the total live downline within the cap. Left is filled first, then Right;
+  // order does not change totals (both go to the same live cap room).
+  let takeLeft = Math.min(pendLeft, room);
+  let remaining = room - takeLeft;
+  let takeRight = Math.min(pendRight, Math.max(0, remaining));
+
+  if (takeLeft <= 0 && takeRight <= 0) return;
+
+  left += takeLeft;
+  right += takeRight;
+  pendLeft -= takeLeft;
+  pendRight -= takeRight;
+
+  await env.DB.prepare(
+    `UPDATE binary_volume
+        SET left_usd = ?, right_usd = ?,
+            pending_left_usd = ?, pending_right_usd = ?,
+            updated_at = datetime('now')
+      WHERE user_id = ?`
+  ).bind(left, right, pendLeft, pendRight, userId).run();
+
+  await runMatchForUser(env, userId, qtaPrice);
+}
+
+// --------------------------------------------------------------------------
 // Roll a deposit's USD up every binary ancestor's correct leg, then match.
 // --------------------------------------------------------------------------
 async function rollUp(env: Env, memberId: string, usdValue: number, qtaPrice: number): Promise<void> {
@@ -133,6 +187,11 @@ async function rollUp(env: Env, memberId: string, usdValue: number, qtaPrice: nu
      ON CONFLICT(user_id) DO UPDATE SET
        self_usd = self_usd + ?, updated_at = datetime('now')`
   ).bind(memberId, usdValue, usdValue).run();
+
+  // The depositor just raised their OWN 몸값 -> their cap rose. Pull back any
+  // downline volume that was parked (pending) while their cap was too small,
+  // and re-run matching. This is the ORDER-INDEPENDENCE fix.
+  await reclaimPending(env, memberId, qtaPrice);
 
   const seen = new Set<string>([memberId]);
   let childId = memberId;
@@ -155,7 +214,9 @@ async function rollUp(env: Env, memberId: string, usdValue: number, qtaPrice: nu
     ).bind(parentId).run();
 
     // Enforce the 2x cap: the parent's downline (left+right) may not exceed
-    // 2 * self_usd. Any excess spillover is dropped (never counts).
+    // 2 * self_usd. Volume OVER the cap is NOT dropped anymore — it is parked in
+    // pending_left/right and reclaimed later once the parent raises their 몸값
+    // (see reclaimPending). Volume is never lost, matching is order-independent.
     const cur = await env.DB.prepare(
       `SELECT left_usd, right_usd, self_usd FROM binary_volume WHERE user_id = ?`
     ).bind(parentId).first<any>();
@@ -165,12 +226,22 @@ async function rollUp(env: Env, memberId: string, usdValue: number, qtaPrice: nu
     const cap = selfUsd * DOWNLINE_CAP_MULTIPLE;
     const room = Math.max(0, cap - (left + right));
     const add = Math.min(usdValue, room);
+    const park = usdValue - add; // over-cap remainder -> park, don't drop
+
+    const liveCol = leg === 'R' ? 'right_usd' : 'left_usd';
+    const pendCol = leg === 'R' ? 'pending_right_usd' : 'pending_left_usd';
 
     if (add > 0) {
-      const col = leg === 'R' ? 'right_usd' : 'left_usd';
       await env.DB.prepare(
-        `UPDATE binary_volume SET ${col} = ${col} + ?, updated_at = datetime('now') WHERE user_id = ?`
+        `UPDATE binary_volume SET ${liveCol} = ${liveCol} + ?, updated_at = datetime('now') WHERE user_id = ?`
       ).bind(add, parentId).run();
+    }
+    if (park > 0) {
+      await env.DB.prepare(
+        `UPDATE binary_volume SET ${pendCol} = ${pendCol} + ?, updated_at = datetime('now') WHERE user_id = ?`
+      ).bind(park, parentId).run();
+    }
+    if (add > 0) {
       await runMatchForUser(env, parentId, qtaPrice);
     }
     childId = parentId;

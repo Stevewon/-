@@ -73,9 +73,34 @@ function runMatchForUser(userId, qtaPrice) {
   console.log(`  [match] user=${userId} matched=$${newMatchUsd} rate=${rate*100}% bonus=$${bonusUsd.toFixed(2)} (${bonusQta.toFixed(2)} QTA)`);
 }
 
+// OWNER RULE (2026-08-27): "상부 몸값이 상승하면 재계산이 당연히 되는게 맞지!"
+// Pull parked (over-cap) pending volume back into live left/right once self_usd
+// rose, and re-run matching. Makes matching order-independent.
+function reclaimPending(userId, qtaPrice) {
+  const cur = db.prepare('SELECT left_usd,right_usd,self_usd,pending_left_usd,pending_right_usd FROM binary_volume WHERE user_id=?').get(userId);
+  if (!cur) return;
+  let left = Number(cur.left_usd||0), right = Number(cur.right_usd||0);
+  const selfUsd = Number(cur.self_usd||0);
+  let pendLeft = Number(cur.pending_left_usd||0), pendRight = Number(cur.pending_right_usd||0);
+  if (pendLeft <= 0 && pendRight <= 0) return;
+  const cap = selfUsd * DOWNLINE_CAP_MULTIPLE;
+  const room = Math.max(0, cap - (left + right));
+  if (room <= 0) return;
+  const takeLeft = Math.min(pendLeft, room);
+  const remaining = room - takeLeft;
+  const takeRight = Math.min(pendRight, Math.max(0, remaining));
+  if (takeLeft <= 0 && takeRight <= 0) return;
+  left += takeLeft; right += takeRight; pendLeft -= takeLeft; pendRight -= takeRight;
+  db.prepare("UPDATE binary_volume SET left_usd=?,right_usd=?,pending_left_usd=?,pending_right_usd=?,updated_at=datetime('now') WHERE user_id=?").run(left, right, pendLeft, pendRight, userId);
+  console.log(`  [reclaim] user=${userId} +L$${takeLeft} +R$${takeRight} (self=$${selfUsd}, cap=$${cap})`);
+  runMatchForUser(userId, qtaPrice);
+}
+
 function rollUp(memberId, usdValue, qtaPrice) {
   if (!(usdValue > 0)) return;
   db.prepare(`INSERT INTO binary_volume (user_id,left_usd,right_usd,matched_usd,self_usd,updated_at) VALUES (?,0,0,0,?,datetime('now')) ON CONFLICT(user_id) DO UPDATE SET self_usd=self_usd+?, updated_at=datetime('now')`).run(memberId, usdValue, usdValue);
+  // depositor raised their own 몸값 -> reclaim any parked downline volume.
+  reclaimPending(memberId, qtaPrice);
   const seen = new Set([memberId]);
   let childId = memberId, depth = 0;
   while (depth < 200) {
@@ -91,11 +116,17 @@ function rollUp(memberId, usdValue, qtaPrice) {
     const cap = selfUsd * DOWNLINE_CAP_MULTIPLE;
     const room = Math.max(0, cap - (left + right));
     const add = Math.min(usdValue, room);
+    const park = usdValue - add; // over-cap remainder -> park, never dropped
+    const liveCol = leg === 'R' ? 'right_usd' : 'left_usd';
+    const pendCol = leg === 'R' ? 'pending_right_usd' : 'pending_left_usd';
     if (add > 0) {
-      const col = leg === 'R' ? 'right_usd' : 'left_usd';
-      db.prepare(`UPDATE binary_volume SET ${col}=${col}+?, updated_at=datetime('now') WHERE user_id=?`).run(add, parentId);
-      runMatchForUser(parentId, qtaPrice);
+      db.prepare(`UPDATE binary_volume SET ${liveCol}=${liveCol}+?, updated_at=datetime('now') WHERE user_id=?`).run(add, parentId);
     }
+    if (park > 0) {
+      db.prepare(`UPDATE binary_volume SET ${pendCol}=${pendCol}+?, updated_at=datetime('now') WHERE user_id=?`).run(park, parentId);
+      console.log(`  [park] user=${parentId} +${leg} pending $${park.toFixed(2)} (over cap)`);
+    }
+    if (add > 0) runMatchForUser(parentId, qtaPrice);
     childId = parentId;
   }
 }
