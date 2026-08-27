@@ -1055,6 +1055,9 @@ function ManualDepositModal({ onClose, onSuccess, t }: any) {
   const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [coins, setCoins] = useState<any[]>([]);
+  // false = company-issued (NOT externally withdrawable, boss's default);
+  // true  = real user-owned funds the user CAN withdraw externally.
+  const [withdrawable, setWithdrawable] = useState(false);
 
   // --- User search / autocomplete state ---
   const [search, setSearch] = useState('');            // text typed into the box
@@ -1128,6 +1131,7 @@ function ManualDepositModal({ onClose, onSuccess, t }: any) {
         coin_symbol: coin,
         amount: Number(amount),
         note: note.trim() || undefined,
+        withdrawable: withdrawable === true,
       });
       showToast('success', t('admin.manualDepositDone'), `+${res.data.amount} ${coin}`);
       onSuccess();
@@ -1206,6 +1210,34 @@ function ManualDepositModal({ onClose, onSuccess, t }: any) {
           <div>
             <label className="text-xs text-exchange-text-third mb-1 block">Note</label>
             <input type="text" value={note} onChange={e => setNote(e.target.value)} className="input-field text-sm" placeholder={t('admin.manualDepositNote')} maxLength={120} />
+          </div>
+          {/* Withdrawable toggle: company-issued (default) vs real user-owned */}
+          <div className="rounded-lg border border-exchange-border p-3">
+            <button
+              type="button"
+              onClick={() => setWithdrawable(w => !w)}
+              className="w-full flex items-center justify-between gap-3"
+            >
+              <div className="min-w-0 text-left">
+                <div className="text-sm font-medium">{t('admin.manualDepositWithdrawable')}</div>
+                <div className="text-[11px] text-exchange-text-third mt-0.5">
+                  {withdrawable ? t('admin.manualDepositWithdrawableOn') : t('admin.manualDepositWithdrawableOff')}
+                </div>
+              </div>
+              <span
+                className={`shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${withdrawable ? 'bg-exchange-buy' : 'bg-exchange-border'}`}
+                role="switch"
+                aria-checked={withdrawable}
+              >
+                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${withdrawable ? 'translate-x-6' : 'translate-x-1'}`} />
+              </span>
+            </button>
+            {withdrawable && (
+              <div className="mt-2 flex items-start gap-1.5 text-[11px] text-exchange-yellow">
+                <AlertTriangle size={12} className="shrink-0 mt-0.5" />
+                <span>{t('admin.manualDepositWithdrawableWarn')}</span>
+              </div>
+            )}
           </div>
         </div>
         <div className="flex gap-2 mt-5">
