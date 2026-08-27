@@ -482,6 +482,7 @@ function UsersTab({ t, onUpdate }: any) {
   const [kyc, setKyc] = useState('');
   const [active, setActive] = useState('');
   const [role, setRole] = useState('');
+  const [exempt, setExempt] = useState('');
   const [users, setUsers] = useState<any[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
@@ -497,6 +498,7 @@ function UsersTab({ t, onUpdate }: any) {
     if (kyc) params.set('kyc', kyc);
     if (active) params.set('active', active);
     if (role) params.set('role', role);
+    if (exempt) params.set('exempt', exempt);
     try {
       const res = await api.get(`/admin/users?${params.toString()}`);
       setUsers(res.data.rows);
@@ -506,7 +508,7 @@ function UsersTab({ t, onUpdate }: any) {
     }
   };
 
-  useEffect(() => { load(); }, [page, kyc, active, role]);
+  useEffect(() => { load(); }, [page, kyc, active, role, exempt]);
 
   const onSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -615,6 +617,14 @@ function UsersTab({ t, onUpdate }: any) {
           <option value="user">user</option>
           <option value="admin">admin</option>
         </select>
+        <select value={exempt} onChange={e => { setExempt(e.target.value); setPage(0); }} className="input-field text-xs h-8 !py-0 !px-2" title={t('admin.feeExemptFilter')}>
+          <option value="">{t('admin.feeExemptFilter')}: {t('common.all')}</option>
+          <option value="any">{t('admin.feeExemptFilterAny')}</option>
+          <option value="exchange">{t('admin.feeExemptExchange')}</option>
+          <option value="casino">{t('admin.feeExemptCasino')}</option>
+          <option value="qx_trade">{t('admin.feeExemptQxTrade')}</option>
+          <option value="qx_all">{t('admin.feeExemptQxAll')}</option>
+        </select>
         <button type="submit" className="btn-primary text-xs !py-1.5 !px-3">{t('common.search')}</button>
       </form>
 
@@ -629,13 +639,14 @@ function UsersTab({ t, onUpdate }: any) {
               <th className="text-left px-3 py-2.5">KYC</th>
               <th className="text-center px-3 py-2.5">2FA</th>
               <th className="text-center px-3 py-2.5">{t('admin.active')}</th>
+              <th className="text-left px-3 py-2.5">{t('admin.feeExemptCol')}</th>
               <th className="text-left px-3 py-2.5">{t('admin.joined')}</th>
               <th className="text-right px-3 py-2.5">{t('admin.actions')}</th>
             </tr>
           </thead>
           <tbody>
             {users.length === 0 ? (
-              <tr><td colSpan={8} className="px-3 py-8 text-center text-exchange-text-third text-xs">{t('admin.noData')}</td></tr>
+              <tr><td colSpan={9} className="px-3 py-8 text-center text-exchange-text-third text-xs">{t('admin.noData')}</td></tr>
             ) : users.map(u => (
               <tr key={u.id} className="border-b border-exchange-border/50 hover:bg-exchange-hover/30">
                 <td className="px-3 py-2 text-xs">{u.email}</td>
@@ -660,6 +671,21 @@ function UsersTab({ t, onUpdate }: any) {
                 </td>
                 <td className="px-3 py-2 text-center text-[11px]">
                   {u.is_active ? <span className="text-exchange-buy">●</span> : <span className="text-exchange-sell">●</span>}
+                </td>
+                <td className="px-3 py-2">
+                  <button
+                    onClick={() => openDetail(u.id)}
+                    title={t('admin.feeExemptManage')}
+                    className="flex flex-wrap gap-0.5 items-center hover:opacity-80"
+                  >
+                    {u.fee_exempt_exchange_holder ? <span className="text-[9px] px-1 py-0.5 rounded bg-blue-400/20 text-blue-400" title={t('admin.feeExemptExchange')}>거래소</span> : null}
+                    {u.fee_exempt_casino_holder ? <span className="text-[9px] px-1 py-0.5 rounded bg-purple-400/20 text-purple-400" title={t('admin.feeExemptCasino')}>카지노</span> : null}
+                    {u.fee_exempt_qx_all ? <span className="text-[9px] px-1 py-0.5 rounded bg-exchange-buy/20 text-exchange-buy" title={t('admin.feeExemptQxAll')}>QX50만</span> : null}
+                    {u.fee_exempt_qx_trade ? <span className="text-[9px] px-1 py-0.5 rounded bg-exchange-yellow/20 text-exchange-yellow" title={t('admin.feeExemptQxTrade')}>QX10만</span> : null}
+                    {!u.fee_exempt_exchange_holder && !u.fee_exempt_casino_holder && !u.fee_exempt_qx_all && !u.fee_exempt_qx_trade
+                      ? <span className="text-[10px] text-exchange-text-third hover:text-exchange-yellow flex items-center gap-0.5"><BadgePercent size={11} /> {t('admin.feeExemptAssign')}</span>
+                      : null}
+                  </button>
                 </td>
                 <td className="px-3 py-2 text-[11px] text-exchange-text-third">{timeAgo(u.created_at, t)}</td>
                 <td className="px-3 py-2 text-right">
@@ -698,7 +724,7 @@ function UsersTab({ t, onUpdate }: any) {
         </div>
       </div>
 
-      {detail && <UserDetailModal detail={detail} onClose={() => setDetail(null)} t={t} />}
+      {detail && <UserDetailModal detail={detail} onClose={() => { setDetail(null); load(); }} t={t} />}
     </div>
   );
 }

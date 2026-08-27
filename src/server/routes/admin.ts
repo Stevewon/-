@@ -159,6 +159,7 @@ app.get('/users', async (c) => {
   const kyc = c.req.query('kyc') || '';
   const active = c.req.query('active') || '';
   const role = c.req.query('role') || '';
+  const exempt = c.req.query('exempt') || '';   // '', 'any', 'exchange', 'casino', 'qx_trade', 'qx_all'
   const limit = Math.min(parseInt(c.req.query('limit') || '50'), 200);
   const offset = parseInt(c.req.query('offset') || '0');
 
@@ -166,8 +167,10 @@ app.get('/users', async (c) => {
   const params: any[] = [];
 
   if (q) {
-    conds.push('(email LIKE ? OR nickname LIKE ?)');
-    params.push(`%${q}%`, `%${q}%`);
+    // Search email, nickname AND KYC real name (admins often know the person's
+    // real name, not just their handle).
+    conds.push('(email LIKE ? OR nickname LIKE ? OR kyc_name LIKE ?)');
+    params.push(`%${q}%`, `%${q}%`, `%${q}%`);
   }
   if (['none', 'pending', 'approved', 'rejected'].includes(kyc)) {
     conds.push('kyc_status = ?');
@@ -180,6 +183,19 @@ app.get('/users', async (c) => {
   if (['user', 'admin'].includes(role)) {
     conds.push('role = ?');
     params.push(role);
+  }
+  // Fee-exemption filter — list only members with a given (or any) exemption
+  // flag set. Lets the admin manage the shareholder / VIP roster in one view.
+  if (exempt === 'any') {
+    conds.push('(COALESCE(fee_exempt_exchange_holder,0)=1 OR COALESCE(fee_exempt_casino_holder,0)=1 OR COALESCE(fee_exempt_qx_trade,0)=1 OR COALESCE(fee_exempt_qx_all,0)=1)');
+  } else if (exempt === 'exchange') {
+    conds.push('COALESCE(fee_exempt_exchange_holder,0)=1');
+  } else if (exempt === 'casino') {
+    conds.push('COALESCE(fee_exempt_casino_holder,0)=1');
+  } else if (exempt === 'qx_trade') {
+    conds.push('COALESCE(fee_exempt_qx_trade,0)=1');
+  } else if (exempt === 'qx_all') {
+    conds.push('COALESCE(fee_exempt_qx_all,0)=1');
   }
 
   const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
