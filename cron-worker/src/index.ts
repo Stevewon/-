@@ -796,17 +796,30 @@ export default {
         const u = matches[0];
         out.user = { id: u.id, nickname: u.nickname, email: u.email };
 
-        // How much QTA is currently locked by this user's ACTIVE positions?
+        // How much QTA is locked by this user's positions? We return the
+        // principal of any position that is NOT already closed/redeemed, since
+        // those still hold QTA in the wallet's `locked` bucket. (Matured but
+        // un-redeemed positions still have their principal locked.)
         const lockRow = await env.DB.prepare(
           `SELECT COUNT(*) AS n,
                   COALESCE(SUM(COALESCE(principal_qta, principal, 0)), 0) AS locked_qta,
                   COALESCE(SUM(COALESCE(principal_usd, 0)), 0) AS principal_usd
              FROM staking_positions
-            WHERE user_id = ? AND status = 'active'`,
+            WHERE user_id = ?
+              AND status NOT IN ('redeemed','closed','cancelled','withdrawn')`,
         ).bind(u.id).first<any>();
         const activeN = Number(lockRow?.n || 0);
-        const lockedQta = Number(lockRow?.locked_qta || 0);
-        out.active_positions = activeN;
+        let lockedQta = Number(lockRow?.locked_qta || 0);
+        // Never return more than what is actually locked in the wallet.
+        const qtaWallet = await env.DB.prepare(
+          `SELECT COALESCE(locked,0) AS locked, COALESCE(available,0) AS available
+             FROM wallets WHERE user_id = ? AND coin_symbol = 'QTA'`,
+        ).bind(u.id).first<any>();
+        const walletLocked = Number(qtaWallet?.locked || 0);
+        if (lockedQta > walletLocked) lockedQta = walletLocked; // clamp to reality
+        out.positions_to_delete = activeN;
+        out.wallet_locked_qta = walletLocked;
+        out.wallet_available_qta = Number(qtaWallet?.available || 0);
         out.locked_qta_to_return = lockedQta;
         out.principal_usd = Number(lockRow?.principal_usd || 0);
 
