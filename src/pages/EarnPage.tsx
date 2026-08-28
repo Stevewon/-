@@ -176,14 +176,14 @@ export default function EarnPage() {
 
   // Sponsor assigns an unplaced downline member to their Left/Right leg (ONCE).
   const handleAssignLeg = async (memberId: string, leg: 'L' | 'R') => {
-    const legName = leg === 'L' ? '좌(Left)' : '우(Right)';
-    if (!window.confirm(`이 회원을 ${legName} 라인에 배치합니다.\n한 번 배치하면 변경할 수 없습니다. 진행할까요?`)) return;
+    const legName = leg === 'L' ? t('earn.binaryLegLeft') : t('earn.binaryLegRight');
+    if (!window.confirm(t('earn.binaryAssignConfirm').replace('{leg}', legName))) return;
     setAssignBusy(memberId);
     try {
       await api.post('/earn/binary/assign-leg', { member_id: memberId, leg });
       await loadBinary();
     } catch (e: any) {
-      alert(e?.response?.data?.message || '배치에 실패했습니다.');
+      alert(e?.response?.data?.message || t('earn.binaryAssignFailed'));
     } finally {
       setAssignBusy(null);
     }
@@ -291,23 +291,23 @@ export default function EarnPage() {
       {/* Binary Team — 좌우 볼륨 총액 + 신규 하부 좌/우 배치(1회) */}
       {user && binary && (
         <div className="mb-6">
-          <h2 className="text-[16px] font-bold text-exchange-text mb-3">바이너리 팀 볼륨</h2>
+          <h2 className="text-[16px] font-bold text-exchange-text mb-3">{t('earn.binaryTeamVolume')}</h2>
 
           {/* Left / Right volume totals */}
           <div className="grid grid-cols-2 gap-3 mb-3">
             <div className="bg-exchange-card border border-exchange-border rounded-2xl p-4">
-              <div className="text-[12px] text-exchange-text-third">좌(Left) 볼륨</div>
+              <div className="text-[12px] text-exchange-text-third">{t('earn.binaryLeftVolume')}</div>
               <div className="text-[20px] font-bold text-exchange-buy tabular-nums mt-1">
                 {fmtUsd(binary.volume.left_usd)}
               </div>
-              <div className="text-[10px] text-exchange-text-third mt-1">라인 한도 {fmtUsd(binary.volume.cap_usd)}</div>
+              <div className="text-[10px] text-exchange-text-third mt-1">{t('earn.binaryLineCap')} {fmtUsd(binary.volume.cap_usd)}</div>
             </div>
             <div className="bg-exchange-card border border-exchange-border rounded-2xl p-4">
-              <div className="text-[12px] text-exchange-text-third">우(Right) 볼륨</div>
+              <div className="text-[12px] text-exchange-text-third">{t('earn.binaryRightVolume')}</div>
               <div className="text-[20px] font-bold text-exchange-sell tabular-nums mt-1">
                 {fmtUsd(binary.volume.right_usd)}
               </div>
-              <div className="text-[10px] text-exchange-text-third mt-1">라인 한도 {fmtUsd(binary.volume.cap_usd)}</div>
+              <div className="text-[10px] text-exchange-text-third mt-1">{t('earn.binaryLineCap')} {fmtUsd(binary.volume.cap_usd)}</div>
             </div>
           </div>
 
@@ -315,15 +315,15 @@ export default function EarnPage() {
           <div className="bg-exchange-card border border-exchange-border rounded-2xl p-4 mb-3">
             <div className="flex items-center justify-between">
               <div>
-                <div className="text-[12px] text-exchange-text-third">좌우 볼륨 총액</div>
+                <div className="text-[12px] text-exchange-text-third">{t('earn.binaryTotalVolume')}</div>
                 <div className="text-[22px] font-bold text-exchange-yellow tabular-nums">
                   {fmtUsd(binary.volume.total_usd)}
                 </div>
               </div>
               <div className="text-right text-[12px] text-exchange-text-third leading-relaxed">
-                <div>본인 몸값 <span className="text-exchange-text font-semibold">{fmtUsd(binary.volume.self_usd)}</span></div>
-                <div>라인당 한도(2배) <span className="text-exchange-text font-semibold">{fmtUsd(binary.volume.cap_usd)}</span></div>
-                <div>기매칭 <span className="text-exchange-text font-semibold">{fmtUsd(binary.volume.matched_usd)}</span></div>
+                <div>{t('earn.binarySelfValue')} <span className="text-exchange-text font-semibold">{fmtUsd(binary.volume.self_usd)}</span></div>
+                <div>{t('earn.binaryLineCap2x')} <span className="text-exchange-text font-semibold">{fmtUsd(binary.volume.cap_usd)}</span></div>
+                <div>{t('earn.binaryMatched')} <span className="text-exchange-text font-semibold">{fmtUsd(binary.volume.matched_usd)}</span></div>
               </div>
             </div>
           </div>
@@ -331,9 +331,9 @@ export default function EarnPage() {
           {/* Unplaced downline — sponsor picks Left or Right (one-time) */}
           {binary.unplaced_members.length > 0 && (
             <div className="bg-exchange-card border border-exchange-yellow/40 rounded-2xl p-4 mb-3">
-              <div className="text-[13px] font-bold text-exchange-yellow mb-1">신규 하부 배치 대기</div>
+              <div className="text-[13px] font-bold text-exchange-yellow mb-1">{t('earn.binaryUnplacedTitle')}</div>
               <div className="text-[11px] text-exchange-text-third mb-3">
-                아래 회원을 좌/우 라인에 배치하세요. <b>한 번만</b> 선택할 수 있으며 변경할 수 없습니다.
+                {t('earn.binaryUnplacedHint')}
               </div>
               <div className="space-y-2">
                 {binary.unplaced_members.map((m) => (
@@ -347,12 +347,12 @@ export default function EarnPage() {
                         disabled={assignBusy === m.id}
                         onClick={() => handleAssignLeg(m.id, 'L')}
                         className="px-3 py-1.5 rounded-lg text-[12px] font-bold bg-exchange-buy/15 text-exchange-buy border border-exchange-buy/40 disabled:opacity-50"
-                      >좌 배치</button>
+                      >{t('earn.binaryPlaceLeft')}</button>
                       <button
                         disabled={assignBusy === m.id}
                         onClick={() => handleAssignLeg(m.id, 'R')}
                         className="px-3 py-1.5 rounded-lg text-[12px] font-bold bg-exchange-sell/15 text-exchange-sell border border-exchange-sell/40 disabled:opacity-50"
-                      >우 배치</button>
+                      >{t('earn.binaryPlaceRight')}</button>
                     </div>
                   </div>
                 ))}
@@ -364,7 +364,7 @@ export default function EarnPage() {
           {(binary.left_members.length > 0 || binary.right_members.length > 0) && (
             <div className="grid grid-cols-2 gap-3">
               <div className="bg-exchange-card border border-exchange-border rounded-2xl p-3">
-                <div className="text-[11px] text-exchange-buy font-bold mb-1">좌 라인 ({binary.left_members.length})</div>
+                <div className="text-[11px] text-exchange-buy font-bold mb-1">{t('earn.binaryLeftLine')} ({binary.left_members.length})</div>
                 <div className="space-y-1">
                   {binary.left_members.map((m) => (
                     <div key={m.id} className="text-[12px] text-exchange-text truncate">{m.nickname}</div>
@@ -372,7 +372,7 @@ export default function EarnPage() {
                 </div>
               </div>
               <div className="bg-exchange-card border border-exchange-border rounded-2xl p-3">
-                <div className="text-[11px] text-exchange-sell font-bold mb-1">우 라인 ({binary.right_members.length})</div>
+                <div className="text-[11px] text-exchange-sell font-bold mb-1">{t('earn.binaryRightLine')} ({binary.right_members.length})</div>
                 <div className="space-y-1">
                   {binary.right_members.map((m) => (
                     <div key={m.id} className="text-[12px] text-exchange-text truncate">{m.nickname}</div>
