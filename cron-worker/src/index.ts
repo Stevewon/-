@@ -677,6 +677,34 @@ export default {
           `SELECT user_id, address_index FROM qta_hd_indexes LIMIT 100`
         ).bind().all<any>().catch(() => ({ results: [] as any[] }));
         dbg.hd_indexes = hd || [];
+
+        // Derivation audit: for every stored deposit address, check whether the
+        // CURRENT mnemonic reproduces it (→ we can sign/sweep) or not (→ issued
+        // under an old mnemonic; funds on-chain are unrecoverable by this server).
+        const mnem = env.QTA_HD_WALLET_MNEMONIC;
+        if (mnem) {
+          const addrByUser: Record<string, string> = {};
+          for (const a of (addrs || []) as any[]) addrByUser[a.user_id] = a.address;
+          const audit: Array<{ user_id: string; idx: number; stored: string; derived: string; match: boolean }> = [];
+          let matchN = 0, mismatchN = 0;
+          for (const h of (hd || []) as any[]) {
+            const ix = Number(h.address_index);
+            const stored = addrByUser[h.user_id];
+            if (!stored || !Number.isInteger(ix)) continue;
+            let derived = '';
+            try { derived = deriveAccountFromMnemonic(mnem, ix).address; } catch { derived = 'ERR'; }
+            const m = derived.toLowerCase() === stored.toLowerCase();
+            if (m) matchN++; else mismatchN++;
+            audit.push({ user_id: h.user_id, idx: ix, stored, derived, match: m });
+          }
+          audit.sort((a, b) => a.idx - b.idx);
+          dbg.derivation_audit = audit;
+          dbg.derivation_match_count = matchN;
+          dbg.derivation_mismatch_count = mismatchN;
+          const firstMatch = audit.find(a => a.match);
+          dbg.first_recoverable_index = firstMatch ? firstMatch.idx : null;
+        }
+
         const { results: sweepCands } = await env.DB.prepare(
           `SELECT DISTINCT a.address, a.user_id, h.address_index AS idx
              FROM qta_addresses a
