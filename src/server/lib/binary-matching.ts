@@ -214,22 +214,30 @@ async function runMatchForUser(db: any, userId: string, qtaPriceUsd: number): Pr
 
 // Roll a STAKING subscription's USD up every binary ancestor's correct leg,
 // then match. usdValue = USD value of the QTA actually DEDUCTED at subscribe.
+//
+// opts.skipSelf: when true, DO NOT grow the staker's own self_usd (몸값). Used by
+//   the admin recompute path, which sets every user's self_usd up-front (so the
+//   2× cap is correct before ANY volume rolls up) and then only needs the
+//   ancestor volume roll-up here.
 export async function rollStakeUpBinary(
   db: any,
   memberId: string,
   usdValue: number,
   qtaPriceUsd: number,
+  opts?: { skipSelf?: boolean },
 ): Promise<void> {
   if (!(usdValue > 0)) return;
 
-  // 1) The staker's OWN 몸값 grows by this staking subscription, raising THEIR
-  //    downline cap (2× self_usd per leg) so more downline can accumulate.
-  await db.prepare(
-    `INSERT INTO binary_volume (user_id, left_usd, right_usd, matched_usd, self_usd, updated_at)
-     VALUES (?, 0, 0, 0, ?, datetime('now'))
-     ON CONFLICT(user_id) DO UPDATE SET
-       self_usd = self_usd + ?, updated_at = datetime('now')`
-  ).bind(memberId, usdValue, usdValue).run();
+  if (!opts?.skipSelf) {
+    // 1) The staker's OWN 몸값 grows by this staking subscription, raising THEIR
+    //    downline cap (2× self_usd per leg) so more downline can accumulate.
+    await db.prepare(
+      `INSERT INTO binary_volume (user_id, left_usd, right_usd, matched_usd, self_usd, updated_at)
+       VALUES (?, 0, 0, 0, ?, datetime('now'))
+       ON CONFLICT(user_id) DO UPDATE SET
+         self_usd = self_usd + ?, updated_at = datetime('now')`
+    ).bind(memberId, usdValue, usdValue).run();
+  }
 
   // The staker may now be matchable if downline volume was already parked.
   await runMatchForUser(db, memberId, qtaPriceUsd);
@@ -284,4 +292,129 @@ export async function rollStakeUpBinary(
     }
     childId = parentId;
   }
+}
+
+// ============================================================================
+// recomputeBinaryFromStaking — ADMIN RESET (owner rule 2026-08-28).
+// ----------------------------------------------------------------------------
+// Wipes ALL binary volume (self_usd / left / right / matched / pending) and
+// rebuilds it FROM STAKING SUBSCRIPTIONS ONLY. This retroactively purges the
+// old, WRONG deposit-derived 몸값 so nothing but staking counts.
+//
+// Also resets any previously-paid binary_match_bonuses history and re-derives
+// it from scratch (matched_usd starts at 0, so runMatchForUser will re-pay as
+// volume is rolled back in — bonuses are re-inserted, not double-counted,
+// because the rebuild starts from a clean slate).
+//
+// Ordering matters:
+//   Phase 1 — SET every user's self_usd = SUM(staking principal, in USD at
+//             stake time). Doing this FIRST guarantees each ancestor's 2× cap
+//             is correct before ANY downline volume rolls up.
+//   Phase 2 — For every staking position, roll its USD up the ancestry
+//             (skipSelf=true so self_usd is not double-added) and match.
+//
+// Returns a small report for the admin UI / logs.
+// ============================================================================
+export async function recomputeBinaryFromStaking(
+  db: any,
+  qtaPriceUsd: number,
+): Promise<{
+  ok: boolean;
+  users_reset: number;
+  self_seeded: number;
+  positions_rolled: number;
+  bonuses_cleared: number;
+}> {
+  // 0) Clean slate: wipe all volume rows and paid-bonus history, and un-count
+  //    every staking position so it can be rolled back in.
+  let bonusesCleared = 0;
+  try {
+    const del = await db.prepare(`DELETE FROM binary_match_bonuses`).run();
+    bonusesCleared = Number(del?.meta?.changes || 0);
+  } catch { /* table may be empty / absent */ }
+
+  // Reset ALL volume columns to 0 (keep the rows so ON CONFLICT paths are cheap).
+  await db.prepare(
+    `UPDATE binary_volume
+        SET left_usd = 0, right_usd = 0, matched_usd = 0, self_usd = 0,
+            pending_left_usd = 0, pending_right_usd = 0,
+            updated_at = datetime('now')`
+  ).run().catch(async () => {
+    // pending_* columns may not exist on older DBs — fall back without them.
+    await db.prepare(
+      `UPDATE binary_volume
+          SET left_usd = 0, right_usd = 0, matched_usd = 0, self_usd = 0,
+              updated_at = datetime('now')`
+    ).run();
+  });
+
+  // Un-count every staking position (so a later cron sweep is also consistent).
+  try {
+    await db.prepare(`UPDATE staking_positions SET binary_counted_at = NULL`).run();
+  } catch { /* column may not exist yet — bootstrap adds it */ }
+
+  const usersReset = await db.prepare(`SELECT COUNT(*) AS n FROM binary_volume`)
+    .first().then((r: any) => Number(r?.n || 0)).catch(() => 0);
+
+  // Phase 1 — seed self_usd = SUM of each user's staking principal (USD at
+  //   stake time = principal_qta × qta_price_at_stake, fallback principal_usd).
+  //   We consider ALL positions that consumed QTA (any status) as 몸값, since
+  //   the QTA was actually deducted. If the owner later wants only ACTIVE
+  //   positions to count, add `WHERE status='active'` here.
+  const selfRows = await db.prepare(
+    `SELECT user_id,
+            SUM(
+              CASE
+                WHEN COALESCE(principal_qta,0) > 0 AND COALESCE(qta_price_at_stake,0) > 0
+                  THEN principal_qta * qta_price_at_stake
+                ELSE COALESCE(principal_usd,0)
+              END
+            ) AS self_usd
+       FROM staking_positions
+      GROUP BY user_id`
+  ).all().then((r: any) => r?.results || []).catch(() => []);
+
+  let selfSeeded = 0;
+  for (const row of selfRows) {
+    const uid = row.user_id;
+    const selfUsd = Number(row.self_usd || 0);
+    if (!uid || !(selfUsd > 0)) continue;
+    await db.prepare(
+      `INSERT INTO binary_volume (user_id, left_usd, right_usd, matched_usd, self_usd, updated_at)
+       VALUES (?, 0, 0, 0, ?, datetime('now'))
+       ON CONFLICT(user_id) DO UPDATE SET self_usd = ?, updated_at = datetime('now')`
+    ).bind(uid, selfUsd, selfUsd).run();
+    selfSeeded++;
+  }
+
+  // Phase 2 — roll every staking position's USD up the ancestry (skipSelf so
+  //   self_usd isn't double-added) and match. Stamp binary_counted_at.
+  const posRows = await db.prepare(
+    `SELECT id, user_id, principal_qta, qta_price_at_stake, principal_usd
+       FROM staking_positions
+      ORDER BY created_at ASC`
+  ).all().then((r: any) => r?.results || []).catch(() => []);
+
+  let positionsRolled = 0;
+  for (const p of posRows) {
+    const qta = Number(p.principal_qta || 0);
+    const px = Number(p.qta_price_at_stake || 0);
+    let usd = qta > 0 && px > 0 ? qta * px : Number(p.principal_usd || 0);
+    if (!(usd > 0)) continue;
+    await rollStakeUpBinary(db, p.user_id, usd, qtaPriceUsd, { skipSelf: true });
+    try {
+      await db.prepare(
+        `UPDATE staking_positions SET binary_counted_at = datetime('now') WHERE id = ?`
+      ).bind(p.id).run();
+    } catch { /* column may not exist — cron will handle */ }
+    positionsRolled++;
+  }
+
+  return {
+    ok: true,
+    users_reset: usersReset,
+    self_seeded: selfSeeded,
+    positions_rolled: positionsRolled,
+    bonuses_cleared: bonusesCleared,
+  };
 }

@@ -4,6 +4,7 @@ import { authMiddleware, adminMiddleware } from '../middleware/auth';
 import { createNotification } from './notifications';
 import { logAdminAction } from '../utils/audit';
 import { computeBalanceBreakdown } from '../lib/balance-breakdown';
+import { recomputeBinaryFromStaking } from '../lib/binary-matching';
 import {
   tmplWithdrawApproved,
   tmplWithdrawRejected,
@@ -2176,6 +2177,43 @@ app.post('/downline/:nickname/purge', async (c) => {
     freed_for_resignup: true,
     deleted: deletedList,
   });
+});
+
+// ============================================================================
+// POST /admin/binary/recompute — RESET & REBUILD 몸값 from STAKING only.
+// ----------------------------------------------------------------------------
+// OWNER RULE (2026-08-28): 몸값(self_usd) & binary volume come EXCLUSIVELY from
+// STAKING SUBSCRIPTIONS. This endpoint wipes ALL existing binary_volume (which
+// was WRONGLY grown from deposits under the old rule) and rebuilds it purely
+// from staking_positions. Admin-only. Idempotent — safe to re-run.
+// ============================================================================
+app.post('/binary/recompute', async (c) => {
+  try {
+    // Live QTA price (USD). Fallback to the known peg used elsewhere.
+    let qtaPrice = 0;
+    try {
+      const row = await c.env.DB.prepare(
+        `SELECT price_usd FROM coins WHERE symbol = 'QTA'`
+      ).first<any>();
+      qtaPrice = Number(row?.price_usd || 0);
+    } catch { /* ignore */ }
+    if (!(qtaPrice > 0)) qtaPrice = 0.00357142857;
+
+    const report = await recomputeBinaryFromStaking(c.env.DB, qtaPrice);
+
+    try {
+      await logAdminAction(c, {
+        action: 'binary.recompute',
+        targetType: 'binary_volume',
+        targetId: 'all',
+        payload: { ...report, qta_price: qtaPrice },
+      });
+    } catch { /* audit best-effort */ }
+
+    return c.json({ ...report, qta_price: qtaPrice });
+  } catch (e: any) {
+    return c.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, 500);
+  }
 });
 
 export default app;
