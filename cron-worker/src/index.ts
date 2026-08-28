@@ -808,8 +808,17 @@ export default {
             WHERE user_id = ?
               AND status NOT IN ('redeemed','closed','cancelled','withdrawn')`,
         ).bind(u.id).first<any>();
-        const activeN = Number(lockRow?.n || 0);
         let lockedQta = Number(lockRow?.locked_qta || 0);
+        // Total positions that will be DELETED (any status).
+        const totalPosRow = await env.DB.prepare(
+          `SELECT COUNT(*) AS n FROM staking_positions WHERE user_id = ?`,
+        ).bind(u.id).first<any>();
+        const activeN = Number(totalPosRow?.n || 0);
+        // Does a binary_volume row exist (self_usd to wipe)?
+        const bv = await env.DB.prepare(
+          `SELECT COALESCE(self_usd,0) AS self_usd FROM binary_volume WHERE user_id = ?`,
+        ).bind(u.id).first<any>();
+        out.self_usd_to_wipe = Number(bv?.self_usd || 0);
         // Never return more than what is actually locked in the wallet.
         const qtaWallet = await env.DB.prepare(
           `SELECT COALESCE(locked,0) AS locked, COALESCE(available,0) AS available
