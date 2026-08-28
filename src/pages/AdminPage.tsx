@@ -1059,32 +1059,54 @@ function DepositsTab({ t, onUpdate }: any) {
   const [status, setStatus] = useState('pending');
   const [list, setList] = useState<any[]>([]);
   const [showManual, setShowManual] = useState(false);
+  // Manual (voucher / 인증코드) deposits view — separate live ledger with totals.
+  const [manualTotals, setManualTotals] = useState<any[]>([]);
+  const [manualQ, setManualQ] = useState('');
+  const isManual = status === 'manual';
 
   const load = async () => {
     try {
-      const url = status ? `/admin/deposits?status=${status}` : '/admin/deposits';
-      const res = await api.get(url);
-      setList(res.data);
+      if (isManual) {
+        // Dedicated MANUAL ledger: rows + per-coin running totals (live).
+        const url = `/admin/deposits/manual${manualQ.trim() ? `?q=${encodeURIComponent(manualQ.trim())}` : ''}`;
+        const res = await api.get(url);
+        setList(res.data.rows || []);
+        setManualTotals(res.data.totals || []);
+      } else {
+        const url = status ? `/admin/deposits?status=${status}` : '/admin/deposits';
+        const res = await api.get(url);
+        setList(res.data);
+        setManualTotals([]);
+      }
     } catch (e: any) {
       showToast('error', t('common.error'), e.response?.data?.error || 'Load failed');
     }
   };
-  useEffect(() => { load(); }, [status]);
+  useEffect(() => { load(); }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Live refresh: while the MANUAL ledger is open, poll every 8s so newly
+  // credited vouchers appear in real time without a manual reload.
+  useEffect(() => {
+    if (!isManual) return;
+    const id = setInterval(() => { load(); }, 8000);
+    return () => clearInterval(id);
+  }, [isManual, manualQ]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const pendingCount = status === 'pending' ? list.length : null;
 
   return (
     <div>
       <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
-        <div className="flex items-center gap-1 bg-exchange-card rounded-lg border border-exchange-border p-1 w-fit">
-          {['pending', 'completed', 'rejected', ''].map(s => (
+        <div className="flex items-center gap-1 bg-exchange-card rounded-lg border border-exchange-border p-1 w-fit flex-wrap">
+          {['pending', 'completed', 'rejected', '', 'manual'].map(s => (
             <button key={s || 'all'} onClick={() => setStatus(s)} className={`px-3 py-1 text-xs rounded-md flex items-center gap-1.5 ${status === s ? 'bg-exchange-hover text-exchange-yellow' : 'text-exchange-text-secondary'}`}>
-              {s === '' ? t('common.all') : s}
+              {s === '' ? t('common.all') : s === 'manual' ? t('admin.manualLedger') : s}
               {s === 'pending' && pendingCount !== null && pendingCount > 0 && (
                 <span className="bg-exchange-yellow text-black text-[9px] font-bold rounded px-1.5 py-0.5 tabular-nums">
                   {pendingCount}
                 </span>
               )}
+              {s === 'manual' && <span className="w-1.5 h-1.5 rounded-full bg-exchange-buy animate-pulse" title="LIVE" />}
             </button>
           ))}
         </div>
@@ -1092,6 +1114,30 @@ function DepositsTab({ t, onUpdate }: any) {
           <DollarSign size={13} /> {t('admin.manualDeposit')}
         </button>
       </div>
+
+      {/* MANUAL ledger: per-coin running totals + search (live, auto-refresh). */}
+      {isManual && (
+        <div className="mb-3 space-y-3">
+          <div className="flex flex-wrap gap-2">
+            {manualTotals.length === 0 ? (
+              <div className="text-xs text-exchange-text-third px-1 py-2">{t('admin.noData')}</div>
+            ) : manualTotals.map((tt: any) => (
+              <div key={tt.coin} className="bg-exchange-card border border-exchange-border rounded-xl px-4 py-2.5">
+                <div className="text-[10px] text-exchange-text-third">{tt.coin} · {tt.count}{t('admin.manualCountSuffix')}</div>
+                <div className="text-[15px] font-extrabold text-exchange-buy tabular-nums">+{formatPrice(tt.total)}</div>
+              </div>
+            ))}
+          </div>
+          <input
+            value={manualQ}
+            onChange={(e) => setManualQ(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') load(); }}
+            onBlur={() => load()}
+            placeholder={t('admin.manualSearchPlaceholder')}
+            className="input-field text-xs max-w-xs"
+          />
+        </div>
+      )}
 
       <div className="card overflow-x-auto">
         <table className="w-full text-sm">
@@ -1115,7 +1161,10 @@ function DepositsTab({ t, onUpdate }: any) {
                 <td className="px-3 py-2 text-xs font-medium">{d.coin_symbol}</td>
                 <td className="px-3 py-2 text-right text-xs tabular-nums text-exchange-buy">+{formatPrice(d.amount)}</td>
                 <td className="px-3 py-2 text-[11px]">{d.network || '-'}</td>
-                <td className="px-3 py-2 text-[11px] text-exchange-text-secondary font-mono" title={d.tx_hash}>{(d.tx_hash || '').slice(0, 14)}{d.tx_hash && d.tx_hash.length > 14 ? '...' : ''}</td>
+                <td className="px-3 py-2 text-[11px] text-exchange-text-secondary font-mono" title={d.tx_hash}>
+                  {(d.tx_hash || '').slice(0, 14)}{d.tx_hash && d.tx_hash.length > 14 ? '...' : ''}
+                  {isManual && d.memo ? <div className="text-[10px] text-exchange-text-third font-sans mt-0.5">📝 {d.memo}</div> : null}
+                </td>
                 <td className="px-3 py-2">
                   <span className={`text-[10px] px-1.5 py-0.5 rounded ${
                     d.status === 'completed' ? 'bg-exchange-buy/15 text-exchange-buy' :

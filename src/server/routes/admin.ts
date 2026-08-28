@@ -864,6 +864,61 @@ app.post('/deposits/manual', async (c) => {
   return c.json({ id, tx_hash: tx, amount: amt });
 });
 
+// ---------------------------------------------------------------------------
+// GET /deposits/manual — LIVE list of MANUAL (voucher/인증코드) deposits.
+//   Every manual credit created by POST /deposits/manual is stored in the
+//   `deposits` table with network = 'MANUAL' and tx_hash = 'MANUAL-...'. This
+//   endpoint returns those rows (newest first) with the member's email/
+//   nickname, plus per-coin totals so the admin can see the running tally in
+//   real time. Optional filters: ?coin=QTA  &q=<email/nickname substring>
+//   &limit=<n up to 1000>.
+// ---------------------------------------------------------------------------
+app.get('/deposits/manual', async (c) => {
+  const db = c.env.DB;
+  const coin = (c.req.query('coin') || '').trim().toUpperCase();
+  const q = (c.req.query('q') || '').trim();
+  const limit = Math.min(parseInt(c.req.query('limit') || '200'), 1000);
+
+  const conds: string[] = [`d.network = 'MANUAL'`];
+  const params: any[] = [];
+  if (coin) { conds.push('d.coin_symbol = ?'); params.push(coin); }
+  if (q) {
+    conds.push('(u.email LIKE ? OR u.nickname LIKE ?)');
+    const like = `%${q}%`;
+    params.push(like, like);
+  }
+  const where = `WHERE ${conds.join(' AND ')}`;
+
+  const listSql = `
+    SELECT d.id, d.user_id, d.coin_symbol, d.amount, d.tx_hash, d.memo,
+           d.status, d.created_at, u.email, u.nickname
+      FROM deposits d
+      JOIN users u ON u.id = d.user_id
+      ${where}
+     ORDER BY d.created_at DESC
+     LIMIT ?`;
+  const { results: rows } = await db.prepare(listSql).bind(...params, limit).all<any>();
+
+  // Per-coin totals + overall count (respect the same filters, ignore limit).
+  const totalsSql = `
+    SELECT d.coin_symbol AS coin, COUNT(*) AS count, COALESCE(SUM(d.amount),0) AS total
+      FROM deposits d
+      JOIN users u ON u.id = d.user_id
+      ${where}
+     GROUP BY d.coin_symbol
+     ORDER BY total DESC`;
+  const { results: totals } = await db.prepare(totalsSql).bind(...params).all<any>();
+
+  const grandCount = (rows || []).length;
+  return c.json({
+    rows: rows || [],
+    totals: totals || [],       // [{ coin, count, total }]
+    returned: grandCount,
+    limit,
+    filter: { coin: coin || null, q: q || null },
+  });
+});
+
 // ============================================================================
 // Trade history
 // ============================================================================

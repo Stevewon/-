@@ -310,11 +310,20 @@ app.post('/subscribe', authMiddleware, async (c) => {
       : '';
 
     if (!alreadyBound && sponsorCode) {
-      const sponsor = await c.env.DB.prepare(
+      // Match tolerantly: ignore surrounding whitespace and case differences in
+      // the stored referral_code (older rows may have mixed case / stray space).
+      let sponsor = await c.env.DB.prepare(
         `SELECT id FROM users WHERE referral_code = ?`
       ).bind(sponsorCode).first<any>();
       if (!sponsor) {
-        return c.json({ error: 'SPONSOR_NOT_FOUND', message: 'Invalid referral code.' }, 400);
+        sponsor = await c.env.DB.prepare(
+          `SELECT id FROM users WHERE UPPER(TRIM(referral_code)) = ?`
+        ).bind(sponsorCode).first<any>();
+      }
+      if (!sponsor) {
+        // Include the normalized code we searched for so the exact mismatch is
+        // visible in the client error (helps diagnose input problems).
+        return c.json({ error: 'SPONSOR_NOT_FOUND', message: `Invalid referral code: ${sponsorCode}` }, 400);
       }
       if (sponsor.id === user.id) {
         return c.json({ error: 'SPONSOR_SELF', message: 'You cannot set yourself as your sponsor.' }, 400);
