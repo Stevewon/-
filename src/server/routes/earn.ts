@@ -355,7 +355,7 @@ app.post('/subscribe', authMiddleware, async (c) => {
         `UPDATE users SET binary_parent_id = ?, binary_leg = NULL
           WHERE id = ? AND binary_parent_id IS NULL`
       ).bind(sponsor.id, user.id).run();
-    } else if (!alreadyBound && !sponsorCode) {
+    } else if (!alreadyBound && !sponsorRaw) {
       // First stake with NO sponsor code — allowed only for top-level members.
       // We simply leave binary_parent_id NULL (a standalone binary root).
     }

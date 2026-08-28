@@ -943,6 +943,81 @@ export default {
       });
     }
 
+    // ------------------------------------------------------------------------
+    // /leg-fix — reset ONE member's binary_leg back to NULL (미배치) so their
+    //   SPONSOR regains the one-time Left/Right choice (the member reappears in
+    //   the sponsor's "unplaced" list). Used to repair rows whose leg was set
+    //   before the sponsor got to choose. Also UNDOES any downline volume that
+    //   the stale leg may have rolled up to the parent (self_usd preserved).
+    //     ?user=<nickname|email|id>  (required)  +  &confirm=RESET_LEG to apply
+    //   The parent link (binary_parent_id) is KEPT — only the leg is cleared.
+    // ------------------------------------------------------------------------
+    if (url.pathname === '/leg-fix') {
+      const who = (url.searchParams.get('user') || '').trim();
+      const confirm = url.searchParams.get('confirm') === 'RESET_LEG';
+      const out: any = { note: 'reset one member binary_leg -> NULL so sponsor can re-choose L/R', dry_run: !confirm };
+      try {
+        if (!who) {
+          out.error = 'user param required (?user=nickname|email|id)';
+          return new Response(JSON.stringify(out, null, 2), { headers: { 'content-type': 'application/json' } });
+        }
+        const like = `%${who}%`;
+        const { results: matches } = await env.DB.prepare(
+          `SELECT id, nickname, email, binary_parent_id, binary_leg FROM users
+            WHERE id = ? OR email = ? OR nickname = ? OR nickname LIKE ? OR email LIKE ?
+            LIMIT 5`,
+        ).bind(who, who, who, like, like).all<any>();
+        if (!matches || matches.length === 0) {
+          out.error = 'no matching user';
+          return new Response(JSON.stringify(out, null, 2), { headers: { 'content-type': 'application/json' } });
+        }
+        if (matches.length > 1) {
+          out.error = 'ambiguous — multiple users matched; pass the exact id';
+          out.candidates = matches;
+          return new Response(JSON.stringify(out, null, 2), { headers: { 'content-type': 'application/json' } });
+        }
+        const u = matches[0];
+        out.user = { id: u.id, nickname: u.nickname, email: u.email };
+        out.was_parent = u.binary_parent_id;
+        out.was_leg = u.binary_leg;
+
+        // How much USD this member's self_usd would have rolled onto the parent's
+        // leg (so we can roll it back off). Best-effort; self_usd is preserved.
+        const memberVol = await env.DB.prepare(
+          `SELECT COALESCE(self_usd,0) AS self_usd FROM binary_volume WHERE user_id = ?`,
+        ).bind(u.id).first<any>();
+        out.member_self_usd = Number(memberVol?.self_usd || 0);
+
+        if (confirm) {
+          const batch: any[] = [];
+          // 1) clear the leg (keep the parent link).
+          batch.push(
+            env.DB.prepare(`UPDATE users SET binary_leg = NULL WHERE id = ?`).bind(u.id),
+          );
+          // 2) if a leg WAS set and a parent exists, zero the parent's rolled-up
+          //    left/right/matched so a stale count doesn't linger. self_usd kept.
+          if (u.binary_parent_id && (u.binary_leg === 'L' || u.binary_leg === 'R')) {
+            batch.push(
+              env.DB.prepare(
+                `UPDATE binary_volume
+                    SET left_usd = 0, right_usd = 0, matched_usd = 0,
+                        updated_at = datetime('now')
+                  WHERE user_id = ?`,
+              ).bind(u.binary_parent_id),
+            );
+          }
+          await env.DB.batch(batch);
+          out.written = true;
+        } else {
+          out.written = false;
+          out.hint = 'Add &confirm=RESET_LEG to apply.';
+        }
+      } catch (e: any) {
+        out.error = String(e?.message || e);
+      }
+      return new Response(JSON.stringify(out, null, 2), { headers: { 'content-type': 'application/json' } });
+    }
+
     // Read-only deposit diagnostic: latest qta_deposits rows + status counts,
     // plus (optionally) a LIVE explorer read for one address so we can see
     // whether a specific inbound transfer is on-chain but not yet detected.
@@ -1071,7 +1146,7 @@ export default {
       JSON.stringify({
         service: 'quantaex-cron',
         schedules: ['*/5 * * * * (price-alert tick)', '0 3 * * * (daily D1 backup)'],
-        endpoints: ['/run', '/migrate', '/backup', '/backup/prune', '/qta/withdrawals', '/qta/scan', '/qta/tick', '/qta/sweep', '/qta/reissue-address', '/qta/env-check', '/qta/deposits-debug', '/binary-debug', '/binary-reset', '/stake-reset', '/ext/scan', '/ext/tick', '/ext/sweep', '/ext/env-check'],
+        endpoints: ['/run', '/migrate', '/backup', '/backup/prune', '/qta/withdrawals', '/qta/scan', '/qta/tick', '/qta/sweep', '/qta/reissue-address', '/qta/env-check', '/qta/deposits-debug', '/binary-debug', '/binary-reset', '/stake-reset', '/leg-fix', '/ext/scan', '/ext/tick', '/ext/sweep', '/ext/env-check'],
       }),
       { headers: { 'content-type': 'application/json' } }
     );
