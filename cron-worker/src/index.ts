@@ -718,11 +718,26 @@ export default {
             ).bind(u.binary_parent_id).first<any>();
             parentNick = p ? (p.nickname || p.email || null) : null;
           }
+          // Referral (sponsor) relationship — the L1 referrer who invited this
+          // user. This is what SHOULD have driven placeInBinaryTree at signup.
+          let referrer: any = null;
+          try {
+            const rf = await env.DB.prepare(
+              `SELECT referrer_id FROM referrals WHERE referred_id = ? AND level = 1 LIMIT 1`,
+            ).bind(u.id).first<any>();
+            if (rf?.referrer_id) {
+              const rn = await env.DB.prepare(
+                `SELECT nickname, email FROM users WHERE id = ?`,
+              ).bind(rf.referrer_id).first<any>();
+              referrer = { id: rf.referrer_id, nickname: rn?.nickname || null, email: rn?.email || null };
+            }
+          } catch (_e) { /* referrals table shape */ }
           rows.push({
             id: u.id,
             nickname: u.nickname,
             email: u.email,
             referral_code: u.referral_code,
+            referrer_l1: referrer, // ← who invited them (should drive binary parent)
             binary_parent_id: u.binary_parent_id,
             binary_parent_nick: parentNick,
             binary_leg: u.binary_leg, // ← NULL means volume does NOT roll up to parent
