@@ -40,6 +40,12 @@
     // normalised inbound tx lists from here instead of parsing SPHINCS+ blocks.
     "QTA_EXPLORER_URL": "https://scan.quantarium.io",
     "QTA_HOT_WALLET_ADDRESS": "0xdeB6BFE50EeE8D753313988c6d1E77f95322527b",
+    // Final MAIN wallet every QX/QKEY deposit is swept INTO. This is the
+    // owner's real main wallet (opened by private key), so the server never
+    // needs to sign FROM it — it only receives. Gas for the sweep comes from
+    // the mnemonic's index-0 address (0x1C30CFc2…), which must hold a little
+    // native QTA for the 2-step gas-fund → forward flow.
+    "QTA_SWEEP_DESTINATION": "0xdeB6BFE50EeE8D753313988c6d1E77f95322527b",
     // Manual withdrawal mode ON: withdrawals are paid out by a human operator
     // from the Quantarium wallet app. The cron worker does NOT auto-sign, so
     // the hot wallet address does NOT need to match the mnemonic's index-0.
