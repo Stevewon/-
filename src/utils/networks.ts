@@ -367,7 +367,12 @@ export const EXTERNAL_DEPOSIT_NETWORK_WHITELIST: Record<string, string[]> = {
  */
 export function getDepositNetworks(coin: string): NetworkInfo[] {
   const all = getNetworks(coin);
-  if (isQuantariumAsset(coin)) return all;
+  // ── OWNER RULE (2026-08-28): QTA is WITHDRAW-ONLY ──────────────────────────
+  //   QTA cannot be deposited on-chain. It is obtained ONLY by depositing USDT
+  //   (Tether) and BUYING QTA on the exchange. So QTA is never offered as a
+  //   deposit option. Only QX and QKEY are depositable Quantarium-native assets.
+  if (coin.toUpperCase() === 'QTA') return [];
+  if (isQuantariumAsset(coin)) return all; // QX / QKEY → depositable
   const allow = EXTERNAL_DEPOSIT_NETWORK_WHITELIST[coin.toUpperCase()];
   if (!allow) return all; // no explicit whitelist → leave as-is (backend still gates via 503)
   return all.filter(n => allow.includes(n.id));

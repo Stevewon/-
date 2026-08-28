@@ -34,7 +34,8 @@ import {
   type EvmRpcConfig,
 } from './lib/qta-evm';
 import {
-  listInboundNativeTxs,
+  // listInboundNativeTxs intentionally NOT imported: QTA is withdraw-only, so
+  // native QTA deposits are never scanned/credited (owner rule 2026-08-28).
   listInboundTokenTransfers,
   type ExplorerConfig,
 } from './lib/qta-explorer';
@@ -812,16 +813,18 @@ async function scanQtaDeposits(env: Env): Promise<{
     const userId = a.user_id;
     const address = a.address;
 
-    // Gather all inbound transfers (native + tokens) for this address.
-    let inbound: Awaited<ReturnType<typeof listInboundNativeTxs>> = [];
+    // ★★★ OWNER RULE (2026-08-28): QTA is WITHDRAW-ONLY — it can NEVER be
+    //     deposited on-chain (the only way to get QTA is to deposit USDT and
+    //     buy it). So we DELIBERATELY do NOT scan native QTA transfers here;
+    //     we only credit QX / QKEY ERC-20 token deposits. Any native QTA sent
+    //     to a deposit address is intentionally ignored (never credited).
+    let inbound: Awaited<ReturnType<typeof listInboundTokenTransfers>> = [];
+    if (tokenMap.size === 0) {
+      // No QX/QKEY contracts configured → nothing depositable to scan.
+      continue;
+    }
     try {
-      const [nat, tok] = await Promise.all([
-        listInboundNativeTxs(cfg, address),
-        tokenMap.size > 0
-          ? listInboundTokenTransfers(cfg, address, tokenMap)
-          : Promise.resolve([]),
-      ]);
-      inbound = [...nat, ...tok];
+      inbound = await listInboundTokenTransfers(cfg, address, tokenMap);
     } catch (e) {
       console.warn(`[qta-scan] explorer read failed for ${address}:`, (e as any)?.message || e);
       continue; // skip this address this tick; retry next tick

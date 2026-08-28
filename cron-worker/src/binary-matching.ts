@@ -1,15 +1,23 @@
 // ============================================================================
-// binary-matching.ts (cron worker) — process credited deposits into binary
+// binary-matching.ts (cron worker) — process STAKING SUBSCRIPTIONS into binary
 // left/right volume and pay tiered matching bonuses in QTA.
 // ----------------------------------------------------------------------------
-// Runs each tick. Idempotent: each deposit's USD value is rolled into the
-// binary ancestry exactly once (tracked by `binary_counted_at`). Matching pays
-// on min(left,right) UNMATCHED volume in $100 units at a tiered rate, carrying
-// matched volume over so it is never double-paid.
+// Runs each tick. Idempotent: each staking position's QTA-USD value is rolled
+// into the binary ancestry exactly once (tracked by `binary_counted_at`).
+// Matching pays on min(left,right) UNMATCHED volume in $100 units at a tiered
+// rate, carrying matched volume over so it is never double-paid.
 //
-// Volume source (owner rule): DEPOSIT amount (USD value at credit time). We
-// count BOTH real on-chain deposits (`ext_deposits`, status credited/swept)
-// and completed internal `deposits` rows.
+// ⚑ OWNER RULE (2026-08-28): 몸값(self_usd) and binary downline volume come
+//   EXCLUSIVELY from STAKING SUBSCRIPTIONS — the exact QTA amount ACTUALLY
+//   DEDUCTED when a member subscribes to staking (staking_positions). DEPOSITS
+//   (ext_deposits / internal deposits) and USDT->QTA market buys DO NOT count
+//   toward self_usd or binary volume at all. Depositing Tether and buying QTA
+//   on the exchange is NOT 몸값 — only staking is.
+//
+//   The subscribe handler (src/server/routes/earn.ts) rolls a new position up
+//   synchronously. This cron sweeper is a SAFETY NET that catches any staking
+//   position whose synchronous roll-up was missed (legacy rows / transient
+//   failure): it scans staking_positions with binary_counted_at IS NULL.
 // ============================================================================
 
 interface Env {
@@ -32,7 +40,7 @@ function matchBonusRate(matchedUsd: number): number {
 const MATCH_UNIT_USD = 100;
 
 // EACH downline leg (left AND right, independently) may grow to at most this
-// multiple of the user's own deposit total (self_usd / "몸값"). Owner rule
+// multiple of the user's own STAKING total (self_usd / "몸값"). Owner rule
 // (2026-08-28, revised): 2× PER LEG — e.g. 몸값 $1,000 → left up to $2,000 AND
 // right up to $2,000 (not $2,000 combined).
 const DOWNLINE_CAP_MULTIPLE = 2;
@@ -133,13 +141,14 @@ async function runMatchForUser(env: Env, userId: string, qtaPrice: number): Prom
 // --------------------------------------------------------------------------
 
 // --------------------------------------------------------------------------
-// Roll a deposit's USD up every binary ancestor's correct leg, then match.
+// Roll a STAKING subscription's USD up every binary ancestor's correct leg,
+// then match. usdValue = USD value of the QTA actually DEDUCTED at subscribe.
 // --------------------------------------------------------------------------
 async function rollUp(env: Env, memberId: string, usdValue: number, qtaPrice: number): Promise<void> {
   if (!(usdValue > 0)) return;
 
-  // 1) The depositor's OWN self value ("몸값") grows by this deposit, raising
-  //    THEIR downline cap (2x self_usd) so more downline can accumulate.
+  // 1) The staker's OWN self value ("몸값") grows by this staking subscription,
+  //    raising THEIR downline cap (2x self_usd) so more downline can accumulate.
   await env.DB.prepare(
     `INSERT INTO binary_volume (user_id, left_usd, right_usd, matched_usd, self_usd, updated_at)
      VALUES (?, 0, 0, 0, ?, datetime('now'))
@@ -217,66 +226,51 @@ async function rollUp(env: Env, memberId: string, usdValue: number, qtaPrice: nu
 }
 
 // --------------------------------------------------------------------------
-// Main tick: process not-yet-counted credited deposits (ext + internal).
+// Main tick: SAFETY-NET sweep of not-yet-counted STAKING SUBSCRIPTIONS.
+// ----------------------------------------------------------------------------
+// ⛑ OWNER RULE (2026-08-28): 몸값(self_usd) & binary volume come ONLY from
+//   staking subscriptions — NEVER from deposits or USDT->QTA buys. Deposits are
+//   therefore NOT scanned here anymore. The subscribe handler rolls each new
+//   position up synchronously; this tick only re-processes positions whose
+//   binary_counted_at is still NULL (missed / legacy rows).
 // --------------------------------------------------------------------------
 export async function binaryMatchingTick(env: Env): Promise<{ ok: boolean; processed: number; reason?: string }> {
   let processed = 0;
   const qtaPrice = await priceOf(env, 'QTA');
 
-  // (1) External on-chain deposits: credited or swept, not yet counted.
+  // Staking subscriptions not yet rolled into binary volume. We use the exact
+  // QTA amount deducted at subscribe (principal_qta) × the QTA price snapshot at
+  // stake time (qta_price_at_stake) = the USD value that was actually deducted.
   try {
     const { results } = await env.DB.prepare(
-      `SELECT id, user_id, coin_symbol, amount
-         FROM ext_deposits
-        WHERE status IN ('credited','swept') AND binary_counted_at IS NULL
+      `SELECT id, user_id, principal_qta, qta_price_at_stake, principal_usd
+         FROM staking_positions
+        WHERE binary_counted_at IS NULL
         ORDER BY created_at ASC
         LIMIT 50`
     ).all<any>();
-    for (const d of results || []) {
+    for (const s of results || []) {
       // Claim it first (idempotent): only proceed if WE flipped the marker.
       const claim = await env.DB.prepare(
-        `UPDATE ext_deposits SET binary_counted_at = datetime('now')
+        `UPDATE staking_positions SET binary_counted_at = datetime('now')
           WHERE id = ? AND binary_counted_at IS NULL`
-      ).bind(d.id).run();
+      ).bind(s.id).run();
       if (!claim?.meta || claim.meta.changes === 0) continue;
 
-      const px = await priceOf(env, String(d.coin_symbol || 'USDT').toUpperCase());
-      const usd = Number(d.amount || 0) * px;
-      await rollUp(env, d.user_id, usd, qtaPrice);
+      // 몸값 = the exact QTA deducted at subscribe, valued in USD at stake time.
+      const qtaDeducted = Number(s.principal_qta || 0);
+      const pxAtStake = Number(s.qta_price_at_stake || 0);
+      let usd = qtaDeducted > 0 && pxAtStake > 0 ? qtaDeducted * pxAtStake : 0;
+      // Fallback to the stored principal_usd if the QTA/price columns are absent.
+      if (!(usd > 0)) usd = Number(s.principal_usd || 0);
+      if (!(usd > 0)) continue;
+
+      await rollUp(env, s.user_id, usd, qtaPrice);
       processed++;
     }
   } catch (e) {
-    // ext_deposits or binary tables may not exist on very old DBs.
+    // staking_positions.binary_counted_at may not exist yet (pre-0052).
     return { ok: false, processed, reason: String((e as any)?.message || e).slice(0, 200) };
-  }
-
-  // (2) Internal completed deposits, not yet counted. Skip admin-* tx (QA /
-  //     compensation credits) so only genuine user deposits count.
-  try {
-    const { results } = await env.DB.prepare(
-      `SELECT id, user_id, coin_symbol, amount, tx_hash
-         FROM deposits
-        WHERE status = 'completed' AND binary_counted_at IS NULL
-        ORDER BY created_at ASC
-        LIMIT 50`
-    ).all<any>();
-    for (const d of results || []) {
-      const claim = await env.DB.prepare(
-        `UPDATE deposits SET binary_counted_at = datetime('now')
-          WHERE id = ? AND binary_counted_at IS NULL`
-      ).bind(d.id).run();
-      if (!claim?.meta || claim.meta.changes === 0) continue;
-
-      // Exclude admin/compensation credits from binary volume.
-      if (String(d.tx_hash || '').startsWith('admin-')) continue;
-
-      const px = await priceOf(env, String(d.coin_symbol || 'USDT').toUpperCase());
-      const usd = Number(d.amount || 0) * px;
-      await rollUp(env, d.user_id, usd, qtaPrice);
-      processed++;
-    }
-  } catch {
-    // deposits.binary_counted_at may not exist yet (pre-0048); ignore softly.
   }
 
   return { ok: true, processed };

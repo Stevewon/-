@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../index';
 import { authMiddleware } from '../middleware/auth';
-import { assignBinaryLeg } from '../lib/binary-matching';
+import { assignBinaryLeg, rollStakeUpBinary } from '../lib/binary-matching';
 import { getFeeExemption } from '../utils/fees';
 
 // ---------------------------------------------------------------------------
@@ -383,6 +383,28 @@ app.post('/subscribe', authMiddleware, async (c) => {
         WHERE id = ?`
     ).bind(amountUsd, nowIso, product.id),
   ]);
+
+  // ── OWNER RULE (2026-08-28): 몸값(self_usd) = STAKING SUBSCRIPTION ONLY ──────
+  //   The member's 몸값 grows by the USD value of the QTA that was ACTUALLY
+  //   DEDUCTED for this stake (qtaQty × the live QTA price used above). This is
+  //   the ONLY thing that accrues self_usd / binary volume — deposits and
+  //   USDT→QTA buys do NOT. Roll it up the binary ancestry synchronously so the
+  //   stake takes effect immediately, then stamp binary_counted_at so the cron
+  //   safety-net sweeper never double-counts this position.
+  const stakedUsd = qtaQty * price; // exact deducted QTA valued at stake price
+  try {
+    await rollStakeUpBinary(c.env.DB, user.id, stakedUsd, price);
+    await c.env.DB.prepare(
+      `UPDATE staking_positions SET binary_counted_at = datetime('now')
+        WHERE id = ? AND binary_counted_at IS NULL`
+    ).bind(posId).run();
+  } catch (e) {
+    // If the synchronous roll-up fails (e.g. schema gap), we intentionally
+    // leave binary_counted_at NULL so the cron binaryMatchingTick sweeper will
+    // pick this position up and roll it in later. The stake itself is safe.
+    console.warn('[earn] stake->binary roll-up failed (cron will retry):', e);
+  }
+  // ────────────────────────────────────────────────────────────────────────────
 
   return c.json({
     ok: true, position_id: posId,

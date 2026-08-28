@@ -409,6 +409,7 @@ const ja = {
   'wallet.memoWarning': 'メモが未入力または誤っている場合、資金を失う可能性があります。',
   'wallet.warnSendOnlyCoin': 'このアドレスには{network}ネットワーク経由の{coin}のみを送金してください。',
   'wallet.warnBelowMin': '{min} {coin}未満の入金は反映されません。',
+  'wallet.qtaWithdrawOnly': 'QTAは出金のみ可能です。QTAはオンチェーンで入金できません。取引所にUSDT（テザー）を入金してQTAを購入することで保有できます。入金はQXまたはQKEYのみ可能です。',
   'wallet.testDeposit': '入金をシミュレート',
   'wallet.demo': 'デモ',
   'wallet.testDepositDesc': 'このデモでは、金額を入力すると即時に入金が反映されます。',

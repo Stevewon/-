@@ -390,6 +390,7 @@ const zh = {
   'wallet.memoWarning': '备注缺失或错误将导致资金丢失。',
   'wallet.warnSendOnlyCoin': '仅可通过 {network} 网络向此地址发送 {coin}。',
   'wallet.warnBelowMin': '低于 {min} {coin} 的充值将不予入账。',
+  'wallet.qtaWithdrawOnly': 'QTA 仅支持提现。QTA 无法链上充值，请向交易所充值 USDT（泰达币）并购买 QTA 后持有。仅 QX 与 QKEY 可充值。',
   'wallet.testDeposit': '模拟充值',
   'wallet.demo': '演示',
   'wallet.testDepositDesc': '在本演示中，输入金额即可即时入账一笔充值。',

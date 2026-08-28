@@ -409,6 +409,7 @@ const en = {
   'wallet.memoWarning': 'Missing or incorrect memo will result in loss of funds.',
   'wallet.warnSendOnlyCoin': 'Send only {coin} over {network} network to this address.',
   'wallet.warnBelowMin': 'Deposits below {min} {coin} will not be credited.',
+  'wallet.qtaWithdrawOnly': 'QTA is withdraw-only. QTA cannot be deposited on-chain — obtain it by depositing USDT (Tether) and buying QTA on the exchange. Only QX and QKEY can be deposited.',
   'wallet.testDeposit': 'Simulate Deposit',
   'wallet.demo': 'Demo',
   'wallet.testDepositDesc': 'In this demo, enter an amount to instantly credit a deposit.',

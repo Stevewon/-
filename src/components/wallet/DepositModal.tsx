@@ -52,11 +52,18 @@ export default function DepositModal({ open, onClose, initialCoin = 'USDT' }: Pr
 
   useEffect(() => {
     if (open) {
-      setCoin(initialCoin);
+      // OWNER RULE (2026-08-28): QTA cannot be deposited. If the caller opened
+      // the modal on QTA, fall back to QX (the primary depositable Quantarium
+      // asset) so users never land on a dead deposit screen.
+      setCoin(initialCoin.toUpperCase() === 'QTA' ? 'QX' : initialCoin);
       setTestAmount('');
       setShowTest(false);
     }
   }, [open, initialCoin]);
+
+  // QTA is WITHDRAW-ONLY — surfaced as an explicit notice if it is ever the
+  // active coin (e.g. only-QTA wallet edge case).
+  const isQtaWithdrawOnly = coin.toUpperCase() === 'QTA';
 
   // DEPOSIT ONLY sees networks we actually watch + sweep on-chain (safety
   // whitelist). For USDT that is BEP-20 only — TRC20/ERC20 are hidden so users
@@ -307,11 +314,17 @@ export default function DepositModal({ open, onClose, initialCoin = 'USDT' }: Pr
                     fontSize: '14px',
                   }}
                 >
-                  {wallets.map(w => (
-                    <option key={w.coin_symbol} value={w.coin_symbol}>
-                      {w.coin_symbol} — {w.coin_name}
-                    </option>
-                  ))}
+                  {/* OWNER RULE (2026-08-28): QTA is WITHDRAW-ONLY — never a
+                      deposit option. Obtain QTA by depositing USDT and buying
+                      it on the exchange. Only QX/QKEY (and external coins) can
+                      be deposited. */}
+                  {wallets
+                    .filter(w => w.coin_symbol.toUpperCase() !== 'QTA')
+                    .map(w => (
+                      <option key={w.coin_symbol} value={w.coin_symbol}>
+                        {w.coin_symbol} — {w.coin_name}
+                      </option>
+                    ))}
                 </select>
                 <div
                   className="absolute top-1/2 -translate-y-1/2 pointer-events-none"
@@ -348,7 +361,22 @@ export default function DepositModal({ open, onClose, initialCoin = 'USDT' }: Pr
               </div>
             )}
 
-            {/* Section: NETWORK */}
+            {/* OWNER RULE (2026-08-28): QTA is WITHDRAW-ONLY. Show a clear
+                notice instead of a deposit address. */}
+            {isQtaWithdrawOnly && (
+              <div
+                className="flex items-start gap-2 bg-exchange-yellow/10 border border-exchange-yellow/40 text-exchange-text"
+                style={{ padding: '14px', borderRadius: '10px', marginBottom: '16px' }}
+              >
+                <AlertTriangle size={18} className="text-exchange-yellow shrink-0 mt-0.5" />
+                <div style={{ fontSize: '13px', lineHeight: 1.6 }}>
+                  {t('wallet.qtaWithdrawOnly')}
+                </div>
+              </div>
+            )}
+
+            {/* Section: NETWORK (hidden for QTA — withdraw-only) */}
+            {!isQtaWithdrawOnly && (
             <div style={{ marginBottom: '16px' }}>
               <label
                 className="block text-exchange-text-third uppercase font-semibold"
@@ -397,8 +425,10 @@ export default function DepositModal({ open, onClose, initialCoin = 'USDT' }: Pr
                 ))}
               </div>
             </div>
+            )}
 
-            {/* Section: MIN DEPOSIT / CONFIRMATIONS */}
+            {/* Section: MIN DEPOSIT / CONFIRMATIONS (hidden for QTA) */}
+            {!isQtaWithdrawOnly && (
             <div
               className="grid grid-cols-2"
               style={{ gap: '12px', marginBottom: '16px' }}
@@ -462,8 +492,10 @@ export default function DepositModal({ open, onClose, initialCoin = 'USDT' }: Pr
                 </div>
               </div>
             </div>
+            )}
 
-            {/* Section: WARNINGS */}
+            {/* Section: WARNINGS (hidden for QTA — withdraw-only) */}
+            {!isQtaWithdrawOnly && (
             <div
               className="bg-exchange-yellow/[0.08] border border-exchange-yellow/30"
               style={{
@@ -500,6 +532,7 @@ export default function DepositModal({ open, onClose, initialCoin = 'USDT' }: Pr
                 <span>{t('wallet.warnBelowMin', { min: network?.minDeposit, coin })}</span>
               </div>
             </div>
+            )}
           </div>
 
           {/* ===== RIGHT PANEL ===== */}

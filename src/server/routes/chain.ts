@@ -83,14 +83,26 @@ chain.post('/qta/deposit-address', authMiddleware, async (c) => {
   const user = c.get('user') as { id: string };
   const network = currentNetwork(c.env);
 
-  // Which Quantarium-native asset the user wants to deposit. QTA (native),
-  // QX / QKEY (ERC-20) all live on the SAME Quantarium chain (chain_id 60000)
-  // and therefore share ONE per-user EVM deposit address — exactly like USDT
-  // where every BEP-20 token shares the same BSC address. So we accept `asset`
-  // for clarity/consistency but always issue (and reuse) the single address.
+  // Which depositable Quantarium asset the user wants. Only QX / QKEY are
+  // depositable — they share ONE per-user EVM deposit address on the
+  // Quantarium chain (chain_id 60000), exactly like every BEP-20 token shares
+  // one BSC address.
+  //
+  // ★★★ OWNER RULE (2026-08-28): QTA is WITHDRAW-ONLY and can NEVER be
+  //     deposited on-chain. The only way to get QTA is to deposit USDT and
+  //     BUY it on the market. So a QTA deposit request is hard-rejected here.
   let body: any = {};
   try { body = await c.req.json(); } catch { /* empty body ok */ }
-  const asset = normalizeQtaAsset(body?.asset);
+  const asset = normalizeDepositableAsset(body?.asset);
+  if (!asset) {
+    return c.json({
+      ok: false,
+      error: 'ASSET_NOT_DEPOSITABLE',
+      message:
+        'QTA cannot be deposited. Only QX and QKEY can be deposited on-chain. ' +
+        'To obtain QTA, deposit USDT (Tether) and buy QTA on the exchange.',
+    }, 400);
+  }
 
   // ─── SAFETY GATE ───────────────────────────────────────────────────────
   // Do NOT issue mock qta1... addresses to real users. Quantarium is a live
@@ -103,9 +115,9 @@ chain.post('/qta/deposit-address', authMiddleware, async (c) => {
       ok: false,
       error: 'CHAIN_INTEGRATION_PENDING',
       message:
-        'QTA/QX/QKEY on-chain deposit is being finalized against Quantarium (chain_id 60000). ' +
+        'QX/QKEY on-chain deposit is being finalized against Quantarium (chain_id 60000). ' +
         'On-chain deposit addresses will be enabled shortly. ' +
-        'Internal QTA/QX/QKEY balances and trading remain fully operational.',
+        'Internal balances and trading remain fully operational.',
     }, 503);
   }
   // ───────────────────────────────────────────────────────────────────────
@@ -863,17 +875,36 @@ function currentNetwork(env: any): QtaNetwork {
   return env.QTA_NETWORK === 'qta-testnet' ? 'qta-testnet' : 'qta-mainnet';
 }
 
-// The three Quantarium-native assets whose on-chain deposit/withdrawal all
-// flow through our own Quantarium SPHINCS+ HD wallet. QTA is the native coin;
+// The three Quantarium-native assets whose on-chain deposit/withdrawal flow
+// through our own Quantarium SPHINCS+ HD wallet. QTA is the native coin;
 // QX / QKEY are ERC-20 tokens on the same chain.
 const QTA_ASSETS = ['QTA', 'QX', 'QKEY'] as const;
 type QtaAsset = (typeof QTA_ASSETS)[number];
 
-// Normalize a client-supplied asset symbol to one of QTA | QX | QKEY.
-// Unknown / missing → 'QTA' (the native coin, safest default).
+// ★★★★★★★ OWNER RULE (2026-08-28) — ASSET DIRECTIONALITY ★★★★★★★
+//   • QTA  : WITHDRAW-ONLY. QTA can NOT be deposited on-chain. The ONLY way
+//            to obtain QTA is to deposit USDT (Tether) into the exchange and
+//            BUY QTA on the market — only purchased QTA is recognised.
+//   • QX / QKEY : deposit AND withdraw (the only depositable Quantarium assets).
+// So the depositable set is {QX, QKEY}; the withdrawable set is {QTA, QX, QKEY}.
+const DEPOSITABLE_QTA_ASSETS = ['QX', 'QKEY'] as const;
+type DepositableQtaAsset = (typeof DEPOSITABLE_QTA_ASSETS)[number];
+
+// Normalize a client-supplied asset symbol for a WITHDRAWAL to one of
+// QTA | QX | QKEY. Unknown / missing → 'QTA' (safest default; all three can
+// be withdrawn).
 function normalizeQtaAsset(raw: unknown): QtaAsset {
   const s = String(raw || 'QTA').toUpperCase().trim();
   return (QTA_ASSETS as readonly string[]).includes(s) ? (s as QtaAsset) : 'QTA';
+}
+
+// Normalize a client-supplied asset symbol for a DEPOSIT. Only QX / QKEY are
+// depositable; QTA (and anything else) returns null → caller rejects.
+function normalizeDepositableAsset(raw: unknown): DepositableQtaAsset | null {
+  const s = String(raw || '').toUpperCase().trim();
+  return (DEPOSITABLE_QTA_ASSETS as readonly string[]).includes(s)
+    ? (s as DepositableQtaAsset)
+    : null;
 }
 
 // The on-chain adapter is "live" once the owner flips the driver to 'real'
