@@ -510,7 +510,35 @@ export default {
         rpc_configured: Boolean(env.QTA_RPC_URL),
         manual_withdrawal_mode:
           String(env.QTA_MANUAL_WITHDRAWALS ?? 'true').toLowerCase() !== 'false',
+        // ★ Deposit-detection gate: scanQtaDeposits credits NOTHING unless at
+        //   least one of these ERC-20 contract addresses is set + valid. We
+        //   only expose presence/validity + a masked preview, never the full
+        //   value, so this diagnostic is safe to call from a browser.
+        deposit_scan_ready: false,
+        token_qx_configured: false,
+        token_qx_valid: false,
+        token_qx_preview: null as string | null,
+        token_qkey_configured: false,
+        token_qkey_valid: false,
+        token_qkey_preview: null as string | null,
       };
+      {
+        const qx = env.QTA_TOKEN_QX_ADDRESS;
+        const qkey = env.QTA_TOKEN_QKEY_ADDRESS;
+        const addrRe = /^0x[0-9a-fA-F]{40}$/;
+        const mask = (v?: string) =>
+          v && v.length >= 10 ? `${v.slice(0, 6)}…${v.slice(-4)}` : v || null;
+        out.token_qx_configured = Boolean(qx);
+        out.token_qx_valid = Boolean(qx && addrRe.test(qx));
+        out.token_qx_preview = out.token_qx_valid ? mask(qx) : null;
+        out.token_qkey_configured = Boolean(qkey);
+        out.token_qkey_valid = Boolean(qkey && addrRe.test(qkey));
+        out.token_qkey_preview = out.token_qkey_valid ? mask(qkey) : null;
+        // Deposits can only be detected+credited when the driver is real AND
+        // at least one valid token contract is configured.
+        out.deposit_scan_ready =
+          driver === 'real' && (out.token_qx_valid || out.token_qkey_valid);
+      }
       if (mnemonic && isValidMnemonic(mnemonic)) {
         try {
           const acct = deriveAccountFromMnemonic(mnemonic, 0);
