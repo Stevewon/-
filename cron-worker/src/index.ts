@@ -625,11 +625,71 @@ export default {
         headers: { 'content-type': 'application/json' },
       });
     }
+
+    // Read-only deposit diagnostic: latest qta_deposits rows + status counts,
+    // plus (optionally) a LIVE explorer read for one address so we can see
+    // whether a specific inbound transfer is on-chain but not yet detected.
+    // ?address=0x…  → live-scans that address against the QX/QKEY token map.
+    // NEVER exposes secrets. Safe to call from a browser.
+    if (url.pathname === '/qta/deposits-debug') {
+      const network = env.QTA_NETWORK === 'qta-testnet' ? 'qta-testnet' : 'qta-mainnet';
+      const dbg: Record<string, unknown> = { network };
+      try {
+        const { results: rows } = await env.DB.prepare(
+          `SELECT id, user_id, asset, amount, confirmations, required_confs,
+                  status, block_height, tx_hash, address, created_at, credited_at
+           FROM qta_deposits
+           WHERE network = ?
+           ORDER BY created_at DESC
+           LIMIT 30`
+        ).bind(network).all<any>();
+        dbg.recent = rows || [];
+        const { results: counts } = await env.DB.prepare(
+          `SELECT status, COUNT(*) n, COALESCE(SUM(CAST(amount AS REAL)),0) total
+           FROM qta_deposits WHERE network = ? GROUP BY status`
+        ).bind(network).all<any>();
+        dbg.status_counts = counts || [];
+        const { results: addrs } = await env.DB.prepare(
+          `SELECT user_id, address FROM qta_addresses WHERE network = ? AND is_active = 1 LIMIT 100`
+        ).bind(network).all<any>();
+        dbg.active_addresses = (addrs || []).length;
+        dbg.addresses = addrs || [];
+      } catch (e: any) {
+        dbg.db_error = String(e?.message || e);
+      }
+
+      // Optional live explorer read for one address.
+      const reqUrl = new URL(url.toString());
+      const probe = reqUrl.searchParams.get('address');
+      if (probe && /^0x[0-9a-fA-F]{40}$/.test(probe)) {
+        try {
+          const explorerUrl = (env.QTA_EXPLORER_URL || 'https://scan.quantarium.io').replace(/\/+$/, '');
+          const cfg: ExplorerConfig = { baseUrl: explorerUrl };
+          const tokenMap = new Map<string, { symbol: string; decimals: number }>();
+          if (env.QTA_TOKEN_QX_ADDRESS && /^0x[0-9a-fA-F]{40}$/.test(env.QTA_TOKEN_QX_ADDRESS)) {
+            tokenMap.set(env.QTA_TOKEN_QX_ADDRESS.toLowerCase(), { symbol: 'QX', decimals: Number(env.QTA_TOKEN_QX_DECIMALS || '18') || 18 });
+          }
+          if (env.QTA_TOKEN_QKEY_ADDRESS && /^0x[0-9a-fA-F]{40}$/.test(env.QTA_TOKEN_QKEY_ADDRESS)) {
+            tokenMap.set(env.QTA_TOKEN_QKEY_ADDRESS.toLowerCase(), { symbol: 'QKEY', decimals: Number(env.QTA_TOKEN_QKEY_DECIMALS || '18') || 18 });
+          }
+          const inbound = await listInboundTokenTransfers(cfg, probe, tokenMap);
+          dbg.probe_address = probe;
+          dbg.probe_token_map = Array.from(tokenMap.entries()).map(([addr, v]) => ({ contract: addr, ...v }));
+          dbg.probe_inbound = inbound;
+        } catch (e: any) {
+          dbg.probe_error = String(e?.message || e);
+        }
+      }
+      return new Response(JSON.stringify(dbg, null, 2), {
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+
     return new Response(
       JSON.stringify({
         service: 'quantaex-cron',
         schedules: ['*/5 * * * * (price-alert tick)', '0 3 * * * (daily D1 backup)'],
-        endpoints: ['/run', '/migrate', '/backup', '/backup/prune', '/qta/withdrawals', '/qta/scan', '/qta/tick', '/qta/env-check', '/ext/scan', '/ext/tick', '/ext/sweep', '/ext/env-check'],
+        endpoints: ['/run', '/migrate', '/backup', '/backup/prune', '/qta/withdrawals', '/qta/scan', '/qta/tick', '/qta/env-check', '/qta/deposits-debug', '/ext/scan', '/ext/tick', '/ext/sweep', '/ext/env-check'],
       }),
       { headers: { 'content-type': 'application/json' } }
     );
