@@ -130,16 +130,64 @@ export async function assignBinaryLeg(
 // handled by the caller stamping staking_positions.binary_counted_at.
 // ============================================================================
 
-const MATCH_UNIT_USD = 100;
+// ⚑ OWNER RULE (2026-08-28, FINAL): the Left/Right matching bonus is
+//   소실적(weaker leg) × its tier rate, paid ONCE — matched volume never
+//   re-pays. 소실적 = min(left, right). Only the NOT-YET-PAID slice of the
+//   weaker leg (min(left,right) − matched_usd) is paid this event; matched_usd
+//   is then advanced so the same 실적 is never paid twice.
+//
+//   The rate is a FLAT (single) tier: the ENTIRE 소실적 is paid at the ONE tier
+//   rate its total amount falls into — NOT a progressive per-slice blend.
+//   Owner examples (2026-08-28, VERBATIM): 좌$500·우$900 → 소실적 $500 →
+//   $500 × 3% = $15 ; 좌$700·우$900 → 소실적 $700 → $700 × 3% = $21.
+//   Tiers (3%~8%, owner-confirmed):
+//     $100~$999      → 3%
+//     $1,000~$4,999  → 4%
+//     $5,000~$9,999  → 5%
+//     $10,000~$49,999→ 6%
+//     $50,000~$99,999→ 7%
+//     $100,000~      → 8%
+//   Below $100 소실적 pays nothing (no tier).
+//
+//   Option 가) INCREMENTAL: matched_usd tracks the 소실적 already paid. When the
+//   weaker leg grows, we pay only the NEWLY-increased slice, priced by the FLAT
+//   rule: bonus = flatBonusUsd(weaker) − flatBonusUsd(matched). This never
+//   re-pays matched volume, and if the new weaker total crosses into a higher
+//   tier, the whole 소실적 is re-priced at the higher rate (the already-paid
+//   portion is subtracted so only the delta is credited).
+const MATCH_TIERS: Array<{ from: number; rate: number }> = [
+  { from: 100,     rate: 0.03 },
+  { from: 1_000,   rate: 0.04 },
+  { from: 5_000,   rate: 0.05 },
+  { from: 10_000,  rate: 0.06 },
+  { from: 50_000,  rate: 0.07 },
+  { from: 100_000, rate: 0.08 },
+];
 
-function matchBonusRate(matchedUsd: number): number {
-  if (matchedUsd >= 100_000) return 0.08;
-  if (matchedUsd >= 50_000) return 0.07;
-  if (matchedUsd >= 10_000) return 0.06;
-  if (matchedUsd >= 5_000) return 0.05;
-  if (matchedUsd >= 1_000) return 0.04;
-  if (matchedUsd >= 100) return 0.03;
-  return 0;
+// FLAT tier rate for a 소실적 amount: the single rate of the highest tier whose
+// `from` threshold the amount reaches. Below $100 → 0 (no tier).
+function flatRateOf(amountUsd: number): number {
+  let rate = 0;
+  for (const tier of MATCH_TIERS) {
+    if (amountUsd >= tier.from) rate = tier.rate;
+    else break;
+  }
+  return rate;
+}
+
+// FLAT bonus on a cumulative 소실적 amount: entire amount × its single tier rate.
+// e.g. $500 → 500×3% = $15 ; $700 → 700×3% = $21 ; $1,200 → 1200×4% = $48.
+function flatBonusUsd(amountUsd: number): number {
+  if (!(amountUsd >= MATCH_TIERS[0].from)) return 0;
+  return amountUsd * flatRateOf(amountUsd);
+}
+
+// Option 가) incremental payout: bonus for growing 소실적 from `paid` to `total`.
+// = flatBonusUsd(total) − flatBonusUsd(paid). Never negative.
+function tieredBonusUsd(paid: number, total: number): number {
+  if (!(total > paid)) return 0;
+  const delta = flatBonusUsd(total) - flatBonusUsd(paid);
+  return delta > 0 ? delta : 0;
 }
 
 function bmUuid(): string {
@@ -151,7 +199,8 @@ function bmUuid(): string {
     });
 }
 
-// Match one user: min(left,right) unmatched, $100 units, tiered QTA payout.
+// Match one user: pay 소실적(min(left,right)) × tier rate on the not-yet-paid
+// slice only. matched_usd = cumulative 소실적 already paid (never re-paid).
 async function runMatchForUser(db: any, userId: string, qtaPriceUsd: number): Promise<void> {
   const vol = await db.prepare(
     `SELECT left_usd, right_usd, matched_usd, self_usd FROM binary_volume WHERE user_id = ?`
@@ -167,23 +216,20 @@ async function runMatchForUser(db: any, userId: string, qtaPriceUsd: number): Pr
   const right = Number(vol.right_usd || 0);
   const matched = Number(vol.matched_usd || 0);
 
-  const pairable = Math.min(left, right) - matched;
-  if (pairable < MATCH_UNIT_USD) return;
+  // 소실적 = weaker leg. Pay only the part above what we've already paid.
+  const weaker = Math.min(left, right);
+  if (weaker <= matched) return;                 // nothing new to match
+  if (weaker < MATCH_TIERS[0].from) return;      // below $100 → no tier, no pay
 
-  const newMatchUsd = Math.floor(pairable / MATCH_UNIT_USD) * MATCH_UNIT_USD;
-  if (newMatchUsd < MATCH_UNIT_USD) return;
-
-  const rate = matchBonusRate(newMatchUsd);
-  if (rate <= 0) return;
-
-  const bonusUsd = newMatchUsd * rate;
+  const bonusUsd = tieredBonusUsd(matched, weaker);
+  if (!(bonusUsd > 0)) return;
   const bonusQta = qtaPriceUsd > 0 ? bonusUsd / qtaPriceUsd : 0;
-  const newMatchedTotal = matched + newMatchUsd;
 
+  // Advance matched_usd to the full 소실적 (guards against a racing tick).
   const upd = await db.prepare(
     `UPDATE binary_volume SET matched_usd = ?, updated_at = datetime('now')
       WHERE user_id = ? AND matched_usd = ?`
-  ).bind(newMatchedTotal, userId, matched).run();
+  ).bind(weaker, userId, matched).run();
   if (!upd?.meta || upd.meta.changes === 0) return;
 
   try {
@@ -197,6 +243,10 @@ async function runMatchForUser(db: any, userId: string, qtaPriceUsd: number): Pr
     `UPDATE wallets SET available = available + ? WHERE user_id = ? AND coin_symbol = 'QTA'`
   ).bind(bonusQta, userId).run();
 
+  // Record the event. matched_usd column here = the newly-paid 소실적 slice;
+  // rate = effective blended rate on that slice; matched_total = cumulative.
+  const newSlice = weaker - matched;
+  const effRate = newSlice > 0 ? bonusUsd / newSlice : 0;
   try {
     await db.prepare(
       `INSERT INTO binary_match_bonuses
@@ -204,8 +254,8 @@ async function runMatchForUser(db: any, userId: string, qtaPriceUsd: number): Pr
           left_total, right_total, matched_total, created_at)
        VALUES (?,?,?,?,?,?,?,?,?,?, datetime('now'))`
     ).bind(
-      bmUuid(), userId, newMatchUsd, rate, bonusUsd, bonusQta, qtaPriceUsd,
-      left, right, newMatchedTotal,
+      bmUuid(), userId, newSlice, effRate, bonusUsd, bonusQta, qtaPriceUsd,
+      left, right, weaker,
     ).run();
   } catch (e) {
     console.warn('[binary] match bonus insert failed:', e);

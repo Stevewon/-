@@ -24,20 +24,49 @@ interface Env {
   DB: D1Database;
 }
 
-// Bonus tiers from the owner's table.
-// Owner rule (2026-08-28): every band raised by +1 percentage point
-//   ($100~ 2%→3%, $1k~ 3%→4%, $5k~ 4%→5%, $10k~ 5%→6%, $50k~ 6%→7%, $100k~ 7%→8%).
-function matchBonusRate(matchedUsd: number): number {
-  if (matchedUsd >= 100_000) return 0.08;
-  if (matchedUsd >= 50_000) return 0.07;
-  if (matchedUsd >= 10_000) return 0.06;
-  if (matchedUsd >= 5_000) return 0.05;
-  if (matchedUsd >= 1_000) return 0.04;
-  if (matchedUsd >= 100) return 0.03;
-  return 0;
+// ⚑ OWNER RULE (2026-08-28, FINAL): the Left/Right matching bonus is
+//   소실적(weaker leg) × its SINGLE (FLAT) tier rate, paid ONCE — matched volume
+//   never re-pays. 소실적 = min(left, right). The ENTIRE 소실적 is priced at the
+//   ONE tier its total falls into (NOT a progressive per-slice blend).
+//   Owner examples (VERBATIM): 좌$500·우$900 → 소실적 $500 → $500×3% = $15 ;
+//   좌$700·우$900 → 소실적 $700 → $700×3% = $21.
+//   Option 가) INCREMENTAL: matched_usd tracks 소실적 already paid; when the
+//   weaker leg grows we pay only flatBonusUsd(weaker) − flatBonusUsd(matched).
+//   Tiers (3%~8%): $100~3%, $1k~4%, $5k~5%, $10k~6%, $50k~7%, $100k~8%.
+//   소실적 below $100 pays nothing.
+const MATCH_TIERS: Array<{ from: number; rate: number }> = [
+  { from: 100,     rate: 0.03 },
+  { from: 1_000,   rate: 0.04 },
+  { from: 5_000,   rate: 0.05 },
+  { from: 10_000,  rate: 0.06 },
+  { from: 50_000,  rate: 0.07 },
+  { from: 100_000, rate: 0.08 },
+];
+
+// FLAT tier rate for a 소실적 amount: the single rate of the highest tier whose
+// `from` threshold the amount reaches. Below $100 → 0.
+function flatRateOf(amountUsd: number): number {
+  let rate = 0;
+  for (const tier of MATCH_TIERS) {
+    if (amountUsd >= tier.from) rate = tier.rate;
+    else break;
+  }
+  return rate;
 }
 
-const MATCH_UNIT_USD = 100;
+// FLAT bonus on a cumulative 소실적: entire amount × its single tier rate.
+// e.g. $500 → $15 ; $700 → $21 ; $1,200 → $48.
+function flatBonusUsd(amountUsd: number): number {
+  if (!(amountUsd >= MATCH_TIERS[0].from)) return 0;
+  return amountUsd * flatRateOf(amountUsd);
+}
+
+// Option 가) incremental payout: bonus for growing 소실적 from `paid` to `total`.
+function tieredBonusUsd(paid: number, total: number): number {
+  if (!(total > paid)) return 0;
+  const delta = flatBonusUsd(total) - flatBonusUsd(paid);
+  return delta > 0 ? delta : 0;
+}
 
 // EACH downline leg (left AND right, independently) may grow to at most this
 // multiple of the user's own STAKING total (self_usd / "몸값"). Owner rule
@@ -67,7 +96,8 @@ async function priceOf(env: Env, symbol: string): Promise<number> {
 }
 
 // --------------------------------------------------------------------------
-// Match one user: min(left,right) unmatched, $100 units, tiered QTA payout.
+// Match one user: pay 소실적(min(left,right)) × tier rate on the not-yet-paid
+// slice only. matched_usd = cumulative 소실적 already paid (never re-paid).
 // --------------------------------------------------------------------------
 async function runMatchForUser(env: Env, userId: string, qtaPrice: number): Promise<void> {
   const vol = await env.DB.prepare(
@@ -76,10 +106,9 @@ async function runMatchForUser(env: Env, userId: string, qtaPrice: number): Prom
   if (!vol) return;
 
   // ⚑ OWNER RULE (2026-08-27): a member earns NOTHING from their downline's
-  //   staking/deposits unless THEY THEMSELVES have staked/deposited. If the
-  //   member's own value (self_usd, "몸값") is 0, matching is fully blocked —
-  //   no bonus, no dividend, not a single unit. Volume still accumulates so it
-  //   can be matched later once the member stakes; it is simply not paid now.
+  //   staking unless THEY THEMSELVES have staked. If the member's own value
+  //   (self_usd, "몸값") is 0, matching is fully blocked. Volume still
+  //   accumulates so it can be matched later once the member stakes.
   const selfUsd = Number(vol.self_usd || 0);
   if (selfUsd <= 0) return; // not staked -> not eligible for any payout
 
@@ -87,24 +116,20 @@ async function runMatchForUser(env: Env, userId: string, qtaPrice: number): Prom
   const right = Number(vol.right_usd || 0);
   const matched = Number(vol.matched_usd || 0);
 
-  const pairable = Math.min(left, right) - matched;
-  if (pairable < MATCH_UNIT_USD) return;
+  // 소실적 = weaker leg. Pay only the part above what we've already paid.
+  const weaker = Math.min(left, right);
+  if (weaker <= matched) return;                 // nothing new to match
+  if (weaker < MATCH_TIERS[0].from) return;      // below $100 → no tier, no pay
 
-  const newMatchUsd = Math.floor(pairable / MATCH_UNIT_USD) * MATCH_UNIT_USD;
-  if (newMatchUsd < MATCH_UNIT_USD) return;
-
-  const rate = matchBonusRate(newMatchUsd);
-  if (rate <= 0) return;
-
-  const bonusUsd = newMatchUsd * rate;
+  const bonusUsd = tieredBonusUsd(matched, weaker);
+  if (!(bonusUsd > 0)) return;
   const bonusQta = qtaPrice > 0 ? bonusUsd / qtaPrice : 0;
-  const newMatchedTotal = matched + newMatchUsd;
 
-  // Advance carry-over first (guards against a racing tick double-paying).
+  // Advance matched_usd to the full 소실적 (guards against a racing tick).
   const upd = await env.DB.prepare(
     `UPDATE binary_volume SET matched_usd = ?, updated_at = datetime('now')
       WHERE user_id = ? AND matched_usd = ?`
-  ).bind(newMatchedTotal, userId, matched).run();
+  ).bind(weaker, userId, matched).run();
   if (!upd?.meta || upd.meta.changes === 0) return;
 
   try {
@@ -118,17 +143,19 @@ async function runMatchForUser(env: Env, userId: string, qtaPrice: number): Prom
     `UPDATE wallets SET available = available + ? WHERE user_id = ? AND coin_symbol = 'QTA'`
   ).bind(bonusQta, userId).run();
 
+  const newSlice = weaker - matched;
+  const effRate = newSlice > 0 ? bonusUsd / newSlice : 0;
   await env.DB.prepare(
     `INSERT INTO binary_match_bonuses
        (id, user_id, matched_usd, rate, bonus_usd, bonus_qta, qta_price,
         left_total, right_total, matched_total, created_at)
      VALUES (?,?,?,?,?,?,?,?,?,?, datetime('now'))`
   ).bind(
-    uuid(), userId, newMatchUsd, rate, bonusUsd, bonusQta, qtaPrice,
-    left, right, newMatchedTotal,
+    uuid(), userId, newSlice, effRate, bonusUsd, bonusQta, qtaPrice,
+    left, right, weaker,
   ).run();
 
-  console.log(`[binary] matched user=${userId} usd=${newMatchUsd} rate=${rate} qta=${bonusQta.toFixed(2)}`);
+  console.log(`[binary] matched user=${userId} sosiljeok=${weaker} slice=${newSlice} bonusUsd=${bonusUsd.toFixed(2)} qta=${bonusQta.toFixed(2)}`);
 }
 
 // --------------------------------------------------------------------------

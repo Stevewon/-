@@ -1292,7 +1292,7 @@ const zhTW = {
   'referral.directBadge': '直接',
   'referral.downlineBadge': '下線',
   'referral.matchTitle': '左/右碰對獎金',
-  'referral.matchIntro': '當您的左右兩條腿累計的充值量匹配時，您將獲得以 QTA 支付的額外獎金。碰對按較弱一側以 $100 為單位、按下方分級費率計算；已匹配的量會結轉，絕不重複支付。注意：下線量最多隻計入您自身入場價值的 2 倍——增加您自己的充值可提高上限。',
+  'referral.matchIntro': '當您直推下線的左右兩側累計質押業績增長時，將獲得以 QTA 發放的額外獎金。匹配以較小的一側（小業績，較弱一條線）金額乘以下表中其所屬區間的費率計算；已匹配的小業績會結轉，絕不重複發放（僅按新增部分再額外發放 1 次）。注意：下線業績左右兩側各自最多只計入本人身價（質押申購額）的 2 倍，提高身價可同步提高上限。',
   'referral.leftLeg': '左區',
   'referral.rightLeg': '右區',
   'referral.unmatched': '未匹配',
