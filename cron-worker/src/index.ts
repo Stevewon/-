@@ -31,6 +31,8 @@ import {
   encodeErc20Transfer,
   sendRawTransaction,
   getBlockNumber,
+  getNativeBalance,
+  erc20BalanceOf,
   type EvmRpcConfig,
 } from './lib/qta-evm';
 import {
@@ -90,6 +92,12 @@ export interface Env {
   QTA_TOKEN_QX_DECIMALS?: string;
   QTA_TOKEN_QKEY_ADDRESS?: string;
   QTA_TOKEN_QKEY_DECIMALS?: string;
+  // Deposit-sweep: forward credited QX/QKEY out of per-user deposit addresses
+  // into the main wallet. Disabled with QTA_SWEEP_ENABLED='false'. Destination
+  // priority: QTA_SWEEP_DESTINATION → QTA_MAIN_PAYOUT_WALLET → HD index 0.
+  QTA_SWEEP_ENABLED?: string;
+  QTA_SWEEP_DESTINATION?: string;
+  QTA_MAIN_PAYOUT_WALLET?: string;
 
   // ── External (non-Quantarium) deposits — Phase B ─────────────────────────
   // Master switch. Watcher + sweep no-op unless 'true'.
@@ -420,6 +428,15 @@ export default {
         headers: { 'content-type': 'application/json' },
       });
     }
+    if (url.pathname === '/qta/sweep') {
+      // Manual QX/QKEY deposit sweep → main wallet (also runs on every /5 tick).
+      // ONE token move per call (SPHINCS+ signing is CPU-heavy); call repeatedly
+      // to drain multiple addresses.
+      const result = await sweepQtaDeposits(env);
+      return new Response(JSON.stringify(result, null, 2), {
+        headers: { 'content-type': 'application/json' },
+      });
+    }
     if (url.pathname === '/ext/scan') {
       // Manual external-deposit scan (also runs on every /5 tick).
       const result = await scanExtDeposits(env as any);
@@ -710,7 +727,7 @@ export default {
       JSON.stringify({
         service: 'quantaex-cron',
         schedules: ['*/5 * * * * (price-alert tick)', '0 3 * * * (daily D1 backup)'],
-        endpoints: ['/run', '/migrate', '/backup', '/backup/prune', '/qta/withdrawals', '/qta/scan', '/qta/tick', '/qta/env-check', '/qta/deposits-debug', '/ext/scan', '/ext/tick', '/ext/sweep', '/ext/env-check'],
+        endpoints: ['/run', '/migrate', '/backup', '/backup/prune', '/qta/withdrawals', '/qta/scan', '/qta/tick', '/qta/sweep', '/qta/env-check', '/qta/deposits-debug', '/ext/scan', '/ext/tick', '/ext/sweep', '/ext/env-check'],
       }),
       { headers: { 'content-type': 'application/json' } }
     );
@@ -768,6 +785,14 @@ export default {
       qtaChainTick(env)
         .then((r) => console.log('[cron] qta chain tick:', r))
         .catch((e) => console.error('[cron] qta chain tick failed:', e))
+    );
+    // Deposit SWEEP: forward credited QX/QKEY out of per-user deposit addresses
+    // into the exchange MAIN wallet. ONE token move per tick (SPHINCS+ signing
+    // is CPU-heavy). No-op unless the chain is live + mnemonic/RPC/tokens set.
+    ctx.waitUntil(
+      sweepQtaDeposits(env)
+        .then((r) => console.log('[cron] qta deposit sweep:', r))
+        .catch((e) => console.error('[cron] qta deposit sweep failed:', e))
     );
     // Coin-family withdrawal broadcaster: sign + broadcast ONE Quantarium
     // withdrawal (QTA / QX / QKEY) per tick. SPHINCS+ signing is CPU-heavy so
@@ -1171,6 +1196,232 @@ function decimalStringToWei(s: string, decimals: number): bigint {
   if (fracRaw.length > decimals) throw new Error(`amount has more than ${decimals} decimals`);
   const frac = (fracRaw + '0'.repeat(decimals)).slice(0, decimals);
   return BigInt(intPart) * 10n ** BigInt(decimals) + BigInt(frac || '0');
+}
+
+// ============================================================================
+// QTA DEPOSIT SWEEP (forwarding) — move credited QX / QKEY sitting in per-user
+// deposit addresses into the exchange MAIN wallet (hot wallet = HD index 0, or
+// QTA_MAIN_PAYOUT_WALLET / QTA_SWEEP_DESTINATION override).
+// ----------------------------------------------------------------------------
+// This is the QTA-chain analogue of ext-sweep.ts. Because Quantarium is an EVM
+// chain (chain_id 60000) that uses SPHINCS+ typed tx 0x7f, we reuse the SAME
+// signer (signSphincsTx) that already powers withdrawals. Each per-user deposit
+// address is derived from the SAME mnemonic (via qta_hd_indexes.address_index),
+// so the worker can sign a transfer OUT of it.
+//
+// Two-step gas dance (identical constraint to ERC-20 sweeps): a fresh deposit
+// address holds QX but ZERO native QTA, so it cannot pay gas. So:
+//   STEP 1 — gas fund: hot wallet sends a little native QTA to the user addr.
+//   STEP 2 — sweep:    user addr signs an ERC-20 transfer of its ENTIRE QX
+//                      (and separately QKEY) balance to the main wallet.
+// ONE token move per tick keeps us well within CPU limits (SPHINCS+ signing is
+// ~6-10s). Idempotent: we read LIVE on-chain balances each tick and only act
+// when there's a real balance to move, so re-runs are safe.
+//
+// GATING: no-op unless QTA_CHAIN_DRIVER==='real' AND the mnemonic + RPC + at
+// least one token contract are configured. Disabled entirely if
+// QTA_SWEEP_ENABLED==='false' (default ON once the chain is live).
+// ============================================================================
+
+interface QtaSweepResult {
+  ok: boolean;
+  action?: string;
+  asset?: string;
+  address?: string;
+  amount?: string;
+  txHash?: string;
+  reason?: string;
+}
+
+function qtaSweepEnabled(env: Env): boolean {
+  const driver = (env.QTA_CHAIN_DRIVER || 'mock').toLowerCase();
+  if (driver !== 'real' && driver !== 'live') return false;
+  if (String(env.QTA_SWEEP_ENABLED ?? 'true').toLowerCase() === 'false') return false;
+  return Boolean(env.QTA_HD_WALLET_MNEMONIC && env.QTA_RPC_URL);
+}
+
+// The MAIN wallet every deposit must ultimately land in. Priority:
+//   QTA_SWEEP_DESTINATION → QTA_MAIN_PAYOUT_WALLET → QTA_HOT_WALLET_ADDRESS →
+//   HD index-0 derived address. Returns checksummed 0x… or ''.
+function qtaSweepDestination(env: Env, mnemonic: string): string {
+  const cand = String(
+    env.QTA_SWEEP_DESTINATION ||
+    env.QTA_MAIN_PAYOUT_WALLET ||
+    env.QTA_HOT_WALLET_ADDRESS ||
+    ''
+  ).trim();
+  if (/^0x[0-9a-fA-F]{40}$/.test(cand)) return toChecksumAddress(cand);
+  try {
+    return deriveAccountFromMnemonic(mnemonic, 0).address;
+  } catch {
+    return '';
+  }
+}
+
+async function sweepQtaDeposits(env: Env): Promise<QtaSweepResult> {
+  if (!qtaSweepEnabled(env)) return { ok: true, reason: 'disabled' };
+
+  const network = env.QTA_NETWORK === 'qta-testnet' ? 'qta-testnet' : 'qta-mainnet';
+  const mnemonic = env.QTA_HD_WALLET_MNEMONIC as string;
+  const rpcUrl = env.QTA_RPC_URL as string;
+  const chainId = Number(env.QTA_CHAIN_ID || '60000') || 60000;
+  const cfg: EvmRpcConfig = { rpcUrl, chainId };
+
+  const destination = qtaSweepDestination(env, mnemonic);
+  if (!destination) return { ok: false, reason: 'no_destination' };
+
+  // Token contracts to sweep.
+  const tokens: Array<{ symbol: string; contract: string; decimals: number }> = [];
+  if (env.QTA_TOKEN_QX_ADDRESS && /^0x[0-9a-fA-F]{40}$/.test(env.QTA_TOKEN_QX_ADDRESS)) {
+    tokens.push({ symbol: 'QX', contract: env.QTA_TOKEN_QX_ADDRESS, decimals: Number(env.QTA_TOKEN_QX_DECIMALS || '18') || 18 });
+  }
+  if (env.QTA_TOKEN_QKEY_ADDRESS && /^0x[0-9a-fA-F]{40}$/.test(env.QTA_TOKEN_QKEY_ADDRESS)) {
+    tokens.push({ symbol: 'QKEY', contract: env.QTA_TOKEN_QKEY_ADDRESS, decimals: Number(env.QTA_TOKEN_QKEY_DECIMALS || '18') || 18 });
+  }
+  if (tokens.length === 0) return { ok: true, reason: 'no_tokens' };
+
+  // Candidate deposit addresses: any address (index >= 1) that has received a
+  // credited QX/QKEY deposit. We JOIN qta_hd_indexes to get the derivation
+  // index so we can reconstruct the signer. Skip the destination itself.
+  const { results: cands } = await env.DB.prepare(
+    `SELECT DISTINCT a.address, a.user_id, h.address_index AS idx
+       FROM qta_addresses a
+       JOIN qta_hd_indexes h ON h.user_id = a.user_id
+       JOIN qta_deposits d ON d.address = a.address AND d.network = a.network
+      WHERE a.network = ? AND a.is_active = 1
+        AND d.status = 'credited' AND d.asset IN ('QX','QKEY')
+      ORDER BY h.address_index ASC
+      LIMIT 50`
+  ).bind(network).all<{ address: string; user_id: string; idx: number }>();
+
+  if (!cands || cands.length === 0) return { ok: true, reason: 'nothing_to_sweep' };
+
+  // Fee suggestion once per tick.
+  let fees: { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint };
+  try {
+    fees = await suggestFees(cfg);
+  } catch (e: any) {
+    return { ok: false, reason: 'suggest_fees_failed: ' + String(e?.message || e) };
+  }
+  const erc20GasLimit = 200_000n;
+  const nativeGasLimit = 21_000n;
+  const sweepGasCost = fees.maxFeePerGas * erc20GasLimit;
+
+  for (const cand of cands) {
+    const idx = Number(cand.idx);
+    if (!Number.isInteger(idx) || idx < 1) continue; // never sweep index 0 (the hot wallet itself)
+
+    // Derive the user's deposit account and HARD-VERIFY it matches the stored
+    // address. A mismatch means the mnemonic can't actually control this
+    // address, so signing would send FROM the wrong account → abort this addr.
+    let userAcct: SphincsAccount;
+    try {
+      userAcct = deriveAccountFromMnemonic(mnemonic, idx);
+    } catch (e) {
+      console.error('[qta-sweep] derive failed idx', idx, e);
+      continue;
+    }
+    if (userAcct.address.toLowerCase() !== cand.address.toLowerCase()) {
+      console.error(`[qta-sweep] derived ${userAcct.address} != stored ${cand.address} (idx ${idx}) — mnemonic mismatch, skip`);
+      continue;
+    }
+    if (userAcct.address.toLowerCase() === destination.toLowerCase()) continue;
+
+    // Live token balances of this user address.
+    let qxBal = 0n, qkeyBal = 0n, nativeBal = 0n;
+    try {
+      const tokenBals: bigint[] = await Promise.all(
+        tokens.map(t => erc20BalanceOf(cfg, t.contract, userAcct.address)),
+      );
+      tokens.forEach((t, i) => {
+        if (t.symbol === 'QX') qxBal = tokenBals[i];
+        else if (t.symbol === 'QKEY') qkeyBal = tokenBals[i];
+      });
+      nativeBal = await getNativeBalance(cfg, userAcct.address);
+    } catch (e: any) {
+      console.warn('[qta-sweep] balance read failed', userAcct.address, e?.message || e);
+      continue;
+    }
+
+    // Pick the first token with a non-zero balance to move THIS tick.
+    const moving = tokens.find(t => (t.symbol === 'QX' ? qxBal : qkeyBal) > 0n);
+    if (!moving) continue; // no token balance here — try next candidate
+
+    const tokenBal = moving.symbol === 'QX' ? qxBal : qkeyBal;
+
+    // ── STEP 1: gas funding (user addr can't pay for the ERC-20 transfer) ──
+    if (nativeBal < sweepGasCost) {
+      let hot: SphincsAccount;
+      try { hot = deriveAccountFromMnemonic(mnemonic, 0); }
+      catch (e) { return { ok: false, reason: 'derive_hot_failed' }; }
+
+      const topup = sweepGasCost + sweepGasCost / 2n; // 1.5x headroom
+      let hotNative = 0n, hotNonce = 0;
+      try {
+        [hotNative, hotNonce] = await Promise.all([
+          getNativeBalance(cfg, hot.address),
+          getNonce(cfg, hot.address),
+        ]);
+      } catch (e: any) {
+        return { ok: false, reason: 'hot_read_failed: ' + String(e?.message || e) };
+      }
+      const hotSendCost = fees.maxFeePerGas * nativeGasLimit;
+      if (hotNative < topup + hotSendCost) {
+        // The main wallet has no gas to fund sweeps. Surface this loudly — the
+        // operator must top up the hot wallet with native QTA.
+        console.warn(`[qta-sweep] HOT WALLET ${hot.address} OUT OF GAS: need ${topup + hotSendCost} wei, have ${hotNative}`);
+        return {
+          ok: false,
+          action: 'hot_wallet_out_of_gas',
+          address: hot.address,
+          reason: `hot wallet needs native QTA for gas (need ~${Number(topup + hotSendCost) / 1e18} QTA, have ${Number(hotNative) / 1e18})`,
+        };
+      }
+
+      try {
+        const { rawTx } = signSphincsTx(
+          {
+            chainId, nonce: hotNonce,
+            maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
+            maxFeePerGas: fees.maxFeePerGas,
+            gasLimit: nativeGasLimit,
+            to: userAcct.address, value: topup, data: '0x',
+          },
+          hot.publicKey, hot.secretKey,
+        );
+        const txHash = await sendRawTransaction(cfg, rawTx);
+        console.log(`[qta-sweep] gas-funded ${userAcct.address} tx=${txHash}`);
+        return { ok: true, action: 'gas_funded', address: userAcct.address, txHash };
+      } catch (e: any) {
+        return { ok: false, action: 'gas_fund_failed', address: userAcct.address, reason: String(e?.message || e) };
+      }
+    }
+
+    // ── STEP 2: sweep the ENTIRE token balance to the main wallet ──
+    try {
+      const userNonce = await getNonce(cfg, userAcct.address);
+      const data = encodeErc20Transfer(destination, tokenBal);
+      const { rawTx } = signSphincsTx(
+        {
+          chainId, nonce: userNonce,
+          maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
+          maxFeePerGas: fees.maxFeePerGas,
+          gasLimit: erc20GasLimit,
+          to: toChecksumAddress(moving.contract),
+          value: 0n, data,
+        },
+        userAcct.publicKey, userAcct.secretKey,
+      );
+      const txHash = await sendRawTransaction(cfg, rawTx);
+      const human = weiToDecimalString(tokenBal.toString(), moving.decimals);
+      console.log(`[qta-sweep] swept ${human} ${moving.symbol} from ${userAcct.address} → ${destination} tx=${txHash}`);
+      return { ok: true, action: 'swept', asset: moving.symbol, address: userAcct.address, amount: human, txHash };
+    } catch (e: any) {
+      return { ok: false, action: 'sweep_failed', asset: moving.symbol, address: userAcct.address, reason: String(e?.message || e) };
+    }
+  }
+
+  return { ok: true, reason: 'nothing_to_sweep' };
 }
 
 interface QtaWithdrawalRow {
