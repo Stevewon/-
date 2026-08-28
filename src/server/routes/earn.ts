@@ -305,25 +305,32 @@ app.post('/subscribe', authMiddleware, async (c) => {
       `SELECT binary_parent_id FROM users WHERE id = ?`
     ).bind(user.id).first<any>();
     const alreadyBound = !!me?.binary_parent_id;
-    const sponsorCode = body.sponsor_code
-      ? String(body.sponsor_code).trim().toUpperCase()
-      : '';
+    // The sponsor identifier the member typed. Users naturally enter the
+    // sponsor's ID (nickname / email), NOT the 8-char referral_code — so we
+    // accept ANY of: nickname, email, referral_code, or raw user id. Matching
+    // is case/whitespace-insensitive.
+    const sponsorRaw = body.sponsor_code != null ? String(body.sponsor_code).trim() : '';
+    const sponsorUpper = sponsorRaw.toUpperCase();
+    const sponsorLower = sponsorRaw.toLowerCase();
 
-    if (!alreadyBound && sponsorCode) {
-      // Match tolerantly: ignore surrounding whitespace and case differences in
-      // the stored referral_code (older rows may have mixed case / stray space).
+    if (!alreadyBound && sponsorRaw) {
+      // Resolve by (a) exact referral_code, (b) case-insensitive referral_code,
+      // (c) case-insensitive nickname, (d) lowercased email, (e) raw user id.
       let sponsor = await c.env.DB.prepare(
-        `SELECT id FROM users WHERE referral_code = ?`
-      ).bind(sponsorCode).first<any>();
+        `SELECT id FROM users
+          WHERE referral_code = ?1
+             OR UPPER(TRIM(referral_code)) = ?1
+             OR LOWER(TRIM(nickname)) = ?2
+             OR LOWER(TRIM(email)) = ?2
+             OR id = ?3
+          LIMIT 1`
+      ).bind(sponsorUpper, sponsorLower, sponsorRaw).first<any>();
       if (!sponsor) {
-        sponsor = await c.env.DB.prepare(
-          `SELECT id FROM users WHERE UPPER(TRIM(referral_code)) = ?`
-        ).bind(sponsorCode).first<any>();
-      }
-      if (!sponsor) {
-        // Include the normalized code we searched for so the exact mismatch is
-        // visible in the client error (helps diagnose input problems).
-        return c.json({ error: 'SPONSOR_NOT_FOUND', message: `Invalid referral code: ${sponsorCode}` }, 400);
+        // Echo what we searched for so an input mismatch is visible client-side.
+        return c.json({
+          error: 'SPONSOR_NOT_FOUND',
+          message: `추천인을 찾을 수 없습니다: ${sponsorRaw} (닉네임/이메일/추천코드 중 하나를 정확히 입력하세요)`,
+        }, 400);
       }
       if (sponsor.id === user.id) {
         return c.json({ error: 'SPONSOR_SELF', message: 'You cannot set yourself as your sponsor.' }, 400);

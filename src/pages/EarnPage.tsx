@@ -971,10 +971,10 @@ function SubscribeModal({ product, qtaBalance, qtaPrice, onClose, onDone }: {
               <input
                 type="text"
                 value={sponsorCode}
-                onChange={(e) => setSponsorCode(e.target.value.toUpperCase())}
-                className="input-field text-center tracking-widest font-semibold uppercase"
+                onChange={(e) => setSponsorCode(e.target.value)}
+                className="input-field text-center font-semibold"
                 placeholder={t('earn.sponsorPlaceholder')}
-                maxLength={16}
+                maxLength={64}
               />
               <p className="text-[11px] text-exchange-text-third mt-1.5">
                 {t('earn.sponsorHint')}
