@@ -658,6 +658,27 @@ export default {
         dbg.db_error = String(e?.message || e);
       }
 
+      // Optional: inspect ONE user's wallet balances (to confirm a credited
+      // deposit actually landed in that user's spendable balance).
+      const reqUrl0 = new URL(url.toString());
+      const probeUser = reqUrl0.searchParams.get('user');
+      if (probeUser) {
+        try {
+          const { results: wr } = await env.DB.prepare(
+            `SELECT coin_symbol, available, locked FROM wallets
+             WHERE user_id = ? AND coin_symbol IN ('QX','QKEY','QTA','USDT')`
+          ).bind(probeUser).all<any>();
+          const ur = await env.DB.prepare(
+            `SELECT id, email, username FROM users WHERE id = ?`
+          ).bind(probeUser).first<any>().catch(() => null);
+          dbg.probe_user = probeUser;
+          dbg.probe_user_info = ur || null;
+          dbg.probe_user_wallets = wr || [];
+        } catch (e: any) {
+          dbg.probe_user_error = String(e?.message || e);
+        }
+      }
+
       // Optional live explorer read for one address.
       const reqUrl = new URL(url.toString());
       const probe = reqUrl.searchParams.get('address');
