@@ -671,6 +671,22 @@ export default {
         ).bind(network).all<any>();
         dbg.active_addresses = (addrs || []).length;
         dbg.addresses = addrs || [];
+
+        // Sweep candidate diagnostics: why is/ isn't an address picked?
+        const { results: hd } = await env.DB.prepare(
+          `SELECT user_id, address_index FROM qta_hd_indexes LIMIT 100`
+        ).bind().all<any>().catch(() => ({ results: [] as any[] }));
+        dbg.hd_indexes = hd || [];
+        const { results: sweepCands } = await env.DB.prepare(
+          `SELECT DISTINCT a.address, a.user_id, h.address_index AS idx
+             FROM qta_addresses a
+             JOIN qta_hd_indexes h ON h.user_id = a.user_id
+             JOIN qta_deposits d ON d.address = a.address AND d.network = a.network
+            WHERE a.network = ? AND a.is_active = 1
+              AND d.status = 'credited' AND d.asset IN ('QX','QKEY')
+            ORDER BY h.address_index ASC LIMIT 50`
+        ).bind(network).all<any>().catch((e: any) => ({ results: [{ error: String(e?.message || e) }] }));
+        dbg.sweep_candidates = sweepCands || [];
       } catch (e: any) {
         dbg.db_error = String(e?.message || e);
       }
