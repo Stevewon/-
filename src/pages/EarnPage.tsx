@@ -932,7 +932,10 @@ function SubscribeModal({ product, qtaBalance, qtaPrice, onClose, onDone }: {
       showToast('success', t('earn.staked'), `${formatAmount(res.data.staked_qta)} QTA`);
       onDone();
     } catch (err: any) {
-      showToast('error', t('earn.stakeFailed'), err.response?.data?.error || '');
+      // Prefer the server's human-readable message (e.g. "추천인 자격이 없습니다"),
+      // fall back to the error code, then a generic label.
+      const data = err.response?.data || {};
+      showToast('error', t('earn.stakeFailed'), data.message || data.error || '');
     } finally { setBusy(false); }
   };
 

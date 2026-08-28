@@ -319,6 +319,20 @@ app.post('/subscribe', authMiddleware, async (c) => {
       if (sponsor.id === user.id) {
         return c.json({ error: 'SPONSOR_SELF', message: 'You cannot set yourself as your sponsor.' }, 400);
       }
+      // ⚑ OWNER RULE (2026-08-28): the chosen sponsor MUST have staked first.
+      //   A member cannot be set as someone's staking sponsor unless they
+      //   themselves hold at least one ACTIVE staking position. Otherwise the
+      //   downline is blocked with "추천인 자격이 없습니다" and NO binding is made.
+      const sponsorHasStake = await c.env.DB.prepare(
+        `SELECT 1 FROM staking_positions
+          WHERE user_id = ? AND status = 'active' LIMIT 1`
+      ).bind(sponsor.id).first<any>();
+      if (!sponsorHasStake) {
+        return c.json({
+          error: 'SPONSOR_NOT_QUALIFIED',
+          message: '추천인 자격이 없습니다. (추천인이 먼저 스테이킹을 완료해야 합니다.)',
+        }, 400);
+      }
       // Race-safe: only bind when still unset. binary_leg stays NULL so the
       // sponsor can assign Left/Right from their own dashboard exactly once.
       await c.env.DB.prepare(
