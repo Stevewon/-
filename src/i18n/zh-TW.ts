@@ -411,7 +411,7 @@ const zhTW = {
   'wallet.networkFee': '網路手續費',
   'wallet.feePercent': '提現手續費',
   'wallet.noticeTitle': '提現前須知',
-  'wallet.noticeFee': '將收取 5% 提現手續費。您的實際到賬金額始終為申請金額減去 5%。',
+  'wallet.noticeFee': '提現手續費起步為 5%，並根據您的 QX+QKEY 持有量等級最低降至 0%（5.0% → 4.5% → 4.0% → 3.5% → 3.0% → 0%）。實際到賬金額為申請金額減去對應等級的手續費。',
   'wallet.noticeMin': '最低提現金額為 50 美元（以 QTA 或 USDT 計，按當日即時價格折算）。',
   'wallet.belowMinUsd': '最低提現金額為 ${usd}。',
   'wallet.minWarnTitle': '低於最低限額',

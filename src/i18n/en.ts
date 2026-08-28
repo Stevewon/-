@@ -430,7 +430,7 @@ const en = {
   'wallet.networkFee': 'Network Fee',
   'wallet.feePercent': 'Withdrawal Fee',
   'wallet.noticeTitle': 'Before you withdraw',
-  'wallet.noticeFee': 'A 5% withdrawal fee applies. Your actual payout is always the requested amount minus 5%.',
+  'wallet.noticeFee': 'The withdrawal fee starts at 5% and drops to as low as 0% based on your QX+QKEY holding tier (5.0% → 4.5% → 4.0% → 3.5% → 3.0% → 0%). Your payout is the requested amount minus your tier fee.',
   'wallet.noticeMin': 'Minimum withdrawal is $50 (in QTA or USDT, valued at that day\u2019s live price).',
   'wallet.belowMinUsd': 'Minimum withdrawal is ${usd}.',
   'wallet.minWarnTitle': 'Below the minimum',

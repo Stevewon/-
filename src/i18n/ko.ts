@@ -430,7 +430,7 @@ const ko = {
   'wallet.networkFee': '\ub124\ud2b8\uc6cc\ud06c \uc218\uc218\ub8cc',
   'wallet.feePercent': '출금 수수료',
   'wallet.noticeTitle': '출금 전 반드시 확인하세요',
-  'wallet.noticeFee': '출금 수수료 5%가 부과됩니다. 실제 지급액은 항상 신청액에서 5%를 공제한 금액입니다.',
+  'wallet.noticeFee': '출금 수수료는 기본 5%이며, QX·QKEY 보유량 등급에 따라 최대 0%까지 인하됩니다(5.0% → 4.5% → 4.0% → 3.5% → 3.0% → 0%). 실제 지급액은 신청액에서 해당 등급 수수료를 공제한 금액입니다.',
   'wallet.noticeMin': '최소 출금 금액은 $50입니다 (그날 실시간 시세 기준 QTA 또는 USDT).',
   'wallet.belowMinUsd': '최소 출금 금액은 ${usd}입니다.',
   'wallet.minWarnTitle': '최소 출금 금액 미만',

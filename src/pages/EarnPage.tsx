@@ -676,12 +676,11 @@ function MatchRateModal({ onClose }: { onClose: () => void }) {
   // Owner rule (2026-08-29): REACH-BASED. Reaching a tier TARGET pays
   // TARGET × rate, once. e.g. 소실적 $1,000 도달 → $1,000×3% = $30.
   const rows = [
-    { band: '$100 ~ $1,000',       rate: '3%', payout: '$30' },
-    { band: '$1,000 ~ $5,000',     rate: '4%', payout: '$200' },
-    { band: '$5,000 ~ $10,000',    rate: '5%', payout: '$500' },
-    { band: '$10,000 ~ $50,000',   rate: '6%', payout: '$3,000' },
-    { band: '$50,000 ~ $100,000',  rate: '7%', payout: '$7,000' },
-    { band: '$100,000 ~ $300,000', rate: '8%', payout: '$24,000' },
+    { band: '$1,000',       rate: '3%', payout: '$30' },
+    { band: '$5,000',       rate: '4%', payout: '$200' },
+    { band: '$10,000',      rate: '5%', payout: '$500' },
+    { band: '$50,000',      rate: '6%', payout: '$3,000' },
+    { band: '$100,000+',    rate: '8%', payout: '$8,000' },
   ];
   return createPortal(
     <div className="fixed inset-0 z-[100] flex items-end sm:items-center sm:justify-center">

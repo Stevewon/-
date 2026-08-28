@@ -430,7 +430,7 @@ const ja = {
   'wallet.networkFee': 'ネットワーク手数料',
   'wallet.feePercent': '出金手数料',
   'wallet.noticeTitle': '出金する前に',
-  'wallet.noticeFee': '5%の出金手数料が適用されます。実際の受取額は常に申請額から5%を差し引いた金額です。',
+  'wallet.noticeFee': '出金手数料は基本5%で、QX・QKEYの保有量ランクに応じて最大0%まで引き下げられます（5.0%→4.5%→4.0%→3.5%→3.0%→0%）。実際の受取額は申請額から該当ランクの手数料を差し引いた金額です。',
   'wallet.noticeMin': '最小出金額は$50（QTAまたはUSDT、その日のライブ価格で評価）です。',
   'wallet.belowMinUsd': '最小出金額は${usd}です。',
   'wallet.minWarnTitle': '最小額を下回っています',

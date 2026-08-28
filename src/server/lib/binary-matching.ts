@@ -144,9 +144,10 @@ export async function assignBinaryLeg(
 //     $1,000~$5,000   → reach $5,000   pays 5,000  × 4% = $200
 //     $5,000~$10,000  → reach $10,000  pays 10,000 × 5% = $500
 //     $10,000~$50,000 → reach $50,000  pays 50,000 × 6% = $3,000
-//     $50,000~$100,000→ reach $100,000 pays 100,000× 7% = $7,000
-//     $100,000~$300,000→reach $300,000 pays 300,000× 8% = $24,000
+//     $50,000 이상    → reach $100,000 pays 100,000× 8% = $8,000
 //   Below the first target ($1,000) 소실적 pays nothing.
+//   Owner rule (2026-08-28, FINAL 5-tier per attached table): the top tier is
+//   "$100,000 이상 → 8%". There is NO 7% tier and NO $300,000 tier.
 //
 //   matched_usd = the highest tier TARGET already paid. When 소실적 crosses one
 //   or more new targets, each newly-reached target is paid (target × rate) and
@@ -156,8 +157,7 @@ const MATCH_TIERS: Array<{ target: number; rate: number }> = [
   { target: 5_000,   rate: 0.04 },
   { target: 10_000,  rate: 0.05 },
   { target: 50_000,  rate: 0.06 },
-  { target: 100_000, rate: 0.07 },
-  { target: 300_000, rate: 0.08 },
+  { target: 100_000, rate: 0.08 },
 ];
 
 // Sum of bonuses for all tier TARGETS with `paidTarget < target <= weaker`.

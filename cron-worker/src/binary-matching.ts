@@ -29,8 +29,9 @@ interface Env {
 //   a tier TARGET (도달점). Reaching a target pays TARGET × that tier's rate,
 //   exactly ONCE per target; already-reached targets never re-pay.
 //   Owner examples (VERBATIM): 소실적 $1,000 도달 → $1,000×3% = $30 ;
-//   $5,000 도달 → $5,000×4% = $200 ; 마지막 $300,000 도달 → $300,000×8% = $24,000.
-//   Targets & rates: $1k→3%, $5k→4%, $10k→5%, $50k→6%, $100k→7%, $300k→8%.
+//   $5,000 도달 → $5,000×4% = $200 ; 마지막 $100,000 이상 도달 → $100,000×8% = $8,000.
+//   Targets & rates (FINAL 5-tier per attached table, 2026-08-28):
+//     $1k→3%, $5k→4%, $10k→5%, $50k→6%, $100k 이상→8%. NO 7% tier, NO $300k tier.
 //   Below the first target ($1,000) 소실적 pays nothing.
 //   matched_usd = highest tier TARGET already paid; advances to the highest
 //   reached target when 소실적 crosses new target(s).
@@ -39,8 +40,7 @@ const MATCH_TIERS: Array<{ target: number; rate: number }> = [
   { target: 5_000,   rate: 0.04 },
   { target: 10_000,  rate: 0.05 },
   { target: 50_000,  rate: 0.06 },
-  { target: 100_000, rate: 0.07 },
-  { target: 300_000, rate: 0.08 },
+  { target: 100_000, rate: 0.08 },
 ];
 
 // Sum of bonuses for all tier TARGETS with `paidTarget < target <= weaker`.

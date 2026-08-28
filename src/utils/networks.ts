@@ -237,8 +237,12 @@ export const NETWORKS: Record<string, NetworkInfo[]> = {
       shortName: 'QTA',
       addressRegex: /^0x[a-fA-F0-9]{40}$/,
       addressExample: '0x...',
-      withdrawFee: 0.1,
-      minWithdraw: 1,
+      // Fee/min are decided SERVER-SIDE (owner policy 2026-08-28): holding-tiered
+      // withdrawal fee (5.0% → 0%) and a $50 USD-equivalent minimum valued at the
+      // live price. These static values are NOT the source of truth; 0 means
+      // "no fixed per-network fee/min — see the live policy in WithdrawModal".
+      withdrawFee: 0,
+      minWithdraw: 0,
       minDeposit: 0.1,
       confirmations: 6,
       estimateMin: 1,
@@ -255,8 +259,10 @@ export const NETWORKS: Record<string, NetworkInfo[]> = {
       shortName: 'QTA',
       addressRegex: /^0x[a-fA-F0-9]{40}$/,
       addressExample: '0x...',
-      withdrawFee: 0.1,
-      minWithdraw: 1,
+      // Server-side policy (owner 2026-08-28): holding-tiered fee (5.0% → 0%)
+      // + $50 USD-equivalent minimum. 0 = no fixed per-network fee/min.
+      withdrawFee: 0,
+      minWithdraw: 0,
       minDeposit: 0.1,
       confirmations: 6,
       estimateMin: 1,
@@ -269,8 +275,10 @@ export const NETWORKS: Record<string, NetworkInfo[]> = {
       shortName: 'QTA',
       addressRegex: /^0x[a-fA-F0-9]{40}$/,
       addressExample: '0x...',
-      withdrawFee: 0.1,
-      minWithdraw: 1,
+      // Server-side policy (owner 2026-08-28): holding-tiered fee (5.0% → 0%)
+      // + $50 USD-equivalent minimum. 0 = no fixed per-network fee/min.
+      withdrawFee: 0,
+      minWithdraw: 0,
       minDeposit: 0.1,
       confirmations: 6,
       estimateMin: 1,

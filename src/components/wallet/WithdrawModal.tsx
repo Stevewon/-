@@ -319,7 +319,7 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
                     <div className="flex items-center justify-between">
                       <span className="font-semibold">{n.shortName}</span>
                       <span className="text-[10px] text-exchange-text-third tabular-nums">
-                        {t('wallet.fee')}: 5%
+                        {t('wallet.fee')}: ~5%
                       </span>
                     </div>
                     <div className="text-[10px] text-exchange-text-third mt-0.5">{n.name}</div>

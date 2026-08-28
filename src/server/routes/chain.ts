@@ -22,6 +22,7 @@ import { authMiddleware, adminMiddleware } from '../middleware/auth';
 import { getQtaChainClient, type QtaNetwork } from '../lib/qta-chain';
 import type { AppEnv } from '../index';
 import { logAdminAction } from '../utils/audit';
+import { getFeeExemption } from '../utils/fees';
 
 const chain = new Hono<AppEnv>();
 
@@ -241,14 +242,44 @@ chain.post('/qta/withdraw', authMiddleware, async (c) => {
     }, 400);
   }
 
+  // ★★★★★★★ OWNER RULE (2026-08-28) — MIN WITHDRAWAL + FEE POLICY ★★★★★★★
+  // This legacy on-chain path MUST enforce the SAME policy as the main
+  // /wallet/withdraw path so QX/QKEY behave consistently everywhere:
+  //   1) Minimum withdrawal = $50 USD equivalent (valued at live price).
+  //   2) Withdrawal fee = holding-tiered rate (5.0% → 0%) from getFeeExemption,
+  //      identical to QTA. (was hard-coded '0' before — a bug.)
+  const priceRow = await c.env.DB.prepare(
+    'SELECT price_usd FROM coins WHERE symbol = ?'
+  ).bind(asset).first<any>();
+  const usdPerUnit = Number(priceRow?.price_usd || 0);
+  const notional = usdPerUnit * amtNum;
+  const MIN_WITHDRAW_USD = 50;
+  if (usdPerUnit > 0 && notional < MIN_WITHDRAW_USD) {
+    return c.json({
+      ok: false,
+      error: 'BELOW_MIN_WITHDRAWAL',
+      message: `Minimum withdrawal is $${MIN_WITHDRAW_USD} (valued at the current live price).`,
+      min_usd: MIN_WITHDRAW_USD,
+      requested_usd: Math.round(notional * 100) / 100,
+    }, 400);
+  }
+
+  // Holding-tiered fee (same source of truth as the main withdraw path).
+  const feeExemption = await getFeeExemption(c.env.DB, user.id);
+  const feeNum = amtNum * feeExemption.withdrawFeeRate;
+  const feeStr = String(feeNum);
+
   const id = crypto.randomUUID();
   await c.env.DB.prepare(
     `INSERT INTO qta_withdrawals
        (id, user_id, to_address, amount, fee, asset, status, network)
-     VALUES (?, ?, ?, ?, '0', ?, 'pending', ?)`
-  ).bind(id, user.id, to, amount, asset, currentNetwork(c.env)).run();
+     VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`
+  ).bind(id, user.id, to, amount, feeStr, asset, currentNetwork(c.env)).run();
 
-  return c.json({ ok: true, id, asset, to_address: to, status: 'pending' });
+  return c.json({
+    ok: true, id, asset, to_address: to, status: 'pending',
+    fee: feeStr, fee_rate: feeExemption.withdrawFeeRate,
+  });
 });
 
 // ---------------------------------------------------------------------------
