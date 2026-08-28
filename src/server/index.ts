@@ -307,6 +307,7 @@ let qtaHdIndexesBootstrapDone = false;
 let qtaWithdrawalsAssetBootstrapDone = false;
 let qtaDepositsAssetBootstrapDone = false;
 let coinPricePolicyBootstrapDone = false;
+let stakingSelfUsdBootstrapDone = false;
 let adminPasswordRotateBootstrapDone = false;
 // One-off (2026-08): hard-delete the ENTIRE referral downline under nickname
 // 'sally1992' (all levels), freeing nickname+email for re-registration.
@@ -1747,6 +1748,57 @@ app.use('/api/*', async (c, next) => {
             console.log('[bootstrap] coin price-policy columns (0038) applied to production D1');
           } catch (e) {
             captureError(c as any, e, { where: 'coin-price-policy-bootstrap' });
+          }
+        })()
+      );
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // 2026-08-28 · migration 0052 self-bootstrap:
+  //   OWNER RULE — 몸값(self_usd) = STAKING SUBSCRIPTION amount ONLY. We add
+  //   staking_positions.binary_counted_at so each subscription's deducted-QTA
+  //   USD value is rolled into binary volume exactly once (stamped at subscribe;
+  //   cron sweeper picks up any missed). Deposits no longer accrue self_usd.
+  //   ALTER TABLE … ADD COLUMN is wrapped in try/catch (throws if it exists).
+  //   Since the API-token path can't edit the deploy workflow, this bootstrap
+  //   is what actually creates the column in production on the next request.
+  // ------------------------------------------------------------------
+  if (!stakingSelfUsdBootstrapDone) {
+    const ctx = c.executionCtx as any;
+    if (ctx && typeof ctx.waitUntil === 'function') {
+      ctx.waitUntil(
+        (async () => {
+          try {
+            const marker = await c.env.DB.prepare(
+              "SELECT value FROM system_state WHERE key = 'staking_self_usd_2026_08_28'"
+            ).first<{ value: string }>().catch(() => null);
+            if (marker && marker.value === 'migrated_v1') {
+              stakingSelfUsdBootstrapDone = true;
+              return;
+            }
+
+            try {
+              await c.env.DB.prepare(
+                `ALTER TABLE staking_positions ADD COLUMN binary_counted_at TEXT`
+              ).run();
+            } catch (_e) { /* column already exists */ }
+            try {
+              await c.env.DB.prepare(
+                `CREATE INDEX IF NOT EXISTS idx_staking_binary_uncounted
+                   ON staking_positions(binary_counted_at)`
+              ).run();
+            } catch (_e) { /* ignore */ }
+
+            await c.env.DB.prepare(
+              `INSERT OR REPLACE INTO system_state (key, value, updated_at)
+               VALUES ('staking_self_usd_2026_08_28', 'migrated_v1', CURRENT_TIMESTAMP)`
+            ).run();
+
+            stakingSelfUsdBootstrapDone = true;
+            console.log('[bootstrap] staking_positions.binary_counted_at (0052) applied to production D1');
+          } catch (e) {
+            captureError(c as any, e, { where: 'staking-self-usd-bootstrap' });
           }
         })()
       );
