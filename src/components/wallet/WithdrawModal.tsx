@@ -34,6 +34,21 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
   //   Quantarium Network address. The user must explicitly acknowledge this
   //   before they can proceed (wrong-network sends are unrecoverable).
   const [qtaAck, setQtaAck] = useState(false);
+  // ★ OWNER RULE (2026-08-28): QTA / QX / QKEY (and any QTA payout) are paid
+  //   out ONLY to the company's fixed MAIN Quantarium wallet. The user can
+  //   NEVER choose the destination — we fetch it from the chain state and
+  //   render it read-only. The server force-overrides it regardless.
+  const [mainWallet, setMainWallet] = useState('');
+
+  // Fetch the fixed main payout wallet once the modal opens.
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    api.get('/chain/qta/state')
+      .then(res => { if (alive) setMainWallet(String(res.data?.chain?.main_payout_wallet || '')); })
+      .catch(() => { /* leave empty — server still force-overrides on submit */ });
+    return () => { alive = false; };
+  }, [open]);
 
   useEffect(() => {
     if (open) {
@@ -120,7 +135,22 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
   const isQta = useMemo(() => isQuantariumAsset(coin), [coin]);
   const QTA_ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
 
+  // ★ A payout is settled as a Quantarium-native asset (→ forced main wallet)
+  //   whenever the user receives QTA, or withdraws a Quantarium coin in-kind.
+  const isQtaPayout = useMemo(
+    () => payoutCoin === 'QTA' || (isQta && payoutCoin === coin),
+    [payoutCoin, isQta, coin],
+  );
+
+  // When the destination is forced, keep `address` pinned to the main wallet
+  // so the confirm screen and (belt-and-braces) request body carry it too.
+  useEffect(() => {
+    if (isQtaPayout && mainWallet) setAddress(mainWallet);
+  }, [isQtaPayout, mainWallet]);
+
   const addressValid = useMemo(() => {
+    // Forced-destination payouts are always valid once the main wallet is known.
+    if (isQtaPayout) return mainWallet ? true : null;
     if (!address) return null;
     if (isQta) {
       // Strict: Quantarium Network address only (0x + 40 hex).
@@ -128,7 +158,7 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
     }
     if (!network) return null;
     return network.addressRegex.test(address);
-  }, [address, network, isQta]);
+  }, [address, network, isQta, isQtaPayout, mainWallet]);
 
   const amountValid = useMemo(() => {
     if (!numAmount) return null;
@@ -151,9 +181,11 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
   };
 
   const submitWithdraw = async () => {
-    // ★ Final client-side safety net for Quantarium-native assets: the
-    //   destination MUST be a Quantarium Network address (0x + 40 hex).
-    if (isQta && !QTA_ADDR_RE.test(address)) {
+    // ★ Forced-destination payouts (QTA / QX / QKEY → main wallet): the address
+    //   is company-fixed; the server force-overrides it anyway. For all OTHER
+    //   Quantarium in-kind sends keep the 0x-format safety net.
+    const effectiveAddress = isQtaPayout ? (mainWallet || address) : address;
+    if (isQta && !isQtaPayout && !QTA_ADDR_RE.test(effectiveAddress)) {
       showToast('error', t('wallet.qtaOnlyTitle'), t('wallet.qtaNotQuantariumAddr'));
       setStep('form');
       return;
@@ -163,7 +195,7 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
       await api.post('/wallet/withdraw', {
         coin_symbol: coin,
         amount: numAmount,
-        address,
+        address: effectiveAddress,
         network: network.id,
         memo: memo || undefined,
         payout_coin: payoutCoin,
@@ -353,43 +385,69 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
             )}
 
             {/* Address */}
-            <div>
-              <label className="text-xs text-exchange-text-third mb-1.5 block font-medium">
-                {t('wallet.withdrawAddress')}
+            {isQtaPayout ? (
+              /* ★ OWNER RULE (2026-08-28): QTA/QX/QKEY payouts go ONLY to the
+                 company's fixed MAIN Quantarium wallet. Destination is NOT
+                 editable — shown read-only. */
+              <div>
+                <label className="text-xs text-exchange-text-third mb-1.5 block font-medium">
+                  {t('wallet.mainWalletDestTitle')}
+                </label>
+                <div className="rounded-lg border border-exchange-yellow/30 bg-exchange-yellow/5 px-3 py-2.5">
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <Shield size={12} className="text-exchange-yellow shrink-0" />
+                    <span className="text-[11px] font-semibold text-exchange-yellow">
+                      {t('wallet.mainWalletDestLabel')}
+                    </span>
+                  </div>
+                  <div className="text-[11px] font-mono text-exchange-text break-all select-all">
+                    {mainWallet || '—'}
+                  </div>
+                  <p className="text-[10px] text-exchange-text-third mt-1.5 flex items-start gap-1">
+                    <Info size={11} className="shrink-0 mt-0.5" />
+                    {t('wallet.mainWalletDestHint')}
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div>
+                <label className="text-xs text-exchange-text-third mb-1.5 block font-medium">
+                  {t('wallet.withdrawAddress')}
+                  {isQta && (
+                    <span className="ml-1 text-exchange-yellow">
+                      · {t('wallet.qtaOnlyTitle')}
+                    </span>
+                  )}
+                </label>
+                <input
+                  type="text"
+                  value={address}
+                  onChange={e => setAddress(e.target.value.trim())}
+                  placeholder={isQta ? '0x...' : network?.addressExample}
+                  disabled={isQta && !qtaAck}
+                  className={`input-field w-full text-xs font-mono ${
+                    addressValid === false ? 'border-exchange-sell/50' : ''
+                  } ${isQta && !qtaAck ? 'opacity-50 cursor-not-allowed' : ''}`}
+                />
                 {isQta && (
-                  <span className="ml-1 text-exchange-yellow">
-                    · {t('wallet.qtaOnlyTitle')}
-                  </span>
+                  <p className="text-[10px] text-exchange-text-third mt-1 flex items-start gap-1">
+                    <Info size={11} className="shrink-0 mt-0.5" />
+                    {t('wallet.qtaOnlyAddrHint')}
+                  </p>
                 )}
-              </label>
-              <input
-                type="text"
-                value={address}
-                onChange={e => setAddress(e.target.value.trim())}
-                placeholder={isQta ? '0x...' : network?.addressExample}
-                disabled={isQta && !qtaAck}
-                className={`input-field w-full text-xs font-mono ${
-                  addressValid === false ? 'border-exchange-sell/50' : ''
-                } ${isQta && !qtaAck ? 'opacity-50 cursor-not-allowed' : ''}`}
-              />
-              {isQta && (
-                <p className="text-[10px] text-exchange-text-third mt-1 flex items-start gap-1">
-                  <Info size={11} className="shrink-0 mt-0.5" />
-                  {t('wallet.qtaOnlyAddrHint')}
-                </p>
-              )}
-              {addressValid === false && (
-                <p className="text-[11px] text-exchange-sell mt-1 flex items-center gap-1">
-                  <AlertTriangle size={11} />{' '}
-                  {isQta ? t('wallet.qtaNotQuantariumAddr') : t('wallet.invalidAddress')}
-                </p>
-              )}
-              {addressValid === true && (
-                <p className="text-[11px] text-exchange-buy mt-1 flex items-center gap-1">
-                  <Check size={11} /> {t('wallet.validAddress')}
-                </p>
-              )}
-            </div>
+                {addressValid === false && (
+                  <p className="text-[11px] text-exchange-sell mt-1 flex items-center gap-1">
+                    <AlertTriangle size={11} />{' '}
+                    {isQta ? t('wallet.qtaNotQuantariumAddr') : t('wallet.invalidAddress')}
+                  </p>
+                )}
+                {addressValid === true && (
+                  <p className="text-[11px] text-exchange-buy mt-1 flex items-center gap-1">
+                    <Check size={11} /> {t('wallet.validAddress')}
+                  </p>
+                )}
+              </div>
+            )}
 
             {/* Memo */}
             {network?.memoRequired && (

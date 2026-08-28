@@ -29,6 +29,15 @@
     // index-0 == this address. Replaces 0x496EE…4E97 (mnemonic mismatch) and
     // 0x4B35…938Cb (mnemonic lost). Mnemonic lives ONLY in QTA_HD_WALLET_MNEMONIC.
     "QTA_HOT_WALLET_ADDRESS": "0xdeB6BFE50EeE8D753313988c6d1E77f95322527b",
+    // ── MAIN Quantarium payout wallet (owner rule 2026-08-28) ─────────────
+    // ALL user withdrawals of Quantarium-native assets (QTA / QX / QKEY) are
+    // paid out ONLY to this single, company-designated "main Quantarium
+    // wallet". Users can NEVER choose their own destination — the server
+    // force-overrides every withdrawal's to_address with this value. Fund
+    // flow: user's Quantarium wallet → exchange → THIS main wallet.
+    // Default = the exchange hot wallet; override per-environment in the
+    // Cloudflare dashboard with the real designated main-wallet address.
+    "QTA_MAIN_PAYOUT_WALLET": "0xdeB6BFE50EeE8D753313988c6d1E77f95322527b",
     // On-chain ERC-20 contracts on Quantarium.
     "QTA_TOKEN_QX_ADDRESS": "0xad447d42fB065a5b505772235F0c96d27501e6Fb",
     "QTA_TOKEN_QX_DECIMALS": "18",

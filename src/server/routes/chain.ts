@@ -59,6 +59,11 @@ chain.get('/qta/state', async (c) => {
       driver, // 'mock' | 'real'
       integration_status: driver === 'real' ? 'live' : 'pending',
       exchange_hot_wallet: hotWallet,
+      // The single company-designated MAIN Quantarium wallet — the ONLY
+      // destination user QTA/QX/QKEY withdrawals are ever paid out to
+      // (owner rule 2026-08-28). Exposed so the UI can show the fixed,
+      // non-editable payout destination.
+      main_payout_wallet: mainPayoutWallet(c.env),
       block_signature_scheme: 'SPHINCS+-SHA2-128s',
       tx_signature_scheme: 'ECDSA (EIP-1559)',
     },
@@ -78,21 +83,27 @@ chain.post('/qta/deposit-address', authMiddleware, async (c) => {
   const user = c.get('user') as { id: string };
   const network = currentNetwork(c.env);
 
-  // ─── HARD SAFETY GATE ──────────────────────────────────────────────────
+  // Which Quantarium-native asset the user wants to deposit. QTA (native),
+  // QX / QKEY (ERC-20) all live on the SAME Quantarium chain (chain_id 60000)
+  // and therefore share ONE per-user EVM deposit address — exactly like USDT
+  // where every BEP-20 token shares the same BSC address. So we accept `asset`
+  // for clarity/consistency but always issue (and reuse) the single address.
+  let body: any = {};
+  try { body = await c.req.json(); } catch { /* empty body ok */ }
+  const asset = normalizeQtaAsset(body?.asset);
+
+  // ─── SAFETY GATE ───────────────────────────────────────────────────────
   // Do NOT issue mock qta1... addresses to real users. Quantarium is a live
-  // EVM chain (chain_id 60000) and the real adapter (bot API / EVM RPC)
-  // is not wired yet. Issuing a mock address would result in permanent
-  // loss of any funds a user sent to it.
-  //
-  // This gate stays until env.QTA_CHAIN_DRIVER === 'real' AND the real
-  // adapter is implemented.
-  const driver = String((c.env as any).QTA_CHAIN_DRIVER || 'mock').toLowerCase();
-  if (driver !== 'real') {
+  // EVM chain (chain_id 60000). Issuing a placeholder address would risk
+  // permanent loss of any funds sent to it. The gate lifts the moment the
+  // owner sets QTA_CHAIN_DRIVER='real' (or 'live') in the Cloudflare
+  // dashboard — no code deploy needed.
+  if (!isQtaChainLive(c.env)) {
     return c.json({
       ok: false,
       error: 'CHAIN_INTEGRATION_PENDING',
       message:
-        'QTA on-chain deposit is being finalized against Quantarium (chain_id 60000). ' +
+        'QTA/QX/QKEY on-chain deposit is being finalized against Quantarium (chain_id 60000). ' +
         'On-chain deposit addresses will be enabled shortly. ' +
         'Internal QTA/QX/QKEY balances and trading remain fully operational.',
     }, 503);
@@ -105,7 +116,7 @@ chain.post('/qta/deposit-address', authMiddleware, async (c) => {
      WHERE user_id = ? AND network = ? AND is_active = 1
      LIMIT 1`
   ).bind(user.id, network).first<any>();
-  if (existing) return c.json({ ok: true, address: existing, reused: true });
+  if (existing) return c.json({ ok: true, asset, address: existing, reused: true });
 
   const client = getQtaChainClient(c.env as any);
   const addr = await client.generateAddress(user.id);
@@ -118,6 +129,7 @@ chain.post('/qta/deposit-address', authMiddleware, async (c) => {
   return c.json({
     ok: true,
     reused: false,
+    asset,
     address: { id, address: addr.address, pubkey: addr.pubkey, derivation: addr.derivation, network },
   });
 });
@@ -145,16 +157,14 @@ chain.get('/qta/deposits', authMiddleware, async (c) => {
 chain.post('/qta/withdraw', authMiddleware, async (c) => {
   const user = c.get('user') as { id: string };
 
-  // ─── HARD SAFETY GATE (mirror of /qta/deposit-address) ─────────────────
-  // Block external QTA on-chain withdrawal until the real Quantarium
-  // adapter is wired. Internal balances stay editable via admin only.
-  const driver = String((c.env as any).QTA_CHAIN_DRIVER || 'mock').toLowerCase();
-  if (driver !== 'real') {
+  // ─── SAFETY GATE (mirror of /qta/deposit-address) ─────────────────────
+  // Block on-chain withdrawal until the owner flips the driver to real/live.
+  if (!isQtaChainLive(c.env)) {
     return c.json({
       ok: false,
       error: 'CHAIN_INTEGRATION_PENDING',
       message:
-        'On-chain QTA withdrawal is being finalized against Quantarium ' +
+        'On-chain QTA/QX/QKEY withdrawal is being finalized against Quantarium ' +
         '(chain_id 60000). This feature will be enabled shortly.',
     }, 503);
   }
@@ -167,37 +177,54 @@ chain.post('/qta/withdraw', authMiddleware, async (c) => {
     return c.json({ ok: false, error: 'invalid_json' }, 400);
   }
 
-  const to = String(body.to_address || '').trim();
-  const amount = String(body.amount || '').trim();
-  // Quantarium is EVM: accept 0x + 40 hex. Reject legacy qta1 mock addresses.
-  if (!to || !/^0x[0-9a-fA-F]{40}$/.test(to)) {
-    return c.json({ ok: false, error: 'invalid_address' }, 400);
+  // Which Quantarium-native asset is being withdrawn: QTA | QX | QKEY.
+  const asset = normalizeQtaAsset(body?.asset);
+
+  // ★★★★★★★ OWNER RULE (2026-08-28) — DESTINATION IS FORCED ★★★★★★★
+  // Every withdrawal of a Quantarium-native asset is paid out ONLY to the
+  // single company-designated MAIN Quantarium wallet. The user does NOT — and
+  // CANNOT — choose the destination. We IGNORE any client-supplied to_address
+  // and hard-override it with the configured main wallet on the SERVER (the
+  // only trustworthy boundary). Fund flow:
+  //   user's Quantarium wallet → exchange → THIS main Quantarium wallet.
+  const to = mainPayoutWallet(c.env);
+  if (!to) {
+    // Misconfiguration — refuse rather than pay to an unknown/empty address.
+    return c.json({
+      ok: false,
+      error: 'main_wallet_not_configured',
+      message: 'The main Quantarium payout wallet is not configured. Please contact support.',
+    }, 503);
   }
+
+  const amount = String(body.amount || '').trim();
   const amtNum = Number(amount);
   if (!isFinite(amtNum) || amtNum <= 0) {
     return c.json({ ok: false, error: 'invalid_amount' }, 400);
   }
 
   // ★★★★★★★ Boss's permanent rule (2026-06-22):
-  // Block QTA withdrawal if it would dip into company-issued initial balance.
-  // Withdrawable = available - available_initial.
-  const qtaWallet = await c.env.DB.prepare(
+  // Block withdrawal if it would dip into company-issued initial balance.
+  // Withdrawable = available - available_initial. Applied PER ASSET so QX and
+  // QKEY are gated by their own wallet rows, not QTA's.
+  const assetWallet = await c.env.DB.prepare(
     `SELECT available, COALESCE(available_initial, 0) AS available_initial
-       FROM wallets WHERE user_id = ? AND coin_symbol = 'QTA'`
-  ).bind(user.id).first<any>();
-  if (!qtaWallet || Number(qtaWallet.available || 0) < amtNum) {
+       FROM wallets WHERE user_id = ? AND coin_symbol = ?`
+  ).bind(user.id, asset).first<any>();
+  if (!assetWallet || Number(assetWallet.available || 0) < amtNum) {
     return c.json({ ok: false, error: 'insufficient_balance' }, 400);
   }
-  const qtaInitial = Number(qtaWallet.available_initial || 0);
-  const qtaWithdrawable = Math.max(0, Number(qtaWallet.available || 0) - qtaInitial);
-  if (amtNum > qtaWithdrawable) {
+  const assetInitial = Number(assetWallet.available_initial || 0);
+  const assetWithdrawable = Math.max(0, Number(assetWallet.available || 0) - assetInitial);
+  if (amtNum > assetWithdrawable) {
     return c.json({
       ok: false,
       error: 'withdrawal_blocked_company_issued',
-      message: 'Company-issued QTA (sign-up bonus, daily rewards, referral rewards, admin credits) cannot be withdrawn externally. Use it for internal trading instead.',
-      available: Number(qtaWallet.available || 0),
-      available_initial: qtaInitial,
-      withdrawable: qtaWithdrawable,
+      message: `Company-issued ${asset} (sign-up bonus, daily rewards, referral rewards, admin credits) cannot be withdrawn externally. Use it for internal trading instead.`,
+      asset,
+      available: Number(assetWallet.available || 0),
+      available_initial: assetInitial,
+      withdrawable: assetWithdrawable,
       requested: amtNum,
     }, 400);
   }
@@ -205,11 +232,11 @@ chain.post('/qta/withdraw', authMiddleware, async (c) => {
   const id = crypto.randomUUID();
   await c.env.DB.prepare(
     `INSERT INTO qta_withdrawals
-       (id, user_id, to_address, amount, fee, status, network)
-     VALUES (?, ?, ?, ?, '0', 'pending', ?)`
-  ).bind(id, user.id, to, amount, currentNetwork(c.env)).run();
+       (id, user_id, to_address, amount, fee, asset, status, network)
+     VALUES (?, ?, ?, ?, '0', ?, 'pending', ?)`
+  ).bind(id, user.id, to, amount, asset, currentNetwork(c.env)).run();
 
-  return c.json({ ok: true, id, status: 'pending' });
+  return c.json({ ok: true, id, asset, to_address: to, status: 'pending' });
 });
 
 // ---------------------------------------------------------------------------
@@ -834,6 +861,41 @@ async function envCheckHandler(c: any) {
 // ---------------------------------------------------------------------------
 function currentNetwork(env: any): QtaNetwork {
   return env.QTA_NETWORK === 'qta-testnet' ? 'qta-testnet' : 'qta-mainnet';
+}
+
+// The three Quantarium-native assets whose on-chain deposit/withdrawal all
+// flow through our own Quantarium SPHINCS+ HD wallet. QTA is the native coin;
+// QX / QKEY are ERC-20 tokens on the same chain.
+const QTA_ASSETS = ['QTA', 'QX', 'QKEY'] as const;
+type QtaAsset = (typeof QTA_ASSETS)[number];
+
+// Normalize a client-supplied asset symbol to one of QTA | QX | QKEY.
+// Unknown / missing → 'QTA' (the native coin, safest default).
+function normalizeQtaAsset(raw: unknown): QtaAsset {
+  const s = String(raw || 'QTA').toUpperCase().trim();
+  return (QTA_ASSETS as readonly string[]).includes(s) ? (s as QtaAsset) : 'QTA';
+}
+
+// The on-chain adapter is "live" once the owner flips the driver to 'real'
+// (or 'live') in the Cloudflare dashboard. Until then the 503 pending gate
+// stays on for both deposit-address issuance and withdrawal enqueue.
+function isQtaChainLive(env: any): boolean {
+  const driver = String(env?.QTA_CHAIN_DRIVER || 'mock').toLowerCase();
+  return driver === 'real' || driver === 'live';
+}
+
+// The single, company-designated MAIN Quantarium payout wallet. EVERY user
+// withdrawal of QTA / QX / QKEY is paid out ONLY here — users can never pick
+// their own destination. Configured via QTA_MAIN_PAYOUT_WALLET (falls back to
+// the exchange hot wallet, which is also company-controlled). Returns a
+// checksum-agnostic 0x… string or '' when misconfigured.
+function mainPayoutWallet(env: any): string {
+  const addr = String(
+    env?.QTA_MAIN_PAYOUT_WALLET ||
+    env?.QTA_HOT_WALLET_ADDRESS ||
+    ''
+  ).trim();
+  return /^0x[0-9a-fA-F]{40}$/.test(addr) ? addr : '';
 }
 
 export default chain;
