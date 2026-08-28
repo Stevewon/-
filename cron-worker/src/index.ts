@@ -659,6 +659,88 @@ export default {
       });
     }
 
+    if (url.pathname === '/binary-debug') {
+      // Read-only diagnostic for the binary (Community Team Volume) tree.
+      // ?q=<nickname-or-userid substring> to filter (repeatable via comma).
+      // Shows each matched user's placement (binary_parent_id, binary_leg),
+      // their binary_volume row, and their staking self total — so we can see
+      // WHY a downline stake did/didn't roll up (leg NULL => no roll-up).
+      const q = (url.searchParams.get('q') || '').trim();
+      const dbg: any = { note: 'binary tree diagnostic (read-only)' };
+      try {
+        // Resolve candidate users by nickname/email/id substring.
+        let users: any[] = [];
+        if (q) {
+          const terms = q.split(',').map(s => s.trim()).filter(Boolean);
+          const seen = new Set<string>();
+          for (const term of terms) {
+            const like = `%${term}%`;
+            const { results } = await env.DB.prepare(
+              `SELECT id, nickname, email, referral_code,
+                      binary_parent_id, binary_leg
+                 FROM users
+                WHERE nickname LIKE ? OR email LIKE ? OR id LIKE ? OR referral_code LIKE ?
+                LIMIT 20`,
+            ).bind(like, like, like, like).all<any>();
+            for (const r of (results || [])) {
+              if (!seen.has(r.id)) { seen.add(r.id); users.push(r); }
+            }
+          }
+        } else {
+          const { results } = await env.DB.prepare(
+            `SELECT id, nickname, email, referral_code,
+                    binary_parent_id, binary_leg
+               FROM users
+              WHERE binary_parent_id IS NOT NULL OR binary_leg IS NOT NULL
+              LIMIT 40`,
+          ).all<any>();
+          users = results || [];
+        }
+
+        const rows: any[] = [];
+        for (const u of users) {
+          const vol = await env.DB.prepare(
+            `SELECT left_usd, right_usd, matched_usd, self_usd, updated_at
+               FROM binary_volume WHERE user_id = ?`,
+          ).bind(u.id).first<any>();
+          // Sum of this user's own staking (what SHOULD become self_usd).
+          const stake = await env.DB.prepare(
+            `SELECT COUNT(*) AS n,
+                    COALESCE(SUM(principal_usd), 0) AS principal_usd,
+                    COALESCE(SUM(CASE WHEN binary_counted_at IS NULL THEN 1 ELSE 0 END), 0) AS uncounted
+               FROM staking_positions WHERE user_id = ?`,
+          ).bind(u.id).first<any>().catch(() => null);
+          // Parent nickname for readability.
+          let parentNick: string | null = null;
+          if (u.binary_parent_id) {
+            const p = await env.DB.prepare(
+              `SELECT nickname, email FROM users WHERE id = ?`,
+            ).bind(u.binary_parent_id).first<any>();
+            parentNick = p ? (p.nickname || p.email || null) : null;
+          }
+          rows.push({
+            id: u.id,
+            nickname: u.nickname,
+            email: u.email,
+            referral_code: u.referral_code,
+            binary_parent_id: u.binary_parent_id,
+            binary_parent_nick: parentNick,
+            binary_leg: u.binary_leg, // ← NULL means volume does NOT roll up to parent
+            leg_assigned: u.binary_leg === 'L' || u.binary_leg === 'R',
+            binary_volume: vol || null,
+            staking: stake || null,
+          });
+        }
+        dbg.count = rows.length;
+        dbg.rows = rows;
+      } catch (e: any) {
+        dbg.error = String(e?.message || e);
+      }
+      return new Response(JSON.stringify(dbg, null, 2), {
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+
     // Read-only deposit diagnostic: latest qta_deposits rows + status counts,
     // plus (optionally) a LIVE explorer read for one address so we can see
     // whether a specific inbound transfer is on-chain but not yet detected.
@@ -787,7 +869,7 @@ export default {
       JSON.stringify({
         service: 'quantaex-cron',
         schedules: ['*/5 * * * * (price-alert tick)', '0 3 * * * (daily D1 backup)'],
-        endpoints: ['/run', '/migrate', '/backup', '/backup/prune', '/qta/withdrawals', '/qta/scan', '/qta/tick', '/qta/sweep', '/qta/reissue-address', '/qta/env-check', '/qta/deposits-debug', '/ext/scan', '/ext/tick', '/ext/sweep', '/ext/env-check'],
+        endpoints: ['/run', '/migrate', '/backup', '/backup/prune', '/qta/withdrawals', '/qta/scan', '/qta/tick', '/qta/sweep', '/qta/reissue-address', '/qta/env-check', '/qta/deposits-debug', '/binary-debug', '/ext/scan', '/ext/tick', '/ext/sweep', '/ext/env-check'],
       }),
       { headers: { 'content-type': 'application/json' } }
     );
