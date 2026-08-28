@@ -24,48 +24,44 @@ interface Env {
   DB: D1Database;
 }
 
-// ⚑ OWNER RULE (2026-08-28, FINAL): the Left/Right matching bonus is
-//   소실적(weaker leg) × its SINGLE (FLAT) tier rate, paid ONCE — matched volume
-//   never re-pays. 소실적 = min(left, right). The ENTIRE 소실적 is priced at the
-//   ONE tier its total falls into (NOT a progressive per-slice blend).
-//   Owner examples (VERBATIM): 좌$500·우$900 → 소실적 $500 → $500×3% = $15 ;
-//   좌$700·우$900 → 소실적 $700 → $700×3% = $21.
-//   Option 가) INCREMENTAL: matched_usd tracks 소실적 already paid; when the
-//   weaker leg grows we pay only flatBonusUsd(weaker) − flatBonusUsd(matched).
-//   Tiers (3%~8%): $100~3%, $1k~4%, $5k~5%, $10k~6%, $50k~7%, $100k~8%.
-//   소실적 below $100 pays nothing.
-const MATCH_TIERS: Array<{ from: number; rate: number }> = [
-  { from: 100,     rate: 0.03 },
-  { from: 1_000,   rate: 0.04 },
-  { from: 5_000,   rate: 0.05 },
-  { from: 10_000,  rate: 0.06 },
-  { from: 50_000,  rate: 0.07 },
-  { from: 100_000, rate: 0.08 },
+// ⚑ OWNER RULE (2026-08-29, FINAL — REACH-BASED, ONCE PER TIER): the Left/Right
+//   matching bonus is paid when the 소실적(weaker leg = min(left,right)) REACHES
+//   a tier TARGET (도달점). Reaching a target pays TARGET × that tier's rate,
+//   exactly ONCE per target; already-reached targets never re-pay.
+//   Owner examples (VERBATIM): 소실적 $1,000 도달 → $1,000×3% = $30 ;
+//   $5,000 도달 → $5,000×4% = $200 ; 마지막 $300,000 도달 → $300,000×8% = $24,000.
+//   Targets & rates: $1k→3%, $5k→4%, $10k→5%, $50k→6%, $100k→7%, $300k→8%.
+//   Below the first target ($1,000) 소실적 pays nothing.
+//   matched_usd = highest tier TARGET already paid; advances to the highest
+//   reached target when 소실적 crosses new target(s).
+const MATCH_TIERS: Array<{ target: number; rate: number }> = [
+  { target: 1_000,   rate: 0.03 },
+  { target: 5_000,   rate: 0.04 },
+  { target: 10_000,  rate: 0.05 },
+  { target: 50_000,  rate: 0.06 },
+  { target: 100_000, rate: 0.07 },
+  { target: 300_000, rate: 0.08 },
 ];
 
-// FLAT tier rate for a 소실적 amount: the single rate of the highest tier whose
-// `from` threshold the amount reaches. Below $100 → 0.
-function flatRateOf(amountUsd: number): number {
-  let rate = 0;
+// Sum of bonuses for all tier TARGETS with `paidTarget < target <= weaker`.
+function reachBonusUsd(paidTarget: number, weaker: number): number {
+  let bonus = 0;
   for (const tier of MATCH_TIERS) {
-    if (amountUsd >= tier.from) rate = tier.rate;
+    if (tier.target > paidTarget && tier.target <= weaker) {
+      bonus += tier.target * tier.rate;
+    }
+  }
+  return bonus;
+}
+
+// Highest tier target that 소실적(weaker) has reached (0 if none).
+function highestReachedTarget(weaker: number): number {
+  let t = 0;
+  for (const tier of MATCH_TIERS) {
+    if (weaker >= tier.target) t = tier.target;
     else break;
   }
-  return rate;
-}
-
-// FLAT bonus on a cumulative 소실적: entire amount × its single tier rate.
-// e.g. $500 → $15 ; $700 → $21 ; $1,200 → $48.
-function flatBonusUsd(amountUsd: number): number {
-  if (!(amountUsd >= MATCH_TIERS[0].from)) return 0;
-  return amountUsd * flatRateOf(amountUsd);
-}
-
-// Option 가) incremental payout: bonus for growing 소실적 from `paid` to `total`.
-function tieredBonusUsd(paid: number, total: number): number {
-  if (!(total > paid)) return 0;
-  const delta = flatBonusUsd(total) - flatBonusUsd(paid);
-  return delta > 0 ? delta : 0;
+  return t;
 }
 
 // EACH downline leg (left AND right, independently) may grow to at most this
@@ -96,8 +92,8 @@ async function priceOf(env: Env, symbol: string): Promise<number> {
 }
 
 // --------------------------------------------------------------------------
-// Match one user: pay 소실적(min(left,right)) × tier rate on the not-yet-paid
-// slice only. matched_usd = cumulative 소실적 already paid (never re-paid).
+// Match one user (REACH-BASED): when 소실적(min(left,right)) reaches new tier
+// TARGET(s), pay TARGET × rate for each, once. matched_usd = highest target paid.
 // --------------------------------------------------------------------------
 async function runMatchForUser(env: Env, userId: string, qtaPrice: number): Promise<void> {
   const vol = await env.DB.prepare(
@@ -114,22 +110,22 @@ async function runMatchForUser(env: Env, userId: string, qtaPrice: number): Prom
 
   const left = Number(vol.left_usd || 0);
   const right = Number(vol.right_usd || 0);
-  const matched = Number(vol.matched_usd || 0);
+  const paidTarget = Number(vol.matched_usd || 0);   // highest tier target already paid
 
-  // 소실적 = weaker leg. Pay only the part above what we've already paid.
+  // 소실적 = weaker leg. Which tier targets has it newly reached?
   const weaker = Math.min(left, right);
-  if (weaker <= matched) return;                 // nothing new to match
-  if (weaker < MATCH_TIERS[0].from) return;      // below $100 → no tier, no pay
+  const reachedTarget = highestReachedTarget(weaker);
+  if (reachedTarget <= paidTarget) return;           // no new target reached
 
-  const bonusUsd = tieredBonusUsd(matched, weaker);
+  const bonusUsd = reachBonusUsd(paidTarget, weaker);
   if (!(bonusUsd > 0)) return;
   const bonusQta = qtaPrice > 0 ? bonusUsd / qtaPrice : 0;
 
-  // Advance matched_usd to the full 소실적 (guards against a racing tick).
+  // Advance matched_usd to the highest reached TARGET (guards against a racing tick).
   const upd = await env.DB.prepare(
     `UPDATE binary_volume SET matched_usd = ?, updated_at = datetime('now')
       WHERE user_id = ? AND matched_usd = ?`
-  ).bind(weaker, userId, matched).run();
+  ).bind(reachedTarget, userId, paidTarget).run();
   if (!upd?.meta || upd.meta.changes === 0) return;
 
   try {
@@ -143,7 +139,7 @@ async function runMatchForUser(env: Env, userId: string, qtaPrice: number): Prom
     `UPDATE wallets SET available = available + ? WHERE user_id = ? AND coin_symbol = 'QTA'`
   ).bind(bonusQta, userId).run();
 
-  const newSlice = weaker - matched;
+  const newSlice = reachedTarget - paidTarget;
   const effRate = newSlice > 0 ? bonusUsd / newSlice : 0;
   await env.DB.prepare(
     `INSERT INTO binary_match_bonuses
@@ -152,10 +148,10 @@ async function runMatchForUser(env: Env, userId: string, qtaPrice: number): Prom
      VALUES (?,?,?,?,?,?,?,?,?,?, datetime('now'))`
   ).bind(
     uuid(), userId, newSlice, effRate, bonusUsd, bonusQta, qtaPrice,
-    left, right, weaker,
+    left, right, reachedTarget,
   ).run();
 
-  console.log(`[binary] matched user=${userId} sosiljeok=${weaker} slice=${newSlice} bonusUsd=${bonusUsd.toFixed(2)} qta=${bonusQta.toFixed(2)}`);
+  console.log(`[binary] matched user=${userId} sosiljeok=${weaker} reachedTarget=${reachedTarget} bonusUsd=${bonusUsd.toFixed(2)} qta=${bonusQta.toFixed(2)}`);
 }
 
 // --------------------------------------------------------------------------

@@ -673,14 +673,15 @@ export default function EarnPage() {
 // ---------------------------------------------------------------------------
 function MatchRateModal({ onClose }: { onClose: () => void }) {
   const { t } = useI18n();
-  // Owner rule (2026-08-28): every band raised by +1 percentage point.
+  // Owner rule (2026-08-29): REACH-BASED. Reaching a tier TARGET pays
+  // TARGET × rate, once. e.g. 소실적 $1,000 도달 → $1,000×3% = $30.
   const rows = [
-    { band: '$100 ~ $999', rate: '3%' },
-    { band: '$1,000 ~ $4,999', rate: '4%' },
-    { band: '$5,000 ~ $9,999', rate: '5%' },
-    { band: '$10,000 ~ $49,999', rate: '6%' },
-    { band: '$50,000 ~ $99,999', rate: '7%' },
-    { band: '$100,000 ~', rate: '8%' },
+    { band: '$100 ~ $1,000',       rate: '3%', payout: '$30' },
+    { band: '$1,000 ~ $5,000',     rate: '4%', payout: '$200' },
+    { band: '$5,000 ~ $10,000',    rate: '5%', payout: '$500' },
+    { band: '$10,000 ~ $50,000',   rate: '6%', payout: '$3,000' },
+    { band: '$50,000 ~ $100,000',  rate: '7%', payout: '$7,000' },
+    { band: '$100,000 ~ $300,000', rate: '8%', payout: '$24,000' },
   ];
   return createPortal(
     <div className="fixed inset-0 z-[100] flex items-end sm:items-center sm:justify-center">
@@ -706,24 +707,28 @@ function MatchRateModal({ onClose }: { onClose: () => void }) {
             {t('earn.matchIntro')}
           </p>
 
-          {/* rate table */}
+          {/* rate table (REACH-BASED: 구간 / 요율 / 도달 지급액) */}
           <div className="rounded-xl border border-exchange-border/70 overflow-hidden">
-            <div className="grid grid-cols-2 bg-exchange-bg/60 text-[11px] font-bold text-exchange-text-third uppercase tracking-wider">
-              <div className="px-3 py-2 border-r border-exchange-border/70">{t('earn.matchColAmount')}</div>
-              <div className="px-3 py-2 text-right">{t('earn.matchColRate')}</div>
+            <div className="grid grid-cols-[1.5fr_0.8fr_1fr] bg-exchange-bg/60 text-[10px] font-bold text-exchange-text-third uppercase tracking-wider">
+              <div className="px-2.5 py-2 border-r border-exchange-border/70">{t('earn.matchColAmount')}</div>
+              <div className="px-2.5 py-2 text-right border-r border-exchange-border/70">{t('earn.matchColRate')}</div>
+              <div className="px-2.5 py-2 text-right">{t('earn.matchColPayout')}</div>
             </div>
             {rows.map((row, i) => (
               <div
                 key={row.band}
-                className={`grid grid-cols-2 text-[13px] ${
+                className={`grid grid-cols-[1.5fr_0.8fr_1fr] text-[12px] ${
                   i % 2 === 0 ? 'bg-transparent' : 'bg-exchange-bg/30'
                 } border-t border-exchange-border/50`}
               >
-                <div className="px-3 py-2.5 tabular-nums text-exchange-text border-r border-exchange-border/50">
+                <div className="px-2.5 py-2.5 tabular-nums text-exchange-text border-r border-exchange-border/50">
                   {row.band}
                 </div>
-                <div className="px-3 py-2.5 text-right tabular-nums font-bold text-exchange-buy">
+                <div className="px-2.5 py-2.5 text-right tabular-nums font-bold text-exchange-buy border-r border-exchange-border/50">
                   {row.rate}
+                </div>
+                <div className="px-2.5 py-2.5 text-right tabular-nums font-bold text-exchange-yellow">
+                  {row.payout}
                 </div>
               </div>
             ))}
