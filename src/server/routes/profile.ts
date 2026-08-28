@@ -10,7 +10,7 @@ import {
   fireAndForgetMail,
   metaFromReq,
 } from '../utils/mailer';
-import { getUserFeeTier } from '../utils/fees';
+import { getUserHolding, getFeeTierByHolding, HOLDING_FEE_SCHEDULE } from '../utils/fees';
 
 const app = new Hono<AppEnv>();
 
@@ -624,23 +624,37 @@ app.get('/api-keys/stats', authMiddleware, async (c) => {
 // "next tier at $X" hint. Falls back to conservative defaults when the
 // fee_tiers table has not been migrated yet.
 // ============================================================================
+// OWNER RULE (2026-08-28): fee tier is decided by the combined QX+QKEY holding
+// (available+locked) inside the exchange. Returns the current tier + the full
+// holding-based schedule (trade fee + withdrawal fee) so the UI can render it.
 app.get('/fee-tier', authMiddleware, async (c) => {
   const user = c.get('user');
-  const tier = await getUserFeeTier(c.env.DB, user.id, { maker_fee: 0.001, taker_fee: 0.001 });
-  let ladder: Array<{ tier: number; name: string; min_volume_usd: number; maker_fee: number; taker_fee: number }> = [];
-  try {
-    const { results } = await c.env.DB.prepare(
-      'SELECT tier, name, min_volume_usd, maker_fee, taker_fee FROM fee_tiers ORDER BY tier ASC'
-    ).all<any>();
-    ladder = (results || []) as any;
-  } catch { /* table not yet migrated */ }
+  const holding = await getUserHolding(c.env.DB, user.id);
+  const row = getFeeTierByHolding(holding);
+
+  // Ladder driven purely by the holding schedule (min = QX+QKEY 개수 threshold).
+  const ladder = HOLDING_FEE_SCHEDULE.map((r) => ({
+    tier: r.tier,
+    name: r.name,
+    min_holding: r.min,          // QX+QKEY 개수 하한
+    trade_fee: r.trade_fee,      // 거래 수수료율
+    withdraw_fee: r.withdraw_fee,// 출금 수수료율
+    // legacy aliases so any old consumer still reads sane values:
+    min_volume_usd: r.min,
+    maker_fee: r.trade_fee,
+    taker_fee: r.trade_fee,
+  }));
 
   return c.json({
-    tier: tier.tier,
-    name: tier.name,
-    volume_usd_30d: tier.volume_usd_30d,
-    maker_fee: tier.maker_fee,
-    taker_fee: tier.taker_fee,
+    tier: row.tier,
+    name: row.name,
+    holding,                     // ← combined QX+QKEY (개)
+    trade_fee: row.trade_fee,    // ← 거래 수수료율
+    withdraw_fee: row.withdraw_fee, // ← 출금 수수료율
+    // legacy aliases (kept for back-compat with existing FeeTierBadge fields):
+    volume_usd_30d: holding,
+    maker_fee: row.trade_fee,
+    taker_fee: row.trade_fee,
     ladder,
   });
 });

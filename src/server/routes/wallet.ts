@@ -418,12 +418,14 @@ app.post('/withdraw', authMiddleware, rlWithdraw, requireKyc('approved'), async 
     }, 400);
   }
 
-  // ★★★★★★★ Boss's withdrawal-fee rule (2026-08-26): flat 5% fee. The user
-  //   always receives 95% of the requested amount. (Replaces the old 0.1%.)
-  // Owner request (2026-08-27): shareholders (exchange/casino) and QX>=500k
-  //   holders are EXEMPT from the withdrawal fee (fee = 0 → user gets 100%).
+  // ★★★★★★★ Owner rule (2026-08-28, supersedes all previous fee logic):
+  //   The withdrawal fee rate is decided SOLELY by the user's combined QX+QKEY
+  //   holding inside the exchange (available+locked). Ladder:
+  //     < 10k = 5.0% | >=10k = 4.5% | >=50k = 4.0% | >=100k = 3.5%
+  //     | >=500k = 3.0% | >=1,000,000 = FREE (0%).
+  //   All old tier-exemption / shareholder rules are IGNORED.
   const feeExemption = await getFeeExemption(c.env.DB, user.id);
-  const fee = feeExemption.withdrawExempt ? 0 : amount * 0.05;
+  const fee = amount * feeExemption.withdrawFeeRate;
   const withdrawalId = uuid();
   const assetSymbol = String(coin_symbol).toUpperCase();
 

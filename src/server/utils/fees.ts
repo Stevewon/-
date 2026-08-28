@@ -1,13 +1,29 @@
 // ============================================================================
-// Fee-tier resolution + fee_ledger recording  (Sprint 3 — S3-5)
+// Fee-tier resolution + fee_ledger recording
 // ----------------------------------------------------------------------------
+// OWNER RULE (2026-08-28, supersedes ALL previous fee logic):
+//   Trading fee AND withdrawal fee are decided SOLELY by the combined amount of
+//   QX + QKEY the user is holding inside the exchange wallet (available + locked).
+//   The OLD tier-exemption system (ROYAL/DIAMOND/GOLD/SILVER, exchange/casino
+//   shareholder flags, 30-day volume ladder) is COMPLETELY REMOVED / IGNORED.
+//
+//   QX+QKEY holding (개)      거래 수수료   출금 수수료
+//   ------------------------- ----------- -----------
+//   < 10,000       (기본)      0.10%        5.0%
+//   >= 10,000                  0.09%        4.5%
+//   >= 50,000                  0.08%        4.0%
+//   >= 100,000                 0.07%        3.5%
+//   >= 500,000                 0.06%        3.0%
+//   >= 1,000,000  (백만 이상)   0.00% (무료)  0.0% (무료)
+//
 // Responsibilities:
-//   1. getUserFeeTier(DB, userId) — compute the user's 30-day USD trading
-//      volume and return the matching fee_tiers row. Falls back gracefully
-//      to the per-market maker/taker defaults if fee_tiers isn't migrated
-//      yet (prod safety — matching engine must never throw because of fees).
-//   2. recordFeeLedger(...) — append a row per (trade, side) after a trade
-//      is persisted. Best-effort: ledger failures never break the trade.
+//   1. getFeeTierByHolding(qxQkey)   — pure resolver (holding → rates).
+//   2. getUserHolding(DB, userId)    — live QX+QKEY balance (available+locked).
+//   3. getFeeExemption(DB, userId)   — kept for backward-compat callers; now
+//      returns the QX+QKEY-derived withdrawal fee rate (0 only at 백만 이상).
+//   4. getUserFeeTier(DB, userId)    — kept for callers (order.ts/profile.ts);
+//      returns maker/taker = the holding-based trading fee rate.
+//   5. recordFeeLedger(...)          — unchanged.
 // ============================================================================
 
 export interface FeeTier {
@@ -15,172 +31,127 @@ export interface FeeTier {
   name: string;
   maker_fee: number;
   taker_fee: number;
-  volume_usd_30d: number;
-  exempt?: boolean;          // trading fee fully waived
-  exempt_reason?: string;    // why (exchange_holder / casino_holder / qx_trade / qx_all)
+  volume_usd_30d: number;    // kept for API back-compat; now = holding (개)
+  exempt?: boolean;          // trading fee fully waived (백만 이상)
+  exempt_reason?: string;    // 'qx_qkey_1m'
 }
 
 function uuid() { return crypto.randomUUID(); }
 
 // ============================================================================
-// Fee-exemption resolution (Owner request 2026-08-27)
-// ----------------------------------------------------------------------------
-// Four independent conditions decide whether a user is exempt from the
-// trading fee and/or the withdrawal fee:
-//   1. fee_exempt_exchange_holder  거래소 지분권자 → trade + withdrawal exempt
-//   2. fee_exempt_casino_holder    카지노 지분권자 → trade + withdrawal exempt
-//   3. QX holding 100,000 ~ 499,999 → trade fee exempt only  (auto by balance)
-//   4. QX holding >= 500,000        → trade + withdrawal exempt (auto by balance)
-//
-// The admin-set flags (1 & 2) are unconditional. The QX flags are AUTOMATIC —
-// evaluated live from the user's QX wallet (available + locked). We also honour
-// the persisted fee_exempt_qx_trade / fee_exempt_qx_all columns as a manual
-// override in case an admin wants to grant them explicitly, but the primary
-// path is the live QX-balance check so it self-adjusts as balances change.
+// QX + QKEY holding-based fee schedule (single source of truth).
 // ============================================================================
 
-export const QX_TRADE_EXEMPT_MIN = 100_000;   // 10만개 이상 → 거래수수료 면제
-export const QX_ALL_EXEMPT_MIN   = 500_000;    // 50만개 이상 → 거래+출금 면제
+/** Fee schedule row. min = inclusive lower bound of QX+QKEY holding (개). */
+export interface HoldingFeeRow {
+  tier: number;
+  name: string;
+  min: number;         // QX+QKEY holding threshold (개), inclusive
+  trade_fee: number;   // maker == taker trading fee rate (fraction, e.g. 0.001)
+  withdraw_fee: number;// withdrawal fee rate (fraction, e.g. 0.05)
+}
 
-export interface FeeExemption {
-  tradeExempt: boolean;       // trading (maker/taker) fee waived
-  withdrawExempt: boolean;    // withdrawal fee waived
-  reason: string | null;      // dominant reason (for logs/UI)
-  qxBalance: number;          // live QX holding used for the decision
+// Ordered LOW → HIGH. Resolver picks the highest `min` that <= holding.
+export const HOLDING_FEE_SCHEDULE: HoldingFeeRow[] = [
+  { tier: 0, name: 'BASIC',   min: 0,         trade_fee: 0.0010, withdraw_fee: 0.050 }, // 0.10% / 5.0%
+  { tier: 1, name: 'BRONZE',  min: 10_000,    trade_fee: 0.0009, withdraw_fee: 0.045 }, // 0.09% / 4.5%
+  { tier: 2, name: 'SILVER',  min: 50_000,    trade_fee: 0.0008, withdraw_fee: 0.040 }, // 0.08% / 4.0%
+  { tier: 3, name: 'GOLD',    min: 100_000,   trade_fee: 0.0007, withdraw_fee: 0.035 }, // 0.07% / 3.5%
+  { tier: 4, name: 'PLATINUM',min: 500_000,   trade_fee: 0.0006, withdraw_fee: 0.030 }, // 0.06% / 3.0%
+  { tier: 5, name: 'FREE',    min: 1_000_000, trade_fee: 0.0000, withdraw_fee: 0.000 }, // 무료 / 무료
+];
+
+/**
+ * Pure resolver: given a QX+QKEY holding (개), return the matching fee row.
+ * Never throws.
+ */
+export function getFeeTierByHolding(holding: number): HoldingFeeRow {
+  const h = Number.isFinite(holding) ? Math.max(0, holding) : 0;
+  let match = HOLDING_FEE_SCHEDULE[0];
+  for (const row of HOLDING_FEE_SCHEDULE) {
+    if (h >= row.min) match = row; // schedule is ascending, so last hit wins
+  }
+  return match;
 }
 
 /**
- * Resolve a user's fee-exemption status. Combines the two admin-set
- * shareholder flags with the automatic QX-holding thresholds.
- * Never throws — returns "no exemption" on any DB error (fail-closed for
- * fees, i.e. the user is charged normally).
+ * Live combined QX + QKEY holding inside the exchange (available + locked).
+ * Fail-closed to 0 (→ BASIC tier, i.e. highest fees) on any DB error.
+ */
+export async function getUserHolding(DB: D1Database, userId: string): Promise<number> {
+  try {
+    const w = await DB.prepare(
+      `SELECT COALESCE(SUM(available + locked), 0) AS h
+         FROM wallets
+        WHERE user_id = ? AND coin_symbol IN ('QX', 'QKEY')`
+    ).bind(userId).first<{ h: number }>();
+    return Number(w?.h || 0);
+  } catch (e) {
+    console.warn('[fees] getUserHolding failed, treating as 0:', e);
+    return 0;
+  }
+}
+
+// ============================================================================
+// Backward-compat wrapper: getFeeExemption
+// ----------------------------------------------------------------------------
+// Kept so wallet.ts (withdrawal) keeps working without a signature change.
+// Now driven purely by QX+QKEY holding. `withdrawExempt` is true ONLY at the
+// 백만-이상 (free) tier; otherwise the caller applies `withdrawFeeRate`.
+// ============================================================================
+export interface FeeExemption {
+  tradeExempt: boolean;        // true only at FREE tier (백만 이상)
+  withdrawExempt: boolean;     // true only at FREE tier (백만 이상)
+  withdrawFeeRate: number;     // holding-based withdrawal fee rate (fraction)
+  tradeFeeRate: number;        // holding-based trading fee rate (fraction)
+  reason: string | null;       // fee-tier name (BASIC/BRONZE/…/FREE)
+  holding: number;             // combined QX+QKEY used for the decision
+  qxBalance: number;           // alias of holding (legacy field name)
+}
+
+/**
+ * Resolve a user's fee status purely from their QX+QKEY holding.
+ * Never throws — returns BASIC (full fees) on any DB error.
  */
 export async function getFeeExemption(
   DB: D1Database,
   userId: string,
 ): Promise<FeeExemption> {
-  const none: FeeExemption = { tradeExempt: false, withdrawExempt: false, reason: null, qxBalance: 0 };
-  try {
-    const u = await DB.prepare(
-      `SELECT COALESCE(fee_exempt_exchange_holder, 0) AS ex,
-              COALESCE(fee_exempt_casino_holder, 0)   AS ca,
-              COALESCE(fee_exempt_qx_trade, 0)        AS qt,
-              COALESCE(fee_exempt_qx_all, 0)          AS qa
-         FROM users WHERE id = ?`
-    ).bind(userId).first<{ ex: number; ca: number; qt: number; qa: number }>();
-    if (!u) return none;
-
-    // Live QX holding (available + locked across the QX wallet).
-    const w = await DB.prepare(
-      `SELECT COALESCE(SUM(available + locked), 0) AS qx
-         FROM wallets WHERE user_id = ? AND coin_symbol = 'QX'`
-    ).bind(userId).first<{ qx: number }>().catch(() => ({ qx: 0 } as any));
-    const qxBalance = Number(w?.qx || 0);
-
-    // Priority: full (trade+withdraw) exemptions first.
-    if (u.ex) return { tradeExempt: true, withdrawExempt: true, reason: 'exchange_holder', qxBalance };
-    if (u.ca) return { tradeExempt: true, withdrawExempt: true, reason: 'casino_holder', qxBalance };
-    // QX >= 500k → trade + withdraw (auto, or manual override flag).
-    if (u.qa || qxBalance >= QX_ALL_EXEMPT_MIN) {
-      return { tradeExempt: true, withdrawExempt: true, reason: 'qx_all', qxBalance };
-    }
-    // QX 100k ~ 499,999 → trade only (auto, or manual override flag).
-    if (u.qt || qxBalance >= QX_TRADE_EXEMPT_MIN) {
-      return { tradeExempt: true, withdrawExempt: false, reason: 'qx_trade', qxBalance };
-    }
-    return { ...none, qxBalance };
-  } catch (e) {
-    console.warn('[fees] getFeeExemption failed, no exemption applied:', e);
-    return none;
-  }
+  const holding = await getUserHolding(DB, userId);
+  const row = getFeeTierByHolding(holding);
+  const free = row.tier === 5; // 백만 이상 → 무료
+  return {
+    tradeExempt: free,
+    withdrawExempt: free,
+    withdrawFeeRate: row.withdraw_fee,
+    tradeFeeRate: row.trade_fee,
+    reason: row.name,
+    holding,
+    qxBalance: holding,
+  };
 }
 
 /**
- * Fetch (or fall back to) the fee tier for a given user based on their
- * 30-day USD notional volume. Returns market-default fees if the
- * fee_tiers table is missing — ensures backward compat with pre-0011 DBs.
- *
- * The result is memoisable per (userId, market) for the duration of a
- * single order placement; we keep it simple and look up on each call since
- * the matching engine only calls this once per taker order.
+ * Trading-fee tier for a user, driven by QX+QKEY holding. The `fallback`
+ * argument (old market maker/taker defaults) is now IGNORED — the holding
+ * schedule is authoritative — but the parameter is kept so existing callers
+ * (order.ts, profile.ts) don't need signature changes.
  */
 export async function getUserFeeTier(
   DB: D1Database,
   userId: string,
-  fallback: { maker_fee: number; taker_fee: number },
+  _fallback: { maker_fee: number; taker_fee: number },
 ): Promise<FeeTier> {
-  // 0. Fee-exemption short-circuit (Owner request 2026-08-27). If the user is
-  //    a designated shareholder (exchange/casino) or holds enough QX, waive the
-  //    trading fee entirely. This snapshots into taker_fee_locked/maker_fee_locked
-  //    at order placement, so refunds/charges stay symmetric at 0.
-  try {
-    const exempt = await getFeeExemption(DB, userId);
-    if (exempt.tradeExempt) {
-      return {
-        tier: 0,
-        name: `EXEMPT (${exempt.reason})`,
-        maker_fee: 0,
-        taker_fee: 0,
-        volume_usd_30d: 0,
-        exempt: true,
-        exempt_reason: exempt.reason || undefined,
-      };
-    }
-  } catch (e) {
-    console.warn('[fees] exemption check failed, charging normal fee:', e);
-  }
-
-  // 1. 30-day volume (USD notional) — sum(trade.total * quote.price_usd).
-  //    `total` on trades is in the quote coin; we multiply by the coin's
-  //    current price_usd as a practical approximation. A future hardening
-  //    pass could snapshot the USD rate per trade.
-  let volumeUsd = 0;
-  try {
-    const since = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
-    const row = await DB.prepare(`
-      SELECT COALESCE(SUM(t.total * COALESCE(c.price_usd, 0)), 0) AS v
-        FROM trades t
-        JOIN markets m ON m.id = t.market_id
-        LEFT JOIN coins c ON c.symbol = m.quote_coin
-       WHERE t.created_at >= ?
-         AND (t.buyer_id = ? OR t.seller_id = ?)
-    `).bind(since, userId, userId).first<{ v: number }>();
-    volumeUsd = Number(row?.v || 0);
-  } catch (e) {
-    console.warn('[fees] volume query failed, defaulting to 0:', e);
-  }
-
-  // 2. Best matching tier (highest min_volume_usd <= volumeUsd).
-  try {
-    const tier = await DB.prepare(`
-      SELECT tier, name, maker_fee, taker_fee
-        FROM fee_tiers
-       WHERE min_volume_usd <= ?
-       ORDER BY min_volume_usd DESC
-       LIMIT 1
-    `).bind(volumeUsd).first<{
-      tier: number; name: string; maker_fee: number; taker_fee: number;
-    }>();
-    if (tier) {
-      return {
-        tier: tier.tier,
-        name: tier.name,
-        maker_fee: tier.maker_fee,
-        taker_fee: tier.taker_fee,
-        volume_usd_30d: volumeUsd,
-      };
-    }
-  } catch (e) {
-    // Table not migrated yet — quietly fall back.
-    console.warn('[fees] fee_tiers unavailable, using market defaults:', e);
-  }
-
+  const holding = await getUserHolding(DB, userId);
+  const row = getFeeTierByHolding(holding);
   return {
-    tier: 0,
-    name: 'VIP 0',
-    maker_fee: fallback.maker_fee,
-    taker_fee: fallback.taker_fee,
-    volume_usd_30d: volumeUsd,
+    tier: row.tier,
+    name: row.name,
+    maker_fee: row.trade_fee,
+    taker_fee: row.trade_fee,
+    volume_usd_30d: holding,          // now carries the holding (개) for the API
+    exempt: row.tier === 5,
+    exempt_reason: row.tier === 5 ? 'qx_qkey_1m' : undefined,
   };
 }
 
