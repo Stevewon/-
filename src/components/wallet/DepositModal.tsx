@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   X, ArrowDownLeft, Copy, Check, AlertTriangle, Info,
-  Clock, ChevronDown, ChevronUp, Shield,
+  Clock, ChevronDown, ChevronUp, Shield, Loader2,
 } from 'lucide-react';
 import { useI18n } from '../../i18n';
 import { getDepositNetworks, generateMemo, isQuantariumAsset } from '../../utils/networks';
@@ -84,6 +84,9 @@ export default function DepositModal({ open, onClose, initialCoin = 'USDT' }: Pr
   const quantarium = isQuantariumAsset(coin);
   const [chainAddress, setChainAddress] = useState('');
   const [chainAddressError, setChainAddressError] = useState('');
+  const [chainLoading, setChainLoading] = useState(false);
+  // Bumping this forces the deposit-address effect to re-run (retry button).
+  const [chainRetry, setChainRetry] = useState(0);
 
   // External (non-Quantarium) coins → real per-user derived deposit address
   // fetched from the backend. `extPending` = true while the endpoint returns
@@ -100,9 +103,16 @@ export default function DepositModal({ open, onClose, initialCoin = 'USDT' }: Pr
     setChainAddress('');
     setChainAddressError('');
     if (!open || !user || !quantarium) return;
+    setChainLoading(true);
     (async () => {
       try {
-        const res = await api.post('/chain/qta/deposit-address', {});
+        // ★ FIX (2026-08-28): send the SELECTED depositable asset (QX / QKEY)
+        //   in the request body. Previously we sent an empty {} body, so the
+        //   server's normalizeDepositableAsset() saw `undefined`, returned
+        //   null, and hard-rejected with 400 ASSET_NOT_DEPOSITABLE — which the
+        //   UI surfaced as a blank/"cannot be deposited" screen. QTA itself is
+        //   withdraw-only and never reaches here (the modal falls back to QX).
+        const res = await api.post('/chain/qta/deposit-address', { asset: coin });
         const addr = res?.data?.address?.address || '';
         if (!cancelled) {
           if (addr) setChainAddress(addr);
@@ -110,14 +120,21 @@ export default function DepositModal({ open, onClose, initialCoin = 'USDT' }: Pr
         }
       } catch (err: any) {
         if (!cancelled) {
-          setChainAddressError(
-            err?.response?.data?.message || err?.response?.data?.error || 'Deposit address unavailable',
-          );
+          const status = err?.response?.status;
+          if (status === 401) {
+            setChainAddressError(t('wallet.depositLoginRequired'));
+          } else {
+            setChainAddressError(
+              err?.response?.data?.message || err?.response?.data?.error || t('wallet.depositAddrFailed'),
+            );
+          }
         }
+      } finally {
+        if (!cancelled) setChainLoading(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [open, user, quantarium, coin]);
+  }, [open, user, quantarium, coin, chainRetry]); // eslint-disable-line
 
   // Fetch the REAL external deposit address (Phase B) for non-Quantarium coins
   // on the selected network. Idempotent server-side — re-calling returns the
@@ -584,11 +601,34 @@ export default function DepositModal({ open, onClose, initialCoin = 'USDT' }: Pr
                 }}
               >
                 <Info size={16} className="text-exchange-yellow shrink-0" style={{ marginTop: '1px' }} />
-                <span>
-                  {chainAddressError
-                    ? chainAddressError
-                    : `Generating your Quantarium (${coin}) deposit address…`}
-                </span>
+                <div style={{ flex: 1 }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    {chainLoading && !chainAddressError && (
+                      <Loader2 size={14} className="animate-spin text-exchange-yellow shrink-0" />
+                    )}
+                    <span>
+                      {chainAddressError
+                        ? chainAddressError
+                        : t('wallet.depositAddrGenerating', { coin })}
+                    </span>
+                  </span>
+                  {chainAddressError && (
+                    <button
+                      type="button"
+                      onClick={() => setChainRetry((n) => n + 1)}
+                      className="bg-exchange-yellow/15 text-exchange-yellow hover:bg-exchange-yellow/25 transition-colors"
+                      style={{
+                        marginTop: '10px',
+                        padding: '6px 14px',
+                        borderRadius: '8px',
+                        fontSize: '12px',
+                        fontWeight: 600,
+                      }}
+                    >
+                      {t('wallet.depositAddrRetry')}
+                    </button>
+                  )}
+                </div>
               </div>
             )}
 
