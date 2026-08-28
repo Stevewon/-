@@ -2641,6 +2641,98 @@ function SystemTab({ t }: any) {
           ) : <div className="text-xs text-exchange-text-third">—</div>}
         </div>
       </div>
+
+      {/* === Maintenance: 몸값(바이너리 실적) 재계산 === */}
+      <BinaryRecomputeCard t={t} />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// BinaryRecomputeCard — ADMIN maintenance action. Wipes ALL binary volume and
+// rebuilds 몸값(self_usd)/좌·우 실적 FROM STAKING SUBSCRIPTIONS ONLY (owner rule
+// 2026-08-28). Deposits / USDT->QTA buys no longer count. Requires a typed
+// confirmation ("재계산") to avoid an accidental reset. Calls
+// POST /admin/binary/recompute and shows the returned report.
+// ---------------------------------------------------------------------------
+function BinaryRecomputeCard({ t }: any) {
+  const [confirm, setConfirm] = useState('');
+  const [running, setRunning] = useState(false);
+  const [report, setReport] = useState<any>(null);
+  const CONFIRM_WORD = '재계산';
+
+  const run = async () => {
+    if (confirm.trim() !== CONFIRM_WORD) {
+      showToast(t('admin.binaryRecomputeConfirmHint') || `"${CONFIRM_WORD}" 를 정확히 입력하세요.`, 'error');
+      return;
+    }
+    setRunning(true);
+    setReport(null);
+    try {
+      const res = await api.post('/admin/binary/recompute');
+      const data = res.data || {};
+      setReport(data);
+      if (data.ok) {
+        showToast(t('admin.binaryRecomputeDone') || '몸값 재계산 완료', 'success');
+        setConfirm('');
+      } else {
+        showToast(data.error || 'fail', 'error');
+      }
+    } catch (e: any) {
+      showToast(e?.response?.data?.error || String(e?.message || e), 'error');
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return (
+    <div className="bg-exchange-card border border-exchange-sell/30 rounded-xl p-6">
+      <div className="flex items-center gap-2.5 mb-2">
+        <div className="w-9 h-9 rounded-lg bg-exchange-sell/10 flex items-center justify-center">
+          <RefreshCw size={18} className="text-exchange-sell" />
+        </div>
+        <span className="text-sm font-semibold">{t('admin.binaryRecomputeTitle') || '몸값(바이너리 실적) 재계산'}</span>
+      </div>
+      <p className="text-xs text-exchange-text-secondary leading-relaxed mb-4">
+        {t('admin.binaryRecomputeDesc') ||
+          '모든 바이너리 실적(몸값·좌·우·매칭)을 초기화하고, 스테이킹 신청 내역만으로 다시 계산합니다. 입금·QTA 매수분은 더 이상 몸값에 포함되지 않으며, 각 다리는 몸값의 2배까지만 인정됩니다. 이미 지급된 매칭보너스 이력도 재산정됩니다.'}
+      </p>
+
+      <div className="flex flex-col sm:flex-row sm:items-center gap-2 mb-3">
+        <input
+          value={confirm}
+          onChange={(e) => setConfirm(e.target.value)}
+          placeholder={`"${CONFIRM_WORD}" 입력`}
+          disabled={running}
+          className="flex-1 bg-exchange-input border border-exchange-border rounded-lg px-3 py-2 text-sm outline-none focus:border-exchange-sell/60 disabled:opacity-50"
+        />
+        <button
+          onClick={run}
+          disabled={running || confirm.trim() !== CONFIRM_WORD}
+          className="px-4 py-2 text-sm font-semibold rounded-lg bg-exchange-sell text-white disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
+        >
+          <RefreshCw size={14} className={running ? 'animate-spin' : ''} />
+          {running ? (t('common.loading') || '처리 중…') : (t('admin.binaryRecomputeRun') || '재계산 실행')}
+        </button>
+      </div>
+
+      {report && (
+        <div className={`mt-2 rounded-lg border p-3 text-xs font-mono ${
+          report.ok ? 'border-exchange-buy/30 bg-exchange-buy/5' : 'border-exchange-sell/30 bg-exchange-sell/5'
+        }`}>
+          {report.ok ? (
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+              <span className="text-exchange-text-third">users_reset</span><span className="text-right tabular-nums">{report.users_reset}</span>
+              <span className="text-exchange-text-third">self_seeded (몸값 seed)</span><span className="text-right tabular-nums">{report.self_seeded}</span>
+              <span className="text-exchange-text-third">positions_rolled</span><span className="text-right tabular-nums">{report.positions_rolled}</span>
+              <span className="text-exchange-text-third">bonuses_cleared</span><span className="text-right tabular-nums">{report.bonuses_cleared}</span>
+              <span className="text-exchange-text-third">qta_price</span><span className="text-right tabular-nums">{report.qta_price}</span>
+            </div>
+          ) : (
+            <span className="text-exchange-sell">{report.error || 'fail'}</span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
