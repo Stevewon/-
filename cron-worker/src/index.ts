@@ -756,6 +756,86 @@ export default {
       });
     }
 
+    // ------------------------------------------------------------------------
+    // /binary-reset — clear WRONG binary-tree links created by the OLD policy
+    //   (signup referral was force-used as the binary parent). Owner rule
+    //   (2026-08-28): the staking binary tree is SEPARATE from signup referral
+    //   and its sponsor is chosen ONCE on the member's FIRST stake. So all the
+    //   auto-linked binary_parent_id / binary_leg rows must be cleared, letting
+    //   members re-choose their sponsor via the staking screen.
+    //
+    //   IMPORTANT: self_usd (몸값 — already-staked value) is PRESERVED. Only the
+    //   parent link, the leg, and the rolled-up left/right/matched are reset.
+    //
+    //   Safety:
+    //     • dry-run by default — shows what WOULD change. Pass
+    //       ?confirm=RESET_ALL_BINARY to actually write.
+    //     • ?user=<id> limits the reset to a single user (still needs confirm).
+    // ------------------------------------------------------------------------
+    if (url.pathname === '/binary-reset') {
+      const confirm = url.searchParams.get('confirm') === 'RESET_ALL_BINARY';
+      const onlyUser = (url.searchParams.get('user') || '').trim();
+      const out: any = { note: 'binary tree reset (signup-referral links cleared; self_usd preserved)', dry_run: !confirm };
+      try {
+        // Candidates = users currently linked into the binary tree.
+        const where = onlyUser
+          ? `id = ?`
+          : `binary_parent_id IS NOT NULL OR binary_leg IS NOT NULL`;
+        const stmt = onlyUser
+          ? env.DB.prepare(`SELECT id, nickname, binary_parent_id, binary_leg FROM users WHERE ${where}`).bind(onlyUser)
+          : env.DB.prepare(`SELECT id, nickname, binary_parent_id, binary_leg FROM users WHERE ${where} LIMIT 500`);
+        const { results } = await stmt.all<any>();
+        const targets = results || [];
+        out.affected_count = targets.length;
+        out.affected = targets.map((t: any) => ({ id: t.id, nickname: t.nickname, was_parent: t.binary_parent_id, was_leg: t.binary_leg }));
+
+        if (confirm && targets.length > 0) {
+          const batch: any[] = [];
+          for (const t of targets) {
+            // Clear the user's parent link + leg.
+            batch.push(
+              env.DB.prepare(
+                `UPDATE users SET binary_parent_id = NULL, binary_leg = NULL WHERE id = ?`,
+              ).bind(t.id),
+            );
+            // Zero the rolled-up downline volume but KEEP self_usd (몸값).
+            batch.push(
+              env.DB.prepare(
+                `UPDATE binary_volume
+                    SET left_usd = 0, right_usd = 0, matched_usd = 0,
+                        updated_at = datetime('now')
+                  WHERE user_id = ?`,
+              ).bind(t.id),
+            );
+          }
+          // Also zero the rolled-up left/right/matched for EVERY parent that had
+          // downline volume attributed (self_usd preserved), so stale sponsor
+          // totals don't linger. Simplest safe approach: zero all left/right/
+          // matched across binary_volume (self_usd untouched); real volume will
+          // rebuild as members re-pick sponsors and legs get assigned.
+          if (!onlyUser) {
+            batch.push(
+              env.DB.prepare(
+                `UPDATE binary_volume
+                    SET left_usd = 0, right_usd = 0, matched_usd = 0,
+                        updated_at = datetime('now')`,
+              ),
+            );
+          }
+          await env.DB.batch(batch);
+          out.written = true;
+        } else {
+          out.written = false;
+          if (!confirm) out.hint = 'Add &confirm=RESET_ALL_BINARY to apply.';
+        }
+      } catch (e: any) {
+        out.error = String(e?.message || e);
+      }
+      return new Response(JSON.stringify(out, null, 2), {
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+
     // Read-only deposit diagnostic: latest qta_deposits rows + status counts,
     // plus (optionally) a LIVE explorer read for one address so we can see
     // whether a specific inbound transfer is on-chain but not yet detected.
@@ -884,7 +964,7 @@ export default {
       JSON.stringify({
         service: 'quantaex-cron',
         schedules: ['*/5 * * * * (price-alert tick)', '0 3 * * * (daily D1 backup)'],
-        endpoints: ['/run', '/migrate', '/backup', '/backup/prune', '/qta/withdrawals', '/qta/scan', '/qta/tick', '/qta/sweep', '/qta/reissue-address', '/qta/env-check', '/qta/deposits-debug', '/binary-debug', '/ext/scan', '/ext/tick', '/ext/sweep', '/ext/env-check'],
+        endpoints: ['/run', '/migrate', '/backup', '/backup/prune', '/qta/withdrawals', '/qta/scan', '/qta/tick', '/qta/sweep', '/qta/reissue-address', '/qta/env-check', '/qta/deposits-debug', '/binary-debug', '/binary-reset', '/ext/scan', '/ext/tick', '/ext/sweep', '/ext/env-check'],
       }),
       { headers: { 'content-type': 'application/json' } }
     );
