@@ -60,8 +60,9 @@ interface BinaryTree {
     right_usd: number;
     total_usd: number;
     matched_usd: number;
-    pending_left_usd: number;
-    pending_right_usd: number;
+    /** @deprecated park/pending retired 2026-08-28 — always 0, kept for BC. */
+    pending_left_usd?: number;
+    pending_right_usd?: number;
     cap_usd: number;
   };
   left_members: BinaryMember[];
@@ -291,22 +292,12 @@ export default function EarnPage() {
               <div className="text-[20px] font-bold text-exchange-buy tabular-nums mt-1">
                 {fmtUsd(binary.volume.left_usd)}
               </div>
-              {binary.volume.pending_left_usd > 0 && (
-                <div className="text-[11px] text-exchange-text-third mt-1">
-                  대기 {fmtUsd(binary.volume.pending_left_usd)}
-                </div>
-              )}
             </div>
             <div className="bg-exchange-card border border-exchange-border rounded-2xl p-4">
               <div className="text-[12px] text-exchange-text-third">우(Right) 볼륨</div>
               <div className="text-[20px] font-bold text-exchange-sell tabular-nums mt-1">
                 {fmtUsd(binary.volume.right_usd)}
               </div>
-              {binary.volume.pending_right_usd > 0 && (
-                <div className="text-[11px] text-exchange-text-third mt-1">
-                  대기 {fmtUsd(binary.volume.pending_right_usd)}
-                </div>
-              )}
             </div>
           </div>
 
@@ -782,6 +773,13 @@ function SubscribeModal({ product, qtaBalance, qtaPrice, onClose, onDone }: {
   const [usd, setUsd] = useState(String(product.min_usd));
   const [busy, setBusy] = useState(false);
 
+  // Sponsor 2× 몸값 hard-cap headroom — how much of this stake will actually
+  // roll up before the over-cap remainder is DROPPED (owner rule 2026-08-28).
+  const [headroom, setHeadroom] = useState<{
+    uncapped: boolean; headroom_usd: number | null;
+    sponsor_cap_usd: number; sponsor_downline_usd: number; leg_assigned: boolean;
+  } | null>(null);
+
   useEffect(() => {
     document.body.style.overflow = 'hidden';
     const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -789,11 +787,25 @@ function SubscribeModal({ product, qtaBalance, qtaPrice, onClose, onDone }: {
     return () => { document.body.style.overflow = ''; window.removeEventListener('keydown', onEsc); };
   }, [onClose]);
 
+  useEffect(() => {
+    let alive = true;
+    api.get('/earn/binary/stake-headroom')
+      .then((r) => { if (alive) setHeadroom(r.data); })
+      .catch(() => { if (alive) setHeadroom(null); });
+    return () => { alive = false; };
+  }, []);
+
   const targetUsd = parseFloat(usd) || 0;
   const requiredQta = usdToQta(targetUsd, qtaPrice);
   const inBand = targetUsd >= product.min_usd && targetUsd <= product.max_usd;
   const enough = requiredQta <= qtaBalance;
   const valid = targetUsd > 0 && inBand && enough;
+
+  // Capped only when the user is placed under a sponsor with an assigned leg.
+  const capped = !!headroom && !headroom.uncapped && headroom.headroom_usd != null;
+  const headroomUsd = capped ? (headroom!.headroom_usd as number) : Infinity;
+  const overCap = capped && targetUsd > headroomUsd;
+  const droppedUsd = overCap ? targetUsd - headroomUsd : 0;
 
   const totalDividendUsd = targetUsd * product.total_return;
   const totalDividendQta = totalDividendUsd / qtaPrice;
@@ -801,6 +813,18 @@ function SubscribeModal({ product, qtaBalance, qtaPrice, onClose, onDone }: {
 
   const submit = async () => {
     if (!valid) return;
+    // Over-cap warning popup (owner rule 2026-08-28): the portion above the
+    // sponsor's remaining headroom will NOT count toward matching — it is
+    // dropped. Let the user confirm or go back and resize the principal.
+    if (overCap) {
+      const ok = window.confirm(
+        t('earn.capOverConfirm', {
+          headroom: `$${Math.floor(headroomUsd).toLocaleString('en-US')}`,
+          dropped: `$${Math.ceil(droppedUsd).toLocaleString('en-US')}`,
+        }),
+      );
+      if (!ok) return;
+    }
     setBusy(true);
     try {
       const res = await api.post('/earn/subscribe', { product_id: product.id, amount_usd: targetUsd });
@@ -889,6 +913,33 @@ function SubscribeModal({ product, qtaBalance, qtaPrice, onClose, onDone }: {
             </div>
           </div>
 
+          {/* Sponsor 2× 몸값 cap headroom — informational when within limit,
+              a hard warning when the target exceeds the sponsor's headroom
+              (over-cap volume is DROPPED, owner rule 2026-08-28). */}
+          {capped && !overCap && headroomUsd > 0 && (
+            <div className="rounded-xl bg-exchange-input border border-exchange-border p-3 text-[11px] text-exchange-text-secondary flex items-start gap-2">
+              <Scale size={13} className="text-exchange-text-third mt-0.5 shrink-0" />
+              <span>{t('earn.capHeadroomHint', {
+                headroom: `$${Math.floor(headroomUsd).toLocaleString('en-US')}`,
+              })}</span>
+            </div>
+          )}
+          {capped && headroomUsd <= 0 && (
+            <div className="rounded-xl bg-red-500/10 border border-red-500/40 p-3 text-[11px] text-red-300 flex items-start gap-2">
+              <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+              <span>{t('earn.capHeadroomFull')}</span>
+            </div>
+          )}
+          {overCap && headroomUsd > 0 && (
+            <div className="rounded-xl bg-red-500/10 border border-red-500/40 p-3 text-[11px] text-red-300 flex items-start gap-2">
+              <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+              <span>{t('earn.capOverWarn', {
+                headroom: `$${Math.floor(headroomUsd).toLocaleString('en-US')}`,
+                dropped: `$${Math.ceil(droppedUsd).toLocaleString('en-US')}`,
+              })}</span>
+            </div>
+          )}
+
           <div className="rounded-xl bg-exchange-yellow/10 border border-exchange-yellow/30 p-3 text-[11px] text-exchange-text-secondary flex items-start gap-2">
             <Lock size={13} className="text-exchange-yellow mt-0.5 shrink-0" />
             <span>{t('earn.lockWarnDays', { days: product.term_days })}</span>
@@ -902,6 +953,7 @@ function SubscribeModal({ product, qtaBalance, qtaPrice, onClose, onDone }: {
             {busy ? <Loader2 size={16} className="animate-spin inline" />
               : !inBand ? t('earn.outOfRange')
               : !enough ? t('earn.insufficientQtaMax', { max: formatAmount(maxUsdForBalance) })
+              : overCap ? t('earn.confirmStakeOverCap')
               : t('earn.confirmStake')}
           </button>
         </div>

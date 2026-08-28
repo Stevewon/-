@@ -150,6 +150,80 @@ app.get('/products', async (c) => {
 });
 
 // --------------------------------------------------------------------------
+// GET /binary/stake-headroom — how much of THIS user's next stake will actually
+// count toward their DIRECT sponsor's binary downline before hitting the hard
+// 2× 몸값 cap. Drives the stake-entry warning popup ("얼마까지 가능").
+// ----------------------------------------------------------------------------
+// Owner rule (2026-08-28): the 2× cap is a HARD ceiling — over-cap volume is
+// DROPPED at roll-up (no parking). So when a member stakes $X, only the portion
+// that fits under the sponsor's remaining headroom on the member's assigned leg
+// will ever match; the rest is lost. We surface that headroom here so the UI
+// can warn the user to size their principal to fit.
+//
+// Response:
+//   has_sponsor      : is this user placed under a sponsor at all?
+//   leg_assigned     : has the sponsor chosen this user's L/R leg yet?
+//   sponsor_self_usd : sponsor's own 몸값
+//   sponsor_cap_usd  : sponsor's downline cap = 2 × self_usd
+//   sponsor_downline_usd : sponsor's current left+right total
+//   headroom_usd     : remaining room = max(0, cap - downline)  ← "얼마까지 가능"
+//   uncapped         : true if there is effectively no binding cap for this
+//                      stake (no sponsor, or leg not yet assigned so nothing
+//                      rolls up yet) — UI shows no ceiling warning.
+// --------------------------------------------------------------------------
+app.get('/binary/stake-headroom', authMiddleware, async (c) => {
+  const user = c.get('user');
+
+  // Who is this user's direct sponsor, and on which leg are they placed?
+  const me = await c.env.DB.prepare(
+    `SELECT binary_parent_id, binary_leg FROM users WHERE id = ?`
+  ).bind(user.id).first<any>().catch(() => null);
+
+  const sponsorId: string | null = me?.binary_parent_id || null;
+  const legRaw = me?.binary_leg;
+  const legAssigned = legRaw === 'L' || legRaw === 'R';
+
+  // Top-level user (no sponsor) OR leg not yet chosen => nothing rolls up to a
+  // parent yet, so there is no binding downline cap for this stake.
+  if (!sponsorId || sponsorId === user.id || !legAssigned) {
+    return c.json({
+      has_sponsor: !!(sponsorId && sponsorId !== user.id),
+      leg_assigned: legAssigned,
+      uncapped: true,
+      headroom_usd: null,
+      sponsor_self_usd: 0,
+      sponsor_cap_usd: 0,
+      sponsor_downline_usd: 0,
+      leg: legAssigned ? legRaw : null,
+    });
+  }
+
+  // Sponsor's downline volume + own 몸값 drive the hard 2× cap.
+  const vol = await c.env.DB.prepare(
+    `SELECT left_usd, right_usd, self_usd FROM binary_volume WHERE user_id = ?`
+  ).bind(sponsorId).first<any>().catch(() => null);
+
+  const selfUsd = Number(vol?.self_usd || 0);
+  const left = Number(vol?.left_usd || 0);
+  const right = Number(vol?.right_usd || 0);
+  const downlineUsd = left + right;
+  const capUsd = selfUsd * 2;                       // 2× 몸값 hard cap
+  const headroomUsd = Math.max(0, capUsd - downlineUsd);
+
+  return c.json({
+    has_sponsor: true,
+    leg_assigned: true,
+    uncapped: false,
+    leg: legRaw,
+    sponsor_self_usd: selfUsd,
+    sponsor_cap_usd: capUsd,
+    sponsor_downline_usd: downlineUsd,
+    sponsor_leg_usd: legRaw === 'R' ? right : left, // current volume on my leg
+    headroom_usd: headroomUsd,                      // ← "얼마까지 가능" (USD)
+  });
+});
+
+// --------------------------------------------------------------------------
 // GET /positions — user's active positions with live accrual (in USD + QTA).
 // --------------------------------------------------------------------------
 app.get('/positions', authMiddleware, async (c) => {
