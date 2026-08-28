@@ -757,6 +757,91 @@ export default {
     }
 
     // ------------------------------------------------------------------------
+    // /stake-reset — FULLY reset a SINGLE member's staking so they look like a
+    //   brand-new (never-staked) member. Used for testing the new sponsor flow.
+    //   ?user=<nickname|email|id>  (required)   +  &confirm=RESET_STAKE to apply
+    //   Actions (all inside one D1 batch):
+    //     1) return every ACTIVE position's locked QTA principal back to
+    //        available (locked -= sum, available += sum) on the QTA wallet;
+    //     2) DELETE all staking_positions for the user;
+    //     3) DELETE the user's binary_volume row (self_usd → gone / 0);
+    //     4) clear binary_parent_id / binary_leg on the user.
+    //   Free-signup referral relationships (referrals table) are NOT touched.
+    // ------------------------------------------------------------------------
+    if (url.pathname === '/stake-reset') {
+      const who = (url.searchParams.get('user') || '').trim();
+      const confirm = url.searchParams.get('confirm') === 'RESET_STAKE';
+      const out: any = { note: 'full staking reset for one member (referrals untouched)', dry_run: !confirm };
+      try {
+        if (!who) {
+          out.error = 'user param required (?user=nickname|email|id)';
+          return new Response(JSON.stringify(out, null, 2), { headers: { 'content-type': 'application/json' } });
+        }
+        // Resolve the target user unambiguously.
+        const like = `%${who}%`;
+        const { results: matches } = await env.DB.prepare(
+          `SELECT id, nickname, email FROM users
+            WHERE id = ? OR email = ? OR nickname = ? OR nickname LIKE ? OR email LIKE ?
+            LIMIT 5`,
+        ).bind(who, who, who, like, like).all<any>();
+        if (!matches || matches.length === 0) {
+          out.error = 'no matching user';
+          return new Response(JSON.stringify(out, null, 2), { headers: { 'content-type': 'application/json' } });
+        }
+        if (matches.length > 1) {
+          out.error = 'ambiguous — multiple users matched; pass the exact id';
+          out.candidates = matches;
+          return new Response(JSON.stringify(out, null, 2), { headers: { 'content-type': 'application/json' } });
+        }
+        const u = matches[0];
+        out.user = { id: u.id, nickname: u.nickname, email: u.email };
+
+        // How much QTA is currently locked by this user's ACTIVE positions?
+        const lockRow = await env.DB.prepare(
+          `SELECT COUNT(*) AS n,
+                  COALESCE(SUM(COALESCE(principal_qta, principal, 0)), 0) AS locked_qta,
+                  COALESCE(SUM(COALESCE(principal_usd, 0)), 0) AS principal_usd
+             FROM staking_positions
+            WHERE user_id = ? AND status = 'active'`,
+        ).bind(u.id).first<any>();
+        const activeN = Number(lockRow?.n || 0);
+        const lockedQta = Number(lockRow?.locked_qta || 0);
+        out.active_positions = activeN;
+        out.locked_qta_to_return = lockedQta;
+        out.principal_usd = Number(lockRow?.principal_usd || 0);
+
+        if (confirm) {
+          const batch: any[] = [];
+          // 1) return locked QTA principal to available (only if any).
+          if (lockedQta > 0) {
+            batch.push(
+              env.DB.prepare(
+                `UPDATE wallets
+                    SET locked = MAX(0, COALESCE(locked,0) - ?),
+                        available = COALESCE(available,0) + ?
+                  WHERE user_id = ? AND coin_symbol = 'QTA'`,
+              ).bind(lockedQta, lockedQta, u.id),
+            );
+          }
+          // 2) delete all staking positions.
+          batch.push(env.DB.prepare(`DELETE FROM staking_positions WHERE user_id = ?`).bind(u.id));
+          // 3) delete the binary_volume row (self_usd gone → truly zero).
+          batch.push(env.DB.prepare(`DELETE FROM binary_volume WHERE user_id = ?`).bind(u.id));
+          // 4) clear binary placement on the user.
+          batch.push(env.DB.prepare(`UPDATE users SET binary_parent_id = NULL, binary_leg = NULL WHERE id = ?`).bind(u.id));
+          await env.DB.batch(batch);
+          out.written = true;
+        } else {
+          out.written = false;
+          out.hint = 'Add &confirm=RESET_STAKE to apply.';
+        }
+      } catch (e: any) {
+        out.error = String(e?.message || e);
+      }
+      return new Response(JSON.stringify(out, null, 2), { headers: { 'content-type': 'application/json' } });
+    }
+
+    // ------------------------------------------------------------------------
     // /binary-reset — clear WRONG binary-tree links created by the OLD policy
     //   (signup referral was force-used as the binary parent). Owner rule
     //   (2026-08-28): the staking binary tree is SEPARATE from signup referral
@@ -964,7 +1049,7 @@ export default {
       JSON.stringify({
         service: 'quantaex-cron',
         schedules: ['*/5 * * * * (price-alert tick)', '0 3 * * * (daily D1 backup)'],
-        endpoints: ['/run', '/migrate', '/backup', '/backup/prune', '/qta/withdrawals', '/qta/scan', '/qta/tick', '/qta/sweep', '/qta/reissue-address', '/qta/env-check', '/qta/deposits-debug', '/binary-debug', '/binary-reset', '/ext/scan', '/ext/tick', '/ext/sweep', '/ext/env-check'],
+        endpoints: ['/run', '/migrate', '/backup', '/backup/prune', '/qta/withdrawals', '/qta/scan', '/qta/tick', '/qta/sweep', '/qta/reissue-address', '/qta/env-check', '/qta/deposits-debug', '/binary-debug', '/binary-reset', '/stake-reset', '/ext/scan', '/ext/tick', '/ext/sweep', '/ext/env-check'],
       }),
       { headers: { 'content-type': 'application/json' } }
     );
