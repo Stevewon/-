@@ -21,6 +21,7 @@ import {
   deriveAccountFromMnemonic,
   isValidMnemonic,
   toChecksumAddress,
+  toHex,
   signSphincsTx,
   verifyMnemonicMatchesHotWallet,
   type SphincsAccount,
@@ -437,6 +438,21 @@ export default {
         headers: { 'content-type': 'application/json' },
       });
     }
+    if (url.pathname === '/qta/reissue-address') {
+      // Re-issue a user's QX/QKEY deposit address onto a FRESH, recoverable HD
+      // index (current mnemonic). Fixes users whose old address was derived
+      // under a since-changed mnemonic (unsweepable). Usage:
+      //   /qta/reissue-address?user=<uuid>[&force=1]
+      // Safe by default: refuses if the user's current index already matches
+      // the live mnemonic (nothing to fix) unless force=1 is passed.
+      const userId = (url.searchParams.get('user') || '').trim();
+      const force = url.searchParams.get('force') === '1';
+      const result = await reissueQtaDepositAddress(env, userId, force);
+      return new Response(JSON.stringify(result, null, 2), {
+        headers: { 'content-type': 'application/json' },
+        status: result.ok ? 200 : 400,
+      });
+    }
     if (url.pathname === '/ext/scan') {
       // Manual external-deposit scan (also runs on every /5 tick).
       const result = await scanExtDeposits(env as any);
@@ -771,7 +787,7 @@ export default {
       JSON.stringify({
         service: 'quantaex-cron',
         schedules: ['*/5 * * * * (price-alert tick)', '0 3 * * * (daily D1 backup)'],
-        endpoints: ['/run', '/migrate', '/backup', '/backup/prune', '/qta/withdrawals', '/qta/scan', '/qta/tick', '/qta/sweep', '/qta/env-check', '/qta/deposits-debug', '/ext/scan', '/ext/tick', '/ext/sweep', '/ext/env-check'],
+        endpoints: ['/run', '/migrate', '/backup', '/backup/prune', '/qta/withdrawals', '/qta/scan', '/qta/tick', '/qta/sweep', '/qta/reissue-address', '/qta/env-check', '/qta/deposits-debug', '/ext/scan', '/ext/tick', '/ext/sweep', '/ext/env-check'],
       }),
       { headers: { 'content-type': 'application/json' } }
     );
@@ -1282,6 +1298,142 @@ function qtaSweepEnabled(env: Env): boolean {
   if (driver !== 'real' && driver !== 'live') return false;
   if (String(env.QTA_SWEEP_ENABLED ?? 'true').toLowerCase() === 'false') return false;
   return Boolean(env.QTA_HD_WALLET_MNEMONIC && env.QTA_RPC_URL);
+}
+
+interface QtaReissueResult {
+  ok: boolean;
+  reason?: string;
+  user_id?: string;
+  network?: string;
+  old_index?: number | null;
+  old_address?: string | null;
+  new_index?: number;
+  new_address?: string;
+  matched_before?: boolean; // did the OLD index already match the live mnemonic?
+  forced?: boolean;
+}
+
+/**
+ * Re-issue a user's QX/QKEY deposit address on a FRESH HD index derived from
+ * the CURRENT mnemonic, so future deposits land in a recoverable (sweepable)
+ * address. Fixes users stranded on an old (since-rotated) mnemonic index.
+ *
+ * Steps (atomic via D1 batch):
+ *   1. Look up the user's current qta_hd_indexes row + active qta_addresses row.
+ *   2. Re-derive the current index under the live mnemonic. If it already
+ *      matches the stored address, the user is fine — refuse unless force=1.
+ *   3. Allocate a NEW monotonic index (MAX+1), derive it, HARD-verify the
+ *      derived address (must be a fresh 0x…), then:
+ *        - UPDATE qta_hd_indexes SET address_index=new, address=newAddr
+ *        - UPDATE qta_addresses SET is_active=0 for the old active row(s)
+ *        - INSERT a new active qta_addresses row for the new address
+ *
+ * On-chain funds already sitting in the OLD address are NOT moved by this call
+ * (they may be unrecoverable if the old index was on a lost mnemonic). This
+ * only fixes the GO-FORWARD deposit address.
+ */
+async function reissueQtaDepositAddress(
+  env: Env,
+  userId: string,
+  force: boolean,
+): Promise<QtaReissueResult> {
+  const network = (env.QTA_NETWORK || 'qta-mainnet').trim() || 'qta-mainnet';
+  if (!/^[0-9a-fA-F-]{36}$/.test(userId)) {
+    return { ok: false, reason: 'invalid_user_id (expected uuid via ?user=)' };
+  }
+  const mnemonic = String(env.QTA_HD_WALLET_MNEMONIC || '').trim();
+  if (!mnemonic || !isValidMnemonic(mnemonic)) {
+    return { ok: false, reason: 'mnemonic_missing_or_invalid' };
+  }
+
+  // 1. Current index + active address.
+  const idxRow = await env.DB.prepare(
+    'SELECT address_index FROM qta_hd_indexes WHERE user_id = ?',
+  ).bind(userId).first<{ address_index: number }>();
+  const oldIndex = idxRow && Number.isInteger(idxRow.address_index)
+    ? Number(idxRow.address_index)
+    : null;
+
+  const activeAddrRow = await env.DB.prepare(
+    `SELECT id, address FROM qta_addresses
+     WHERE user_id = ? AND network = ? AND is_active = 1
+     ORDER BY created_at DESC LIMIT 1`,
+  ).bind(userId, network).first<{ id: string; address: string }>();
+  const oldAddress = activeAddrRow?.address ?? null;
+
+  // 2. Does the OLD index already reproduce under the live mnemonic?
+  let matchedBefore = false;
+  if (oldIndex !== null && oldAddress) {
+    try {
+      const chk = deriveAccountFromMnemonic(mnemonic, oldIndex);
+      matchedBefore = chk.address.toLowerCase() === oldAddress.toLowerCase();
+    } catch { matchedBefore = false; }
+  }
+  if (matchedBefore && !force) {
+    return {
+      ok: false,
+      reason: 'already_recoverable (current index matches live mnemonic; pass &force=1 to reissue anyway)',
+      user_id: userId,
+      network,
+      old_index: oldIndex,
+      old_address: oldAddress,
+      matched_before: true,
+    };
+  }
+
+  // 3. Allocate a fresh monotonic index (MAX+1, >=1) and derive it.
+  const maxRow = await env.DB.prepare(
+    'SELECT COALESCE(MAX(address_index), 0) AS mx FROM qta_hd_indexes',
+  ).first<{ mx: number }>();
+  const newIndex = Math.max(1, Number(maxRow?.mx ?? 0) + 1);
+
+  let newAcct: SphincsAccount;
+  try {
+    newAcct = deriveAccountFromMnemonic(mnemonic, newIndex);
+  } catch (e) {
+    return { ok: false, reason: 'derivation_failed: ' + String((e as Error)?.message || e) };
+  }
+  const newAddress = newAcct.address;
+  // HARD-verify the new address is a well-formed, distinct 0x…40hex address.
+  if (!/^0x[0-9a-fA-F]{40}$/.test(newAddress)) {
+    return { ok: false, reason: 'derived_address_malformed', new_index: newIndex };
+  }
+  if (oldAddress && newAddress.toLowerCase() === oldAddress.toLowerCase()) {
+    return { ok: false, reason: 'derived_same_address (unexpected)', new_index: newIndex };
+  }
+  const newPubkey = '0x' + toHex(newAcct.publicKey);
+  const newAddrRowId = crypto.randomUUID();
+
+  // Atomic swap: update index row, deactivate old address rows, insert new one.
+  const stmts = [
+    env.DB.prepare(
+      `INSERT INTO qta_hd_indexes (user_id, address_index, address, created_at)
+       VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(user_id) DO UPDATE SET address_index = excluded.address_index,
+                                          address       = excluded.address`,
+    ).bind(userId, newIndex, newAddress),
+    env.DB.prepare(
+      `UPDATE qta_addresses SET is_active = 0
+       WHERE user_id = ? AND network = ? AND is_active = 1`,
+    ).bind(userId, network),
+    env.DB.prepare(
+      `INSERT INTO qta_addresses (id, user_id, address, pubkey, derivation, network, is_active)
+       VALUES (?, ?, ?, ?, ?, ?, 1)`,
+    ).bind(newAddrRowId, userId, newAddress, newPubkey, `sphincs-hd-wallet-v1/${newIndex}`, network),
+  ];
+  await env.DB.batch(stmts);
+
+  return {
+    ok: true,
+    user_id: userId,
+    network,
+    old_index: oldIndex,
+    old_address: oldAddress,
+    new_index: newIndex,
+    new_address: newAddress,
+    matched_before: matchedBefore,
+    forced: force,
+  };
 }
 
 // The MAIN wallet every deposit must ultimately land in. Priority:
