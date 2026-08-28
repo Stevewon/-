@@ -292,12 +292,14 @@ export default function EarnPage() {
               <div className="text-[20px] font-bold text-exchange-buy tabular-nums mt-1">
                 {fmtUsd(binary.volume.left_usd)}
               </div>
+              <div className="text-[10px] text-exchange-text-third mt-1">라인 한도 {fmtUsd(binary.volume.cap_usd)}</div>
             </div>
             <div className="bg-exchange-card border border-exchange-border rounded-2xl p-4">
               <div className="text-[12px] text-exchange-text-third">우(Right) 볼륨</div>
               <div className="text-[20px] font-bold text-exchange-sell tabular-nums mt-1">
                 {fmtUsd(binary.volume.right_usd)}
               </div>
+              <div className="text-[10px] text-exchange-text-third mt-1">라인 한도 {fmtUsd(binary.volume.cap_usd)}</div>
             </div>
           </div>
 
@@ -312,7 +314,7 @@ export default function EarnPage() {
               </div>
               <div className="text-right text-[12px] text-exchange-text-third leading-relaxed">
                 <div>본인 몸값 <span className="text-exchange-text font-semibold">{fmtUsd(binary.volume.self_usd)}</span></div>
-                <div>한도(2배) <span className="text-exchange-text font-semibold">{fmtUsd(binary.volume.cap_usd)}</span></div>
+                <div>라인당 한도(2배) <span className="text-exchange-text font-semibold">{fmtUsd(binary.volume.cap_usd)}</span></div>
                 <div>기매칭 <span className="text-exchange-text font-semibold">{fmtUsd(binary.volume.matched_usd)}</span></div>
               </div>
             </div>

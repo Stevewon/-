@@ -40,21 +40,27 @@ export async function placeInBinaryTree(
     return { leg: null, capped: false, self_usd: 0, downline_usd: 0 };
   }
 
-  // Read the sponsor's own deposit total for the 2x downline-cap warning flag.
+  // Read the sponsor's own deposit total for the PER-LEG 2× cap warning flag.
   let selfUsd = 0;
   let downlineUsd = 0;
+  let left = 0;
+  let right = 0;
   try {
     const vol = await db.prepare(
       `SELECT left_usd, right_usd, self_usd FROM binary_volume WHERE user_id = ?`
     ).bind(sponsorId).first();
-    const left = Number(vol?.left_usd || 0);
-    const right = Number(vol?.right_usd || 0);
+    left = Number(vol?.left_usd || 0);
+    right = Number(vol?.right_usd || 0);
     selfUsd = Number(vol?.self_usd || 0);
     downlineUsd = left + right;
   } catch { /* volume table might be empty */ }
 
+  // Per-leg cap (owner rule 2026-08-28 revised): each leg ≤ 2 × self_usd.
+  // At signup the leg is not chosen yet, so we only flag "capped" when BOTH
+  // legs are already full — otherwise the sponsor can still place this member
+  // on whichever leg still has room.
   const cap = selfUsd * DOWNLINE_CAP_MULTIPLE;
-  const capped = selfUsd > 0 && downlineUsd >= cap;
+  const capped = selfUsd > 0 && left >= cap && right >= cap;
 
   // Attach to the sponsor but DO NOT assign a leg — the sponsor picks it later.
   try {

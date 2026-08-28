@@ -152,21 +152,24 @@ app.get('/products', async (c) => {
 // --------------------------------------------------------------------------
 // GET /binary/stake-headroom — how much of THIS user's next stake will actually
 // count toward their DIRECT sponsor's binary downline before hitting the hard
-// 2× 몸값 cap. Drives the stake-entry warning popup ("얼마까지 가능").
+// PER-LEG 2× 몸값 cap. Drives the stake-entry warning popup ("얼마까지 가능").
 // ----------------------------------------------------------------------------
-// Owner rule (2026-08-28): the 2× cap is a HARD ceiling — over-cap volume is
-// DROPPED at roll-up (no parking). So when a member stakes $X, only the portion
-// that fits under the sponsor's remaining headroom on the member's assigned leg
-// will ever match; the rest is lost. We surface that headroom here so the UI
-// can warn the user to size their principal to fit.
+// Owner rule (2026-08-28, revised): the 2× cap is a HARD, PER-LEG ceiling —
+// each of the sponsor's legs may hold up to 2 × self_usd INDEPENDENTLY. When a
+// member stakes $X, it rolls up to the ONE leg they are placed on; only the
+// portion that fits under THAT leg's remaining room matches — the rest is
+// DROPPED (no parking). We surface that leg's room here so the UI can warn the
+// user to size their principal to fit (e.g. 몸값 $1,000 → each leg up to $2,000;
+// if my leg already holds $2,100 worth, only $2,000 was ever admissible).
 //
 // Response:
 //   has_sponsor      : is this user placed under a sponsor at all?
 //   leg_assigned     : has the sponsor chosen this user's L/R leg yet?
+//   leg              : which leg this user is on ('L' | 'R' | null)
 //   sponsor_self_usd : sponsor's own 몸값
-//   sponsor_cap_usd  : sponsor's downline cap = 2 × self_usd
-//   sponsor_downline_usd : sponsor's current left+right total
-//   headroom_usd     : remaining room = max(0, cap - downline)  ← "얼마까지 가능"
+//   sponsor_cap_usd  : per-leg cap = 2 × self_usd
+//   sponsor_leg_usd  : current volume already on MY leg
+//   headroom_usd     : remaining room on MY leg = max(0, cap - leg_usd)  ← "얼마까지 가능"
 //   uncapped         : true if there is effectively no binding cap for this
 //                      stake (no sponsor, or leg not yet assigned so nothing
 //                      rolls up yet) — UI shows no ceiling warning.
@@ -198,7 +201,7 @@ app.get('/binary/stake-headroom', authMiddleware, async (c) => {
     });
   }
 
-  // Sponsor's downline volume + own 몸값 drive the hard 2× cap.
+  // Sponsor's per-leg volume + own 몸값 drive the hard PER-LEG 2× cap.
   const vol = await c.env.DB.prepare(
     `SELECT left_usd, right_usd, self_usd FROM binary_volume WHERE user_id = ?`
   ).bind(sponsorId).first<any>().catch(() => null);
@@ -206,9 +209,9 @@ app.get('/binary/stake-headroom', authMiddleware, async (c) => {
   const selfUsd = Number(vol?.self_usd || 0);
   const left = Number(vol?.left_usd || 0);
   const right = Number(vol?.right_usd || 0);
-  const downlineUsd = left + right;
-  const capUsd = selfUsd * 2;                       // 2× 몸값 hard cap
-  const headroomUsd = Math.max(0, capUsd - downlineUsd);
+  const capUsd = selfUsd * 2;                       // per-leg cap = 2× 몸값
+  const legUsd = legRaw === 'R' ? right : left;     // volume already on MY leg
+  const headroomUsd = Math.max(0, capUsd - legUsd); // room on MY leg only
 
   return c.json({
     has_sponsor: true,
@@ -216,10 +219,10 @@ app.get('/binary/stake-headroom', authMiddleware, async (c) => {
     uncapped: false,
     leg: legRaw,
     sponsor_self_usd: selfUsd,
-    sponsor_cap_usd: capUsd,
-    sponsor_downline_usd: downlineUsd,
-    sponsor_leg_usd: legRaw === 'R' ? right : left, // current volume on my leg
-    headroom_usd: headroomUsd,                      // ← "얼마까지 가능" (USD)
+    sponsor_cap_usd: capUsd,                         // per-leg cap
+    sponsor_downline_usd: left + right,             // both legs (info only)
+    sponsor_leg_usd: legUsd,                         // current volume on my leg
+    headroom_usd: headroomUsd,                       // ← "얼마까지 가능" (USD, my leg)
   });
 });
 

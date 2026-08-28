@@ -29,8 +29,10 @@ function matchBonusRate(matchedUsd: number): number {
 
 const MATCH_UNIT_USD = 100;
 
-// Downline (left+right) may grow to at most this multiple of the user's own
-// deposit total (self_usd / "몸값"). Owner rule (2026-08-26): 2x.
+// EACH downline leg (left AND right, independently) may grow to at most this
+// multiple of the user's own deposit total (self_usd / "몸값"). Owner rule
+// (2026-08-28, revised): 2× PER LEG — e.g. 몸값 $1,000 → left up to $2,000 AND
+// right up to $2,000 (not $2,000 combined).
 const DOWNLINE_CAP_MULTIPLE = 2;
 
 function uuid(): string {
@@ -179,20 +181,23 @@ async function rollUp(env: Env, memberId: string, usdValue: number, qtaPrice: nu
        ON CONFLICT(user_id) DO NOTHING`
     ).bind(parentId).run();
 
-    // Enforce the 2× cap as a HARD ceiling: the parent's downline (left+right)
-    // may not exceed 2 × self_usd. Volume OVER the remaining headroom is DROPPED
-    // (owner rule 2026-08-28) — no parking, no later reclaim. Members must size
-    // their stake to fit under the sponsor's headroom (warned on the UI).
+    // Enforce the 2× cap as a HARD, PER-LEG ceiling (owner rule 2026-08-28,
+    // revised): EACH leg may hold up to 2 × self_usd INDEPENDENTLY — i.e. a
+    // parent with 몸값 $1,000 can carry $2,000 on the LEFT and $2,000 on the
+    // RIGHT (not $2,000 combined). Volume OVER the incoming leg's own remaining
+    // room is DROPPED (no parking, no later reclaim). The other leg's fill does
+    // NOT reduce this leg's room. Members are warned on the stake-entry UI.
     const cur = await env.DB.prepare(
       `SELECT left_usd, right_usd, self_usd FROM binary_volume WHERE user_id = ?`
     ).bind(parentId).first<any>();
     const left = Number(cur?.left_usd || 0);
     const right = Number(cur?.right_usd || 0);
     const selfUsd = Number(cur?.self_usd || 0);
-    const cap = selfUsd * DOWNLINE_CAP_MULTIPLE;
-    const room = Math.max(0, cap - (left + right));
+    const cap = selfUsd * DOWNLINE_CAP_MULTIPLE;      // per-leg ceiling
+    const legUsed = leg === 'R' ? right : left;        // this leg's current volume
+    const room = Math.max(0, cap - legUsed);           // room on THIS leg only
     const add = Math.min(usdValue, room);
-    const dropped = usdValue - add; // over-cap remainder -> DROPPED (not parked)
+    const dropped = usdValue - add; // over-leg-cap remainder -> DROPPED (not parked)
 
     const liveCol = leg === 'R' ? 'right_usd' : 'left_usd';
 
