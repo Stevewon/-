@@ -131,6 +131,7 @@ const ja = {
   'earn.binaryMemberStaked': 'Staked',
   'earn.binaryPlaceLeft': '左に配置',
   'earn.binaryPlaceRight': '右に配置',
+  'earn.binaryPlacedAt': '配置日時',
   'earn.binaryLeftLine': '左ライン',
   'earn.binaryRightLine': '右ライン',
   'earn.binaryLegLeft': '左（Left）',

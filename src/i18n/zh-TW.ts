@@ -125,6 +125,7 @@ const zhTW = {
   'earn.binaryMemberStaked': 'Staked',
   'earn.binaryPlaceLeft': '放到左區',
   'earn.binaryPlaceRight': '放到右區',
+  'earn.binaryPlacedAt': '配置時間',
   'earn.binaryLeftLine': '左線',
   'earn.binaryRightLine': '右線',
   'earn.binaryLegLeft': '左區（Left）',

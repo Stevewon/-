@@ -102,10 +102,22 @@ export async function assignBinaryLeg(
       return { ok: false, code: 'ALREADY_PLACED' }; // one-time only
     }
     // Guarded UPDATE: only flips when the leg is still NULL (idempotent / race-safe).
-    const upd = await db.prepare(
-      `UPDATE users SET binary_leg = ?
-        WHERE id = ? AND binary_parent_id = ? AND binary_leg IS NULL`
-    ).bind(leg, memberId, sponsorId).run();
+    // Also stamp WHEN the placement happened so the sponsor dashboard can show a
+    // placement history ("배치일시"). binary_leg_assigned_at is added by migration
+    // 0053; wrap in try so older DBs (pre-0053) still assign the leg.
+    let upd;
+    try {
+      upd = await db.prepare(
+        `UPDATE users SET binary_leg = ?, binary_leg_assigned_at = datetime('now')
+          WHERE id = ? AND binary_parent_id = ? AND binary_leg IS NULL`
+      ).bind(leg, memberId, sponsorId).run();
+    } catch {
+      // Column may not exist yet — fall back without the timestamp.
+      upd = await db.prepare(
+        `UPDATE users SET binary_leg = ?
+          WHERE id = ? AND binary_parent_id = ? AND binary_leg IS NULL`
+      ).bind(leg, memberId, sponsorId).run();
+    }
     if (!upd?.meta || upd.meta.changes === 0) {
       return { ok: false, code: 'ALREADY_PLACED' };
     }

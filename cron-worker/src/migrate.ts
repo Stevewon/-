@@ -270,6 +270,15 @@ const MIGRATIONS: Migration[] = [
          updated_at = datetime('now')`,
     ],
   },
+  {
+    // 0053 — record WHEN the sponsor assigned a downline member to their Left
+    // or Right leg (the one-time placement). Enables a placement history /
+    // "배치일시" display on the sponsor's dashboard. NOT a seed → runs once.
+    id: '0053_binary_leg_assigned_at',
+    statements: [
+      `ALTER TABLE users ADD COLUMN binary_leg_assigned_at TEXT`,
+    ],
+  },
 ];
 
 export interface MigrateResult {

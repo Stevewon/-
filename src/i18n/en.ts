@@ -131,6 +131,7 @@ const en = {
   'earn.binaryMemberStaked': 'Staked',
   'earn.binaryPlaceLeft': 'Place Left',
   'earn.binaryPlaceRight': 'Place Right',
+  'earn.binaryPlacedAt': 'Placed',
   'earn.binaryLeftLine': 'Left line',
   'earn.binaryRightLine': 'Right line',
   'earn.binaryLegLeft': 'Left',

@@ -796,14 +796,32 @@ app.get('/binary/tree', authMiddleware, async (c) => {
   // "pending placement" list the sponsor must act on. We also surface each
   // member's OWN staked USD total (몸값 / self_usd) so the sponsor can SEE how
   // much the downline staked BEFORE choosing which leg to place them on.
-  const { results: downline } = await c.env.DB.prepare(
-    `SELECT u.id, u.nickname, u.email, u.binary_leg, u.created_at,
-            COALESCE(bv.self_usd, 0) AS staked_usd
-       FROM users u
-       LEFT JOIN binary_volume bv ON bv.user_id = u.id
-      WHERE u.binary_parent_id = ?
-      ORDER BY u.created_at ASC`
-  ).bind(user.id).all<any>().catch(() => ({ results: [] as any[] }));
+  // NOTE: binary_leg_assigned_at (migration 0053) records WHEN the sponsor
+  //   placed each member. Selected via a tolerant query so pre-0053 DBs still
+  //   work (the column simply comes back NULL / the query is retried without it).
+  let downline: any[] = [];
+  try {
+    const r = await c.env.DB.prepare(
+      `SELECT u.id, u.nickname, u.email, u.binary_leg, u.created_at,
+              u.binary_leg_assigned_at AS assigned_at,
+              COALESCE(bv.self_usd, 0) AS staked_usd
+         FROM users u
+         LEFT JOIN binary_volume bv ON bv.user_id = u.id
+        WHERE u.binary_parent_id = ?
+        ORDER BY u.created_at ASC`
+    ).bind(user.id).all<any>();
+    downline = r.results || [];
+  } catch {
+    const r = await c.env.DB.prepare(
+      `SELECT u.id, u.nickname, u.email, u.binary_leg, u.created_at,
+              COALESCE(bv.self_usd, 0) AS staked_usd
+         FROM users u
+         LEFT JOIN binary_volume bv ON bv.user_id = u.id
+        WHERE u.binary_parent_id = ?
+        ORDER BY u.created_at ASC`
+    ).bind(user.id).all<any>().catch(() => ({ results: [] as any[] }));
+    downline = r.results || [];
+  }
 
   const left: any[] = [];
   const right: any[] = [];
@@ -814,6 +832,7 @@ app.get('/binary/tree', authMiddleware, async (c) => {
       nickname: m.nickname,
       joined_at: m.created_at,
       staked_usd: Number(m.staked_usd || 0), // 하부가 스테이킹한 금액(USD)
+      assigned_at: m.assigned_at || null,    // 사장님이 좌/우 배치한 시각(placement time)
     };
     if (m.binary_leg === 'L') left.push(row);
     else if (m.binary_leg === 'R') right.push(row);
@@ -855,6 +874,25 @@ app.post('/binary/assign-leg', authMiddleware, async (c) => {
 
   const res = await assignBinaryLeg(c.env.DB, user.id, memberId, leg);
   if (res.ok) {
+    // ── Placement now DONE → roll the member's already-staked value UP ──
+    //   When the member first staked, binary_leg was NULL so rollStakeUpBinary
+    //   STOPPED at them (nothing reached the sponsor's Left/Right leg). Now that
+    //   the sponsor has picked a side, we roll the member's total staked USD
+    //   (their self_usd / 몸값) up the ancestry so the sponsor's Left/Right
+    //   Volume immediately reflects it. skipSelf=true → don't re-grow the
+    //   member's OWN self_usd (already set at stake time).
+    try {
+      const memberVol = await c.env.DB.prepare(
+        `SELECT COALESCE(self_usd, 0) AS self_usd FROM binary_volume WHERE user_id = ?`
+      ).bind(res.member_id).first<any>();
+      const memberUsd = Number(memberVol?.self_usd || 0);
+      if (memberUsd > 0) {
+        const price = await qtaPrice(c);
+        await rollStakeUpBinary(c.env.DB, res.member_id, memberUsd, price, { skipSelf: true });
+      }
+    } catch (e) {
+      console.warn('[binary] post-placement rollup failed:', e);
+    }
     return c.json({ ok: true, member_id: res.member_id, leg: res.leg });
   }
   const map: Record<string, { status: 400 | 403 | 404 | 409 | 500; message: string }> = {

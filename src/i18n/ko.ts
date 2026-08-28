@@ -131,6 +131,7 @@ const ko = {
   'earn.binaryMemberStaked': 'Staked',
   'earn.binaryPlaceLeft': '좌 배치',
   'earn.binaryPlaceRight': '우 배치',
+  'earn.binaryPlacedAt': '배치일시',
   'earn.binaryLeftLine': '좌 라인',
   'earn.binaryRightLine': '우 라인',
   'earn.binaryLegLeft': '좌(Left)',

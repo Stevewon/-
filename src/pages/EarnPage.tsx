@@ -58,7 +58,7 @@ interface PositionsSummary {
   totalDividendQta: number;
 }
 
-interface BinaryMember { id: string; nickname: string; joined_at: string; staked_usd?: number; }
+interface BinaryMember { id: string; nickname: string; joined_at: string; staked_usd?: number; assigned_at?: string | null; }
 interface BinaryTree {
   volume: {
     self_usd: number;
@@ -368,17 +368,29 @@ export default function EarnPage() {
             <div className="grid grid-cols-2 gap-3">
               <div className="bg-exchange-card border border-exchange-border rounded-2xl p-3">
                 <div className="text-[11px] text-exchange-buy font-bold mb-1">{t('earn.binaryLeftLine')} ({binary.left_members.length})</div>
-                <div className="space-y-1">
+                <div className="space-y-2">
                   {binary.left_members.map((m) => (
-                    <div key={m.id} className="text-[12px] text-exchange-text truncate">{m.nickname}</div>
+                    <div key={m.id} className="border-b border-exchange-border/40 last:border-0 pb-1.5 last:pb-0">
+                      <div className="text-[12px] font-semibold text-exchange-text truncate">{m.nickname}</div>
+                      <div className="text-[11px] text-exchange-buy font-bold tabular-nums">{t('earn.binaryMemberStaked')}: {fmtUsd(m.staked_usd || 0)}</div>
+                      {m.assigned_at && (
+                        <div className="text-[10px] text-exchange-text-third">{t('earn.binaryPlacedAt')}: {new Date(m.assigned_at + 'Z').toLocaleString()}</div>
+                      )}
+                    </div>
                   ))}
                 </div>
               </div>
               <div className="bg-exchange-card border border-exchange-border rounded-2xl p-3">
                 <div className="text-[11px] text-exchange-sell font-bold mb-1">{t('earn.binaryRightLine')} ({binary.right_members.length})</div>
-                <div className="space-y-1">
+                <div className="space-y-2">
                   {binary.right_members.map((m) => (
-                    <div key={m.id} className="text-[12px] text-exchange-text truncate">{m.nickname}</div>
+                    <div key={m.id} className="border-b border-exchange-border/40 last:border-0 pb-1.5 last:pb-0">
+                      <div className="text-[12px] font-semibold text-exchange-text truncate">{m.nickname}</div>
+                      <div className="text-[11px] text-exchange-sell font-bold tabular-nums">{t('earn.binaryMemberStaked')}: {fmtUsd(m.staked_usd || 0)}</div>
+                      {m.assigned_at && (
+                        <div className="text-[10px] text-exchange-text-third">{t('earn.binaryPlacedAt')}: {new Date(m.assigned_at + 'Z').toLocaleString()}</div>
+                      )}
+                    </div>
                   ))}
                 </div>
               </div>
