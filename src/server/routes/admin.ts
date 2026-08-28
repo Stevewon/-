@@ -159,7 +159,6 @@ app.get('/users', async (c) => {
   const kyc = c.req.query('kyc') || '';
   const active = c.req.query('active') || '';
   const role = c.req.query('role') || '';
-  const exempt = c.req.query('exempt') || '';   // '', 'any', 'exchange', 'casino', 'qx_trade', 'qx_all'
   const limit = Math.min(parseInt(c.req.query('limit') || '50'), 200);
   const offset = parseInt(c.req.query('offset') || '0');
 
@@ -184,20 +183,6 @@ app.get('/users', async (c) => {
     conds.push('role = ?');
     params.push(role);
   }
-  // Fee-exemption filter — list only members with a given (or any) exemption
-  // flag set. Lets the admin manage the shareholder / VIP roster in one view.
-  if (exempt === 'any') {
-    conds.push('(COALESCE(fee_exempt_exchange_holder,0)=1 OR COALESCE(fee_exempt_casino_holder,0)=1 OR COALESCE(fee_exempt_qx_trade,0)=1 OR COALESCE(fee_exempt_qx_all,0)=1)');
-  } else if (exempt === 'exchange') {
-    conds.push('COALESCE(fee_exempt_exchange_holder,0)=1');
-  } else if (exempt === 'casino') {
-    conds.push('COALESCE(fee_exempt_casino_holder,0)=1');
-  } else if (exempt === 'qx_trade') {
-    conds.push('COALESCE(fee_exempt_qx_trade,0)=1');
-  } else if (exempt === 'qx_all') {
-    conds.push('COALESCE(fee_exempt_qx_all,0)=1');
-  }
-
   // NOTE: `conds` reference bare column names that live only on `users`; the QX
   // subquery below exposes just (user_id, qx) so there is no column ambiguity
   // when we alias the base table as `u`.
@@ -205,18 +190,17 @@ app.get('/users', async (c) => {
   const totalRow = await db.prepare(`SELECT COUNT(*) AS cnt FROM users u ${where}`)
     .bind(...params).first<{ cnt: number }>();
 
+  // qx_balance = combined QX + QKEY held on the exchange (available + locked).
+  // This drives the fee-tier schedule (owner rule 2026-08-28), so the admin
+  // roster shows the amount that decides each member's trading/withdrawal fee.
   const { results } = await db.prepare(`
     SELECT u.id, u.email, u.nickname, u.role, u.kyc_status, u.is_active,
            u.two_factor_enabled, u.created_at, u.kyc_submitted_at,
-           COALESCE(u.fee_exempt_exchange_holder, 0) AS fee_exempt_exchange_holder,
-           COALESCE(u.fee_exempt_casino_holder, 0)   AS fee_exempt_casino_holder,
-           COALESCE(u.fee_exempt_qx_trade, 0)        AS fee_exempt_qx_trade,
-           COALESCE(u.fee_exempt_qx_all, 0)          AS fee_exempt_qx_all,
            COALESCE(qx.qx, 0)                        AS qx_balance
     FROM users u
     LEFT JOIN (
       SELECT user_id, SUM(available + locked) AS qx
-        FROM wallets WHERE coin_symbol = 'QX' GROUP BY user_id
+        FROM wallets WHERE coin_symbol IN ('QX','QKEY') GROUP BY user_id
     ) qx ON qx.user_id = u.id
     ${where}
     ORDER BY u.created_at DESC
@@ -235,19 +219,15 @@ app.get('/users/:id', async (c) => {
     SELECT id, email, nickname, role, kyc_status, is_active,
            two_factor_enabled, kyc_name, kyc_phone, kyc_id_number,
            kyc_address, kyc_submitted_at, kyc_reviewed_at,
-           created_at, updated_at,
-           COALESCE(fee_exempt_exchange_holder, 0) AS fee_exempt_exchange_holder,
-           COALESCE(fee_exempt_casino_holder, 0)   AS fee_exempt_casino_holder,
-           COALESCE(fee_exempt_qx_trade, 0)        AS fee_exempt_qx_trade,
-           COALESCE(fee_exempt_qx_all, 0)          AS fee_exempt_qx_all
+           created_at, updated_at
     FROM users WHERE id = ?
   `).bind(id).first<any>();
   if (!u) return c.json({ error: 'User not found' }, 404);
 
-  // Live QX holding — drives the automatic QX-based fee exemptions.
+  // Live QX + QKEY holding — drives the fee-tier schedule (owner rule 2026-08-28).
   const qxRow = await db.prepare(
     `SELECT COALESCE(SUM(available + locked), 0) AS qx
-       FROM wallets WHERE user_id = ? AND coin_symbol = 'QX'`
+       FROM wallets WHERE user_id = ? AND coin_symbol IN ('QX','QKEY')`
   ).bind(u.id).first<{ qx: number }>().catch(() => ({ qx: 0 } as any));
   u.qx_balance = Number(qxRow?.qx || 0);
 
@@ -365,72 +345,10 @@ app.post('/users/:id/role', async (c) => {
   return c.json({ role });
 });
 
-// ============================================================================
-// POST /admin/users/:id/fee-exemption — set/clear the fee-exemption flags.
-// Owner request (2026-08-27). Body: any subset of the four boolean flags.
-//   { exchange_holder?: bool, casino_holder?: bool,
-//     qx_trade?: bool, qx_all?: bool }
-// Only the fields present in the body are updated. The two shareholder flags
-// (exchange/casino) are unconditional; the qx_trade / qx_all flags act as a
-// MANUAL OVERRIDE on top of the automatic QX-holding thresholds
-// (100k → trade only, 500k → trade + withdrawal).
-// ============================================================================
-app.post('/users/:id/fee-exemption', async (c) => {
-  const db = c.env.DB;
-  const id = c.req.param('id');
-  const body = await c.req.json().catch(() => ({}));
-
-  const u = await db.prepare(
-    `SELECT id, email, nickname,
-            COALESCE(fee_exempt_exchange_holder, 0) AS ex,
-            COALESCE(fee_exempt_casino_holder, 0)   AS ca,
-            COALESCE(fee_exempt_qx_trade, 0)        AS qt,
-            COALESCE(fee_exempt_qx_all, 0)          AS qa
-       FROM users WHERE id = ?`
-  ).bind(id).first<any>();
-  if (!u) return c.json({ error: 'User not found' }, 404);
-
-  // Map body keys → columns. Only apply keys that are actually present.
-  const map: Record<string, string> = {
-    exchange_holder: 'fee_exempt_exchange_holder',
-    casino_holder:   'fee_exempt_casino_holder',
-    qx_trade:        'fee_exempt_qx_trade',
-    qx_all:          'fee_exempt_qx_all',
-  };
-  const sets: string[] = [];
-  const vals: any[] = [];
-  const applied: Record<string, number> = {};
-  for (const [key, col] of Object.entries(map)) {
-    if (key in body) {
-      const v = body[key] ? 1 : 0;
-      sets.push(`${col} = ?`);
-      vals.push(v);
-      applied[key] = v;
-    }
-  }
-  if (!sets.length) return c.json({ error: 'No exemption fields provided' }, 400);
-
-  await db.prepare(
-    `UPDATE users SET ${sets.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
-  ).bind(...vals, u.id).run();
-
-  try {
-    await logAdminAction(c, {
-      action: 'user.fee_exemption',
-      targetType: 'user',
-      targetId: u.id,
-      payload: { email: u.email, applied },
-    });
-  } catch { /* ignore */ }
-
-  return c.json({
-    ok: true,
-    fee_exempt_exchange_holder: 'exchange_holder' in body ? (body.exchange_holder ? 1 : 0) : u.ex,
-    fee_exempt_casino_holder:   'casino_holder'   in body ? (body.casino_holder   ? 1 : 0) : u.ca,
-    fee_exempt_qx_trade:        'qx_trade'        in body ? (body.qx_trade        ? 1 : 0) : u.qt,
-    fee_exempt_qx_all:          'qx_all'          in body ? (body.qx_all          ? 1 : 0) : u.qa,
-  });
-});
+// NOTE (owner rule 2026-08-28): the old fee-exemption endpoint
+// (POST /users/:id/fee-exemption) and the ROYAL/DIAMOND/GOLD/SILVER tier
+// system have been REMOVED. Trading & withdrawal fees are now decided solely
+// by the member's combined QX+QKEY holding (see src/server/utils/fees.ts).
 
 // Reset 2FA (emergency)
 app.post('/users/:id/reset-2fa', async (c) => {

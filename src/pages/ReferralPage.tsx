@@ -664,12 +664,13 @@ export default function ReferralPage() {
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                   {(binary?.tiers || [
-                    { min: 100, max: 999, rate: 0.02 },
-                    { min: 1000, max: 4999, rate: 0.03 },
-                    { min: 5000, max: 9999, rate: 0.04 },
-                    { min: 10000, max: 49999, rate: 0.05 },
-                    { min: 50000, max: 99999, rate: 0.06 },
-                    { min: 100000, max: null, rate: 0.07 },
+                    // Owner rule (2026-08-28): every band raised by +1 percentage point.
+                    { min: 100, max: 999, rate: 0.03 },
+                    { min: 1000, max: 4999, rate: 0.04 },
+                    { min: 5000, max: 9999, rate: 0.05 },
+                    { min: 10000, max: 49999, rate: 0.06 },
+                    { min: 50000, max: 99999, rate: 0.07 },
+                    { min: 100000, max: null, rate: 0.08 },
                   ]).map((tier, i) => (
                     <div key={i} className="flex items-center justify-between bg-exchange-bg/40 border border-exchange-border/40 rounded-lg px-3 py-2">
                       <span className="text-[11px] text-exchange-text-secondary tabular-nums">

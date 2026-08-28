@@ -52,6 +52,12 @@ interface Position {
   created_at: string;
 }
 
+interface PositionsSummary {
+  totalPrincipalUsd: number;
+  totalDividendUsd: number;
+  totalDividendQta: number;
+}
+
 interface BinaryMember { id: string; nickname: string; joined_at: string; }
 interface BinaryTree {
   volume: {
@@ -106,6 +112,7 @@ export default function EarnPage() {
 
   const [products, setProducts] = useState<Product[]>([]);
   const [positions, setPositions] = useState<Position[]>([]);
+  const [summary, setSummary] = useState<PositionsSummary | null>(null);
   const [qtaPrice, setQtaPrice] = useState(0.00357142857);
   const [usdtPrice, setUsdtPrice] = useState(1.0);
   const [loading, setLoading] = useState(true);
@@ -151,10 +158,11 @@ export default function EarnPage() {
   }, []);
 
   const loadPositions = useCallback(async () => {
-    if (!user) { setPositions([]); return; }
+    if (!user) { setPositions([]); setSummary(null); return; }
     try {
       const res = await api.get('/earn/positions');
       setPositions(res.data.positions || []);
+      setSummary(res.data.summary || null);
       if (res.data.qta_price) setQtaPrice(res.data.qta_price);
     } catch { /* not logged in */ }
   }, [user]);
@@ -379,10 +387,67 @@ export default function EarnPage() {
       {/* My Positions */}
       {user && positions.length > 0 && (
         <div className="mb-6">
-          <h2 className="text-[16px] font-bold text-exchange-text mb-3">{t('earn.myPositions')}</h2>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-[16px] font-bold text-exchange-text">{t('earn.myPositions')}</h2>
+            <span className="text-[11px] font-semibold text-exchange-text-third">
+              {t('earn.entryCount').replace('{n}', String(positions.length))}
+            </span>
+          </div>
+
+          {/* 총 합산 진입금액 (Total combined entry) — sum of every separate stake on this account */}
+          {(() => {
+            const totalPrincipalUsd = summary
+              ? Number(summary.totalPrincipalUsd || 0)
+              : positions.reduce((s, p) => s + (Number(p.principal_usd) || 0), 0);
+            const totalPrincipalQta = positions.reduce((s, p) => s + (Number(p.principal_qta) || 0), 0);
+            const totalDivUsd = summary
+              ? Number(summary.totalDividendUsd || 0)
+              : positions.reduce((s, p) => s + (Number(p.accrued_dividend_usd) || 0), 0);
+            const totalDivQta = summary
+              ? Number(summary.totalDividendQta || 0)
+              : positions.reduce((s, p) => s + (Number(p.accrued_dividend_qta) || 0), 0);
+            return (
+              <div
+                className="rounded-2xl mb-3 p-4"
+                style={{ background: 'linear-gradient(120deg,#101826 0%,#1a1305 100%)', border: '1px solid rgba(240,185,11,0.35)' }}
+              >
+                <div className="text-[11px] font-semibold tracking-wide text-exchange-yellow mb-2">
+                  {t('earn.totalCombined')}
+                </div>
+                <div className="flex items-end justify-between flex-wrap gap-2">
+                  <div>
+                    <div className="text-[22px] font-extrabold text-exchange-text tabular-nums leading-none">
+                      ${formatAmount(totalPrincipalUsd)}
+                    </div>
+                    <div className="text-[11px] text-exchange-text-third tabular-nums mt-1">
+                      ≈ {formatAmount(totalPrincipalQta)} QTA
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-[11px] text-exchange-text-third">{t('earn.accruedDividend')}</div>
+                    <div className="text-[15px] font-bold text-exchange-buy tabular-nums">
+                      +{formatAmount(totalDivQta)} QTA
+                    </div>
+                    <div className="text-[10px] text-exchange-text-third tabular-nums">
+                      ≈ ${formatAmount(totalDivUsd)}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
           <div className="space-y-3">
-            {positions.map((p) => (
+            {positions.map((p, idx) => (
               <div key={p.id} className="bg-exchange-card border border-exchange-border rounded-2xl p-4">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-[10px] font-bold text-exchange-yellow bg-exchange-yellow/10 border border-exchange-yellow/30 rounded-full px-2 py-0.5">
+                    {t('earn.entryNo').replace('{n}', String(idx + 1))}
+                  </span>
+                  <span className="text-[13px] font-bold text-exchange-buy tabular-nums ml-auto">
+                    +{(p.daily_rate * p.term_days * 100).toFixed(0)}%
+                  </span>
+                </div>
                 <div className="flex items-center gap-2 mb-3">
                   <CoinIcon symbol="QTA" size={24} />
                   <span className="text-[14px] font-bold text-exchange-text tabular-nums">
@@ -391,9 +456,21 @@ export default function EarnPage() {
                   <span className="text-[10px] text-exchange-text-third tabular-nums">
                     ≈ ${formatAmount(p.principal_usd)}
                   </span>
-                  <span className="text-[13px] font-bold text-exchange-buy tabular-nums ml-auto">
-                    +{(p.daily_rate * p.term_days * 100).toFixed(0)}%
-                  </span>
+                </div>
+                {/* Per-position RATE & PERIOD — each separate stake keeps its own rate/term */}
+                <div className="grid grid-cols-2 gap-3 mb-3">
+                  <div className="bg-exchange-bg/40 rounded-lg px-3 py-2">
+                    <div className="text-[11px] text-exchange-text-third">{t('earn.dailyRate')}</div>
+                    <div className="text-[14px] font-bold text-exchange-text tabular-nums">
+                      {rate(p.daily_rate)} <span className="text-[10px] font-normal text-exchange-text-third">/ {t('earn.perDay')}</span>
+                    </div>
+                  </div>
+                  <div className="bg-exchange-bg/40 rounded-lg px-3 py-2">
+                    <div className="text-[11px] text-exchange-text-third">{t('earn.period')}</div>
+                    <div className="text-[14px] font-bold text-exchange-text tabular-nums">
+                      {p.term_days} <span className="text-[10px] font-normal text-exchange-text-third">{t('earn.days')}</span>
+                    </div>
+                  </div>
                 </div>
                 <div className="grid grid-cols-2 gap-3 mb-3">
                   <div>
@@ -596,13 +673,14 @@ export default function EarnPage() {
 // ---------------------------------------------------------------------------
 function MatchRateModal({ onClose }: { onClose: () => void }) {
   const { t } = useI18n();
+  // Owner rule (2026-08-28): every band raised by +1 percentage point.
   const rows = [
-    { band: '$100 ~ $999', rate: '2%' },
-    { band: '$1,000 ~ $4,999', rate: '3%' },
-    { band: '$5,000 ~ $9,999', rate: '4%' },
-    { band: '$10,000 ~ $49,999', rate: '5%' },
-    { band: '$50,000 ~ $99,999', rate: '6%' },
-    { band: '$100,000 ~', rate: '7%' },
+    { band: '$100 ~ $999', rate: '3%' },
+    { band: '$1,000 ~ $4,999', rate: '4%' },
+    { band: '$5,000 ~ $9,999', rate: '5%' },
+    { band: '$10,000 ~ $49,999', rate: '6%' },
+    { band: '$50,000 ~ $99,999', rate: '7%' },
+    { band: '$100,000 ~', rate: '8%' },
   ];
   return createPortal(
     <div className="fixed inset-0 z-[100] flex items-end sm:items-center sm:justify-center">

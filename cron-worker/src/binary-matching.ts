@@ -17,13 +17,15 @@ interface Env {
 }
 
 // Bonus tiers from the owner's table.
+// Owner rule (2026-08-28): every band raised by +1 percentage point
+//   ($100~ 2%→3%, $1k~ 3%→4%, $5k~ 4%→5%, $10k~ 5%→6%, $50k~ 6%→7%, $100k~ 7%→8%).
 function matchBonusRate(matchedUsd: number): number {
-  if (matchedUsd >= 100_000) return 0.07;
-  if (matchedUsd >= 50_000) return 0.06;
-  if (matchedUsd >= 10_000) return 0.05;
-  if (matchedUsd >= 5_000) return 0.04;
-  if (matchedUsd >= 1_000) return 0.03;
-  if (matchedUsd >= 100) return 0.02;
+  if (matchedUsd >= 100_000) return 0.08;
+  if (matchedUsd >= 50_000) return 0.07;
+  if (matchedUsd >= 10_000) return 0.06;
+  if (matchedUsd >= 5_000) return 0.05;
+  if (matchedUsd >= 1_000) return 0.04;
+  if (matchedUsd >= 100) return 0.03;
   return 0;
 }
 

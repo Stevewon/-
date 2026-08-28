@@ -7,7 +7,6 @@ import {
   FileText, Receipt, Server, Database, HardDrive,
   Shield, AlertTriangle, Zap, Plus, Trash2,
   Repeat, ArrowRightLeft, Pause, Play,
-  BadgePercent, Building2, Dice5,
 } from 'lucide-react';
 import useStore from '../store/useStore';
 import { useI18n } from '../i18n';
@@ -17,7 +16,6 @@ import { showToast } from '../components/common/Toast';
 import CoinIcon from '../components/common/CoinIcon';
 import AdminLayout, { type AdminTab } from '../components/layout/AdminLayout';
 import BalanceBreakdownModal, { type BalanceBreakdown } from '../components/wallet/BalanceBreakdownModal';
-import MemberTierBadge from '../components/common/MemberTierBadge';
 
 type Tab = AdminTab;
 
@@ -483,7 +481,6 @@ function UsersTab({ t, onUpdate }: any) {
   const [kyc, setKyc] = useState('');
   const [active, setActive] = useState('');
   const [role, setRole] = useState('');
-  const [exempt, setExempt] = useState('');
   const [users, setUsers] = useState<any[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
@@ -499,7 +496,6 @@ function UsersTab({ t, onUpdate }: any) {
     if (kyc) params.set('kyc', kyc);
     if (active) params.set('active', active);
     if (role) params.set('role', role);
-    if (exempt) params.set('exempt', exempt);
     try {
       const res = await api.get(`/admin/users?${params.toString()}`);
       setUsers(res.data.rows);
@@ -509,7 +505,7 @@ function UsersTab({ t, onUpdate }: any) {
     }
   };
 
-  useEffect(() => { load(); }, [page, kyc, active, role, exempt]);
+  useEffect(() => { load(); }, [page, kyc, active, role]);
 
   const onSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -618,14 +614,6 @@ function UsersTab({ t, onUpdate }: any) {
           <option value="user">user</option>
           <option value="admin">admin</option>
         </select>
-        <select value={exempt} onChange={e => { setExempt(e.target.value); setPage(0); }} className="input-field text-xs h-8 !py-0 !px-2" title={t('admin.feeExemptFilter')}>
-          <option value="">{t('admin.feeExemptFilter')}: {t('common.all')}</option>
-          <option value="any">{t('admin.feeExemptFilterAny')}</option>
-          <option value="exchange">{t('admin.feeExemptExchange')}</option>
-          <option value="casino">{t('admin.feeExemptCasino')}</option>
-          <option value="qx_trade">{t('admin.feeExemptQxTrade')}</option>
-          <option value="qx_all">{t('admin.feeExemptQxAll')}</option>
-        </select>
         <button type="submit" className="btn-primary text-xs !py-1.5 !px-3">{t('common.search')}</button>
       </form>
 
@@ -640,7 +628,7 @@ function UsersTab({ t, onUpdate }: any) {
               <th className="text-left px-3 py-2.5">KYC</th>
               <th className="text-center px-3 py-2.5">2FA</th>
               <th className="text-center px-3 py-2.5">{t('admin.active')}</th>
-              <th className="text-left px-3 py-2.5">{t('admin.feeExemptCol')}</th>
+              <th className="text-right px-3 py-2.5">{t('fee.holding')}</th>
               <th className="text-left px-3 py-2.5">{t('admin.joined')}</th>
               <th className="text-right px-3 py-2.5">{t('admin.actions')}</th>
             </tr>
@@ -653,7 +641,6 @@ function UsersTab({ t, onUpdate }: any) {
                 <td className="px-3 py-2 text-xs">{u.email}</td>
                 <td className="px-3 py-2 text-xs">
                   <button onClick={() => openDetail(u.id)} className="inline-flex items-center gap-1 hover:text-exchange-yellow hover:underline">
-                    <MemberTierBadge user={u} t={t} variant="icon" />
                     <span>{u.nickname}</span>
                   </button>
                 </td>
@@ -676,20 +663,8 @@ function UsersTab({ t, onUpdate }: any) {
                 <td className="px-3 py-2 text-center text-[11px]">
                   {u.is_active ? <span className="text-exchange-buy">●</span> : <span className="text-exchange-sell">●</span>}
                 </td>
-                <td className="px-3 py-2">
-                  <button
-                    onClick={() => openDetail(u.id)}
-                    title={t('admin.feeExemptManage')}
-                    className="flex flex-wrap gap-0.5 items-center hover:opacity-80"
-                  >
-                    {u.fee_exempt_exchange_holder ? <span className="text-[9px] px-1 py-0.5 rounded bg-blue-400/20 text-blue-400" title={t('admin.feeExemptExchange')}>거래소</span> : null}
-                    {u.fee_exempt_casino_holder ? <span className="text-[9px] px-1 py-0.5 rounded bg-purple-400/20 text-purple-400" title={t('admin.feeExemptCasino')}>카지노</span> : null}
-                    {u.fee_exempt_qx_all ? <span className="text-[9px] px-1 py-0.5 rounded bg-exchange-buy/20 text-exchange-buy" title={t('admin.feeExemptQxAll')}>QX50만</span> : null}
-                    {u.fee_exempt_qx_trade ? <span className="text-[9px] px-1 py-0.5 rounded bg-exchange-yellow/20 text-exchange-yellow" title={t('admin.feeExemptQxTrade')}>QX10만</span> : null}
-                    {!u.fee_exempt_exchange_holder && !u.fee_exempt_casino_holder && !u.fee_exempt_qx_all && !u.fee_exempt_qx_trade
-                      ? <span className="text-[10px] text-exchange-text-third hover:text-exchange-yellow flex items-center gap-0.5"><BadgePercent size={11} /> {t('admin.feeExemptAssign')}</span>
-                      : null}
-                  </button>
+                <td className="px-3 py-2 text-right">
+                  <FeeTierCell holding={Number(u.qx_balance || 0)} />
                 </td>
                 <td className="px-3 py-2 text-[11px] text-exchange-text-third">{timeAgo(u.created_at, t)}</td>
                 <td className="px-3 py-2 text-right">
@@ -734,149 +709,78 @@ function UsersTab({ t, onUpdate }: any) {
 }
 
 // ============================================================================
-// Fee-exemption panel (Owner request 2026-08-27, extended 2026-08-27b)
-//   Four exemption conditions, all admin-toggleable, running in PARALLEL with
-//   the automatic QX-balance detection:
-//     1. 거래소 지분권자   → trade + withdrawal exempt (admin-set)
-//     2. 카지노 지분권자   → trade + withdrawal exempt (admin-set)
-//     3. QX 10만~49.9만    → trade fee exempt   (AUTO by exchange QX balance,
-//                            OR manual grant for external-wallet holders)
-//     4. QX 50만 이상      → trade + withdrawal (AUTO by exchange QX balance,
-//                            OR manual grant for external-wallet holders)
-//   The manual QX toggles exist because some members hold QX in EXTERNAL
-//   wallets — the exchange can't see that balance, so the admin verifies it
-//   and grants the exemption by hand. Auto + manual are OR-combined server-side.
+// Fee-tier helpers (owner rule 2026-08-28): trading & withdrawal fee are
+// decided SOLELY by the member's combined QX + QKEY holding on the exchange.
+// The old ROYAL/DIAMOND/GOLD/SILVER / shareholder exemption system is REMOVED.
 // ============================================================================
-const QX_TRADE_MIN = 100_000;
-const QX_ALL_MIN = 500_000;
+const HOLDING_FEE_ROWS = [
+  { name: 'BASIC',    min: 0,         trade: 0.0010, wd: 0.050 },
+  { name: 'BRONZE',   min: 10_000,    trade: 0.0009, wd: 0.045 },
+  { name: 'SILVER',   min: 50_000,    trade: 0.0008, wd: 0.040 },
+  { name: 'GOLD',     min: 100_000,   trade: 0.0007, wd: 0.035 },
+  { name: 'PLATINUM', min: 500_000,   trade: 0.0006, wd: 0.030 },
+  { name: 'FREE',     min: 1_000_000, trade: 0.0000, wd: 0.000 },
+];
+function feeRowFor(holding: number) {
+  const h = Number.isFinite(holding) ? Math.max(0, holding) : 0;
+  let m = HOLDING_FEE_ROWS[0];
+  for (const r of HOLDING_FEE_ROWS) if (h >= r.min) m = r;
+  return m;
+}
+const fmtHold = (n: number) =>
+  n >= 1_000_000 ? `${(n / 1_000_000).toFixed(n % 1_000_000 ? 2 : 0)}M`
+  : n >= 1_000 ? `${(n / 1_000).toFixed(n % 1_000 ? 1 : 0)}K`
+  : Math.round(n).toLocaleString();
+const pctFee = (r: number) => `${(r * 100).toFixed(2)}%`;
 
-function FeeExemptionPanel({ user, onChange, t }: any) {
-  const [saving, setSaving] = useState<string | null>(null);
-  const qx = Number(user.qx_balance || 0);
-
-  // Automatic (exchange-held QX) detection.
-  const qxAutoAll = qx >= QX_ALL_MIN;
-  const qxAutoTrade = qx >= QX_TRADE_MIN && qx < QX_ALL_MIN;
-
-  // Manual admin flags.
-  const mExchange = !!user.fee_exempt_exchange_holder;
-  const mCasino = !!user.fee_exempt_casino_holder;
-  const mQxTrade = !!user.fee_exempt_qx_trade;
-  const mQxAll = !!user.fee_exempt_qx_all;
-
-  // Effective (live) status = manual flags OR automatic QX thresholds.
-  const holderFull = mExchange || mCasino;
-  const qxAllEff = mQxAll || qxAutoAll;
-  const qxTradeEff = mQxTrade || qx >= QX_TRADE_MIN;
-  const tradeExempt = holderFull || qxAllEff || qxTradeEff;
-  const withdrawExempt = holderFull || qxAllEff;
-
-  const setFlag = async (key: string, val: boolean) => {
-    setSaving(key);
-    try {
-      const res = await api.post(`/admin/users/${user.id}/fee-exemption`, { [key]: val });
-      onChange({ ...user, ...res.data });
-      showToast('success', t('common.save'), t('admin.feeExemptSaved'));
-    } catch (e: any) {
-      showToast('error', t('common.error'), e.response?.data?.error || 'Update failed');
-    } finally {
-      setSaving(null);
-    }
-  };
-
-  const Toggle = ({ label, desc, icon, on, k, auto, disabled }: any) => (
-    <label className={`flex items-start gap-2 p-2.5 rounded-lg border cursor-pointer transition-colors ${
-      on ? 'border-exchange-yellow/50 bg-exchange-yellow/10' : 'border-exchange-border bg-exchange-hover/20 hover:bg-exchange-hover/40'
-    } ${disabled ? 'opacity-60 cursor-not-allowed' : ''}`}>
-      <input
-        type="checkbox"
-        className="mt-0.5 accent-exchange-yellow"
-        checked={on}
-        disabled={disabled || saving === k}
-        onChange={e => !disabled && setFlag(k, e.target.checked)}
-      />
-      <div className="flex-1 min-w-0">
-        <div className="text-[11px] font-medium flex items-center gap-1 flex-wrap">
-          {icon} {label}
-          {auto && (
-            <span className="text-[9px] px-1 py-0 rounded bg-exchange-buy/20 text-exchange-buy">
-              {t('admin.feeExemptAutoActive')}
-            </span>
-          )}
-        </div>
-        <div className="text-[10px] text-exchange-text-third leading-tight mt-0.5">{desc}</div>
-      </div>
-      {saving === k && <RefreshCw size={11} className="animate-spin text-exchange-yellow mt-0.5" />}
-    </label>
+// Compact roster cell: shows holding + resolved fee-tier name.
+function FeeTierCell({ holding }: { holding: number }) {
+  const row = feeRowFor(holding);
+  return (
+    <div className="inline-flex flex-col items-end gap-0.5">
+      <span className="font-mono tabular-nums text-[11px] text-exchange-text-secondary">
+        {fmtHold(holding)}
+      </span>
+      <span className={`text-[9px] px-1 py-0.5 rounded ${
+        row.name === 'FREE' ? 'bg-exchange-buy/20 text-exchange-buy'
+        : row.name === 'BASIC' ? 'bg-exchange-input text-exchange-text-third'
+        : 'bg-exchange-yellow/20 text-exchange-yellow'}`}>
+        {row.name}
+      </span>
+    </div>
   );
+}
 
+// Detail-modal panel: full fee schedule with the member's current tier marked.
+function FeeTierInfoPanel({ holding, t }: any) {
+  const cur = feeRowFor(holding);
   return (
     <div className="border-t border-exchange-border/50 pt-3">
       <h4 className="text-xs font-semibold text-exchange-text-secondary mb-2 flex items-center gap-1.5">
-        <BadgePercent size={12} className="text-exchange-yellow" /> {t('admin.feeExemptTitle')}
+        <Coins size={12} className="text-exchange-yellow" /> {t('admin.feeTierTitle')}
       </h4>
-
-      {/* Live effective status */}
       <div className="flex flex-wrap items-center gap-2 mb-2.5 text-[10px]">
-        <span className={`px-2 py-0.5 rounded ${tradeExempt ? 'bg-exchange-buy/20 text-exchange-buy' : 'bg-exchange-input text-exchange-text-third'}`}>
-          {t('admin.feeExemptTrade')}: {tradeExempt ? t('admin.feeExemptOn') : t('admin.feeExemptOff')}
+        <span className="px-2 py-0.5 rounded bg-exchange-input text-exchange-text-secondary tabular-nums">
+          {t('fee.holding')}: {fmtHold(holding)}
         </span>
-        <span className={`px-2 py-0.5 rounded ${withdrawExempt ? 'bg-exchange-buy/20 text-exchange-buy' : 'bg-exchange-input text-exchange-text-third'}`}>
-          {t('admin.feeExemptWithdraw')}: {withdrawExempt ? t('admin.feeExemptOn') : t('admin.feeExemptOff')}
-        </span>
-        <span className="px-2 py-0.5 rounded bg-exchange-input text-exchange-text-secondary tabular-nums" title={t('admin.feeExemptQxOnExchange')}>
-          {t('admin.feeExemptQxOnExchange')}: {formatPrice(qx)}
+        <span className={`px-2 py-0.5 rounded ${cur.name === 'FREE' ? 'bg-exchange-buy/20 text-exchange-buy' : 'bg-exchange-yellow/20 text-exchange-yellow'}`}>
+          {cur.name} · {t('fee.trade')} {cur.trade === 0 ? t('fee.free') : pctFee(cur.trade)} / {t('fee.withdraw')} {cur.wd === 0 ? t('fee.free') : pctFee(cur.wd)}
         </span>
       </div>
-
-      {/* 1 & 2 — shareholder (admin-set) */}
-      <div className="text-[10px] font-medium text-exchange-text-third mb-1">{t('admin.feeExemptShareholderGroup')}</div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-        <Toggle
-          k="exchange_holder"
-          on={mExchange}
-          icon={<Building2 size={11} className="text-blue-400" />}
-          label={t('admin.feeExemptExchange')}
-          desc={t('admin.feeExemptExchangeDesc')}
-        />
-        <Toggle
-          k="casino_holder"
-          on={mCasino}
-          icon={<Dice5 size={11} className="text-purple-400" />}
-          label={t('admin.feeExemptCasino')}
-          desc={t('admin.feeExemptCasinoDesc')}
-        />
-      </div>
-
-      {/* 3 & 4 — QX holding (auto + manual grant) */}
-      <div className="text-[10px] font-medium text-exchange-text-third mt-3 mb-1">
-        {t('admin.feeExemptQxGroup')}
-      </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-        <Toggle
-          k="qx_trade"
-          on={mQxTrade}
-          auto={qxAutoTrade}
-          icon={<Coins size={11} className="text-exchange-yellow" />}
-          label={t('admin.feeExemptQxTrade')}
-          desc={t('admin.feeExemptQxTradeManualDesc')}
-        />
-        <Toggle
-          k="qx_all"
-          on={mQxAll}
-          auto={qxAutoAll}
-          icon={<Coins size={11} className="text-exchange-buy" />}
-          label={t('admin.feeExemptQxAll')}
-          desc={t('admin.feeExemptQxAllManualDesc')}
-        />
-      </div>
-
-      {/* Explanation of auto vs manual (external-wallet) */}
-      <div className="mt-2 p-2 rounded-lg bg-exchange-hover/20 border border-exchange-border text-[10px] text-exchange-text-third leading-relaxed">
-        <div className="flex items-start gap-1.5">
-          <AlertTriangle size={11} className="text-exchange-yellow mt-0.5 shrink-0" />
-          <div>{t('admin.feeExemptExternalNote')}</div>
+      <div className="rounded-lg border border-exchange-border overflow-hidden text-[10px]">
+        <div className="grid grid-cols-3 gap-1 px-2 py-1.5 bg-exchange-hover/30 text-exchange-text-third font-semibold">
+          <span>QX+QKEY</span>
+          <span className="text-right">{t('fee.trade')}</span>
+          <span className="text-right">{t('fee.withdraw')}</span>
         </div>
+        {HOLDING_FEE_ROWS.map((r) => (
+          <div key={r.name} className={`grid grid-cols-3 gap-1 px-2 py-1 tabular-nums ${
+            r.name === cur.name ? 'bg-exchange-yellow/10 text-exchange-yellow font-semibold' : 'text-exchange-text-secondary'}`}>
+            <span>{r.min === 0 ? `< ${fmtHold(10_000)}` : `≥ ${fmtHold(r.min)}`}</span>
+            <span className="text-right font-mono">{r.trade === 0 ? t('fee.free') : pctFee(r.trade)}</span>
+            <span className="text-right font-mono">{r.wd === 0 ? t('fee.free') : pctFee(r.wd)}</span>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -896,7 +800,6 @@ function UserDetailModal({ detail, onClose, t }: any) {
         <div className="flex items-center justify-between p-4 border-b border-exchange-border sticky top-0 bg-exchange-card z-10">
           <div className="flex items-center gap-2">
             <Users size={18} className="text-exchange-yellow" />
-            <MemberTierBadge user={user} t={t} variant="full" />
             <h3 className="font-semibold">{user.nickname}</h3>
             <span className="text-xs text-exchange-text-third">{user.email}</span>
           </div>
@@ -926,7 +829,7 @@ function UserDetailModal({ detail, onClose, t }: any) {
             </div>
           )}
 
-          <FeeExemptionPanel user={user} onChange={(u: any) => setUser(u)} t={t} />
+          <FeeTierInfoPanel holding={Number(user.qx_balance || 0)} t={t} />
 
           <div className="border-t border-exchange-border/50 pt-3">
             <h4 className="text-xs font-semibold text-exchange-text-secondary mb-2 flex items-center gap-1.5"><Wallet size={12} /> {t('admin.wallets')} ({wallets?.length || 0}) <span className="text-[10px] text-exchange-text-third font-normal">· {t('wallet.balanceDetail')}</span></h4>
