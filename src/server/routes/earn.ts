@@ -293,6 +293,45 @@ app.post('/subscribe', authMiddleware, async (c) => {
   ).bind(productId).first<any>();
   if (!product) return c.json({ error: 'Product not found' }, 404);
 
+  // ── OWNER RULE (2026-08-28, FINAL): STAKING-BINARY SPONSOR — chosen ONCE ──
+  //   The staking binary tree is SEPARATE from the free-signup referral tree.
+  //   On a member's FIRST staking subscription they may supply a `sponsor_code`
+  //   (the sponsor's referral_code). We bind that sponsor as their permanent
+  //   binary_parent_id (binary_leg stays NULL — the sponsor picks L/R later).
+  //   This choice is IRREVERSIBLE: once binary_parent_id is set it is never
+  //   changed by a later stake, and any sponsor_code sent again is ignored.
+  {
+    const me = await c.env.DB.prepare(
+      `SELECT binary_parent_id FROM users WHERE id = ?`
+    ).bind(user.id).first<any>();
+    const alreadyBound = !!me?.binary_parent_id;
+    const sponsorCode = body.sponsor_code
+      ? String(body.sponsor_code).trim().toUpperCase()
+      : '';
+
+    if (!alreadyBound && sponsorCode) {
+      const sponsor = await c.env.DB.prepare(
+        `SELECT id FROM users WHERE referral_code = ?`
+      ).bind(sponsorCode).first<any>();
+      if (!sponsor) {
+        return c.json({ error: 'SPONSOR_NOT_FOUND', message: 'Invalid referral code.' }, 400);
+      }
+      if (sponsor.id === user.id) {
+        return c.json({ error: 'SPONSOR_SELF', message: 'You cannot set yourself as your sponsor.' }, 400);
+      }
+      // Race-safe: only bind when still unset. binary_leg stays NULL so the
+      // sponsor can assign Left/Right from their own dashboard exactly once.
+      await c.env.DB.prepare(
+        `UPDATE users SET binary_parent_id = ?, binary_leg = NULL
+          WHERE id = ? AND binary_parent_id IS NULL`
+      ).bind(sponsor.id, user.id).run();
+    } else if (!alreadyBound && !sponsorCode) {
+      // First stake with NO sponsor code — allowed only for top-level members.
+      // We simply leave binary_parent_id NULL (a standalone binary root).
+    }
+    // If alreadyBound: ignore any sponsor_code — the binary sponsor is locked.
+  }
+
   // ── OWNER RULE (2026-08-27): SPONSOR-MUST-STAKE-FIRST gate ────────────────
   // A member may stake ONLY IF their DIRECT sponsor (binary_parent_id) has
   // themselves staked (holds at least one ACTIVE staking position). If the
@@ -724,18 +763,28 @@ app.get('/binary/tree', authMiddleware, async (c) => {
   const matchedUsd = Number(vol?.matched_usd || 0);
 
   // Direct downline split by leg. Unassigned members (leg IS NULL) go to the
-  // "pending placement" list the sponsor must act on.
+  // "pending placement" list the sponsor must act on. We also surface each
+  // member's OWN staked USD total (몸값 / self_usd) so the sponsor can SEE how
+  // much the downline staked BEFORE choosing which leg to place them on.
   const { results: downline } = await c.env.DB.prepare(
-    `SELECT id, nickname, email, binary_leg, created_at
-       FROM users WHERE binary_parent_id = ?
-      ORDER BY created_at ASC`
+    `SELECT u.id, u.nickname, u.email, u.binary_leg, u.created_at,
+            COALESCE(bv.self_usd, 0) AS staked_usd
+       FROM users u
+       LEFT JOIN binary_volume bv ON bv.user_id = u.id
+      WHERE u.binary_parent_id = ?
+      ORDER BY u.created_at ASC`
   ).bind(user.id).all<any>().catch(() => ({ results: [] as any[] }));
 
   const left: any[] = [];
   const right: any[] = [];
   const unplaced: any[] = [];
   for (const m of (downline || [])) {
-    const row = { id: m.id, nickname: m.nickname, joined_at: m.created_at };
+    const row = {
+      id: m.id,
+      nickname: m.nickname,
+      joined_at: m.created_at,
+      staked_usd: Number(m.staked_usd || 0), // 하부가 스테이킹한 금액(USD)
+    };
     if (m.binary_leg === 'L') left.push(row);
     else if (m.binary_leg === 'R') right.push(row);
     else unplaced.push(row);

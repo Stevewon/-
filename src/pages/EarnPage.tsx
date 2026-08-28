@@ -58,7 +58,7 @@ interface PositionsSummary {
   totalDividendQta: number;
 }
 
-interface BinaryMember { id: string; nickname: string; joined_at: string; }
+interface BinaryMember { id: string; nickname: string; joined_at: string; staked_usd?: number; }
 interface BinaryTree {
   volume: {
     self_usd: number;
@@ -341,6 +341,9 @@ export default function EarnPage() {
                     <div className="min-w-0">
                       <div className="text-[13px] font-semibold text-exchange-text truncate">{m.nickname}</div>
                       <div className="text-[10px] text-exchange-text-third">{new Date(m.joined_at).toLocaleDateString()}</div>
+                      <div className="text-[11px] font-bold text-exchange-yellow tabular-nums">
+                        {t('earn.binaryMemberStaked')}: {fmtUsd(m.staked_usd || 0)}
+                      </div>
                     </div>
                     <div className="flex gap-2 shrink-0">
                       <button
@@ -856,12 +859,16 @@ function SubscribeModal({ product, qtaBalance, qtaPrice, onClose, onDone }: {
   const { t } = useI18n();
   const [usd, setUsd] = useState(String(product.min_usd));
   const [busy, setBusy] = useState(false);
+  // Staking-binary sponsor referral code. Only shown / used on the member's
+  // FIRST stake (when they have no binary sponsor yet). Chosen ONCE, permanent.
+  const [sponsorCode, setSponsorCode] = useState('');
 
   // Sponsor 2× 몸값 hard-cap headroom — how much of this stake will actually
   // roll up before the over-cap remainder is DROPPED (owner rule 2026-08-28).
   const [headroom, setHeadroom] = useState<{
     uncapped: boolean; headroom_usd: number | null;
     sponsor_cap_usd: number; sponsor_downline_usd: number; leg_assigned: boolean;
+    has_sponsor?: boolean;
   } | null>(null);
 
   useEffect(() => {
@@ -883,7 +890,11 @@ function SubscribeModal({ product, qtaBalance, qtaPrice, onClose, onDone }: {
   const requiredQta = usdToQta(targetUsd, qtaPrice);
   const inBand = targetUsd >= product.min_usd && targetUsd <= product.max_usd;
   const enough = requiredQta <= qtaBalance;
-  const valid = targetUsd > 0 && inBand && enough;
+  // The sponsor referral input is required ONLY on the first stake (no binary
+  // sponsor yet). headroom.has_sponsor === false means "no binary parent yet".
+  const needsSponsor = !!headroom && headroom.has_sponsor === false;
+  const sponsorOk = !needsSponsor || sponsorCode.trim().length > 0;
+  const valid = targetUsd > 0 && inBand && enough && sponsorOk;
 
   // Capped only when the user is placed under a sponsor with an assigned leg.
   const capped = !!headroom && !headroom.uncapped && headroom.headroom_usd != null;
@@ -911,7 +922,13 @@ function SubscribeModal({ product, qtaBalance, qtaPrice, onClose, onDone }: {
     }
     setBusy(true);
     try {
-      const res = await api.post('/earn/subscribe', { product_id: product.id, amount_usd: targetUsd });
+      // On the FIRST stake (no binary sponsor yet) send the chosen sponsor
+      // referral code — the server binds it as the permanent binary_parent_id.
+      const payload: Record<string, unknown> = { product_id: product.id, amount_usd: targetUsd };
+      if (needsSponsor && sponsorCode.trim()) {
+        payload.sponsor_code = sponsorCode.trim();
+      }
+      const res = await api.post('/earn/subscribe', payload);
       showToast('success', t('earn.staked'), `${formatAmount(res.data.staked_qta)} QTA`);
       onDone();
     } catch (err: any) {
@@ -942,6 +959,25 @@ function SubscribeModal({ product, qtaBalance, qtaPrice, onClose, onDone }: {
         </div>
 
         <div className="px-5 py-5 space-y-4">
+          {/* Referral (sponsor) code — FIRST stake only. Chosen ONCE, permanent. */}
+          {needsSponsor && (
+            <div>
+              <div className="flex justify-between text-[12px] mb-1.5">
+                <span className="text-exchange-text-third">{t('earn.sponsorLabel')}</span>
+              </div>
+              <input
+                type="text"
+                value={sponsorCode}
+                onChange={(e) => setSponsorCode(e.target.value.toUpperCase())}
+                className="input-field text-center tracking-widest font-semibold uppercase"
+                placeholder={t('earn.sponsorPlaceholder')}
+                maxLength={16}
+              />
+              <p className="text-[11px] text-exchange-text-third mt-1.5">
+                {t('earn.sponsorHint')}
+              </p>
+            </div>
+          )}
           <div>
             <div className="flex justify-between text-[12px] mb-1.5">
               <span className="text-exchange-text-third">{t('earn.targetAmount')} (USD)</span>

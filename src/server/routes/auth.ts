@@ -3,7 +3,6 @@ import type { AppEnv } from '../index';
 import { generateToken, authMiddleware } from '../middleware/auth';
 import { rateLimit } from '../middleware/rateLimit';
 import { requireTurnstile } from '../middleware/turnstile';
-import { placeInBinaryTree } from '../lib/binary-matching';
 import {
   sendMail,
   templateBasic,
@@ -448,16 +447,13 @@ app.post('/register', rlRegister, turnstile, async (c) => {
       l3Credited = credited.l3;
       referrerCreditedQx = credited.l1; // legacy field — direct referrer only
 
-      // Binary matching: auto-place the new member into the sponsor's smaller
-      // leg. Never blocks signup. If the sponsor's downline is already at the
-      // 2x cap, placement is still recorded but flagged (deposit rollup will
-      // drop any over-cap volume until the sponsor raises their own value).
-      try {
-        const placement = await placeInBinaryTree(c.env.DB, id, referrer.id);
-        if (placement.capped) {
-          console.warn(`[register] sponsor ${referrer.id} downline full (2x cap): self=${placement.self_usd} downline=${placement.downline_usd}`);
-        }
-      } catch (e) { console.warn('[register] binary placement failed:', e); }
+      // ⚑ OWNER RULE (2026-08-28, FINAL): the free-signup referral tree
+      //   (`referrals`, QX rewards) is COMPLETELY SEPARATE from the staking
+      //   BINARY tree (binary_parent_id / binary_leg). Signing up with a
+      //   referral code does NOT place the new member into any binary tree.
+      //   The binary sponsor is chosen SEPARATELY, ONCE, on the member's FIRST
+      //   staking subscription (see POST /earn/subscribe). So we do NOT call
+      //   placeInBinaryTree here anymore.
 
       // Best-effort notification to the direct (L1) referrer (does not block signup).
       try {
@@ -1200,14 +1196,10 @@ app.post('/google', rlLogin, async (c) => {
         // Self-referral guard — refCode owner cannot equal new user.
         if (refRow && refRow.id !== id) {
           await creditUplineRewards(c.env.DB, refRow, id, refCode);
-          // Binary matching: auto-place the new member into the sponsor's
-          // smaller leg. Never blocks signup. Flag if sponsor downline is full.
-          try {
-            const placement = await placeInBinaryTree(c.env.DB, id, refRow.id);
-            if (placement.capped) {
-              console.warn(`[oauth] sponsor ${refRow.id} downline full (2x cap): self=${placement.self_usd} downline=${placement.downline_usd}`);
-            }
-          } catch (e) { console.warn('[oauth] binary placement failed:', e); }
+          // ⚑ OWNER RULE (2026-08-28, FINAL): free-signup referral tree is
+          //   SEPARATE from the staking binary tree. Do NOT auto-place into the
+          //   binary tree at signup — the binary sponsor is chosen ONCE on the
+          //   member's FIRST staking subscription. See POST /earn/subscribe.
           // Best-effort notify direct (L1) referrer.
           try {
             const ctx = c.executionCtx as any;
