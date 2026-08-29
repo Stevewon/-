@@ -2622,7 +2622,7 @@ app.post('/staking-grant', async (c) => {
   if (!u) return c.json({ ok: false, error: '회원을 찾을 수 없습니다' }, 404);
 
   const product = await db.prepare(
-    `SELECT id, min_usd, max_usd, term_days, daily_rate, total_return
+    `SELECT id, min_usd, max_usd, term_days, daily_rate
        FROM staking_products WHERE id = ? AND is_active = 1`
   ).bind(product_id).first<any>();
   if (!product) return c.json({ ok: false, error: '스테이킹 상품을 찾을 수 없습니다' }, 404);
@@ -2656,7 +2656,7 @@ app.post('/staking-grant', async (c) => {
              ?, 0, 0, ?,?,0, 0, 'QTA', ?,?, ?, ?,
              ?, ?, ?)`
   ).bind(
-    posId, user_id, product.id, product.total_return || (product.daily_rate * product.term_days),
+    posId, user_id, product.id, (Number(product.daily_rate) * Number(product.term_days)) || 0,
     0, product.term_days,
     principalUsd, product.daily_rate, product.term_days,
     termEndIso, termEndIso, nowIso, nowIso,
