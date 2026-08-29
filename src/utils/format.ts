@@ -6,8 +6,11 @@ export function formatPrice(price: number, decimals: number = 2): string {
 }
 
 export function formatAmount(amount: number): string {
-  if (amount >= 1000000) return (amount / 1000000).toFixed(2) + 'M';
-  if (amount >= 1000) return (amount / 1000).toFixed(2) + 'K';
+  // No K/M abbreviation — show the full number with thousand separators so
+  // it's always unambiguous (e.g. 1,000 / 1,000,000 instead of 1.00K / 1.00M).
+  if (amount >= 1000) {
+    return amount.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  }
   if (amount >= 1) return amount.toFixed(4);
   return amount.toFixed(6);
 }
@@ -18,10 +21,9 @@ export function formatPercent(pct: number): string {
 }
 
 export function formatVolume(vol: number): string {
-  if (vol >= 1e9) return (vol / 1e9).toFixed(2) + 'B';
-  if (vol >= 1e6) return (vol / 1e6).toFixed(2) + 'M';
-  if (vol >= 1e3) return (vol / 1e3).toFixed(2) + 'K';
-  return vol.toFixed(2);
+  // No B/M/K abbreviation — full number with thousand separators so large
+  // volumes read as 1,234,567 instead of 1.23M.
+  return vol.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 }
 
 /**
