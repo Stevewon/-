@@ -2522,6 +2522,40 @@ function SystemTab({ t }: any) {
   const [feeStats, setFeeStats] = useState<any>(null);
   const [loading, setLoading] = useState(false);
 
+  // --- Email deliverability test (login OTP / verification path) ----------
+  const currentUser = useStore((s: any) => s.user);
+  const [mailTo, setMailTo] = useState<string>('');
+  const [mailSending, setMailSending] = useState(false);
+  const [mailResult, setMailResult] = useState<any>(null);
+  useEffect(() => {
+    if (currentUser?.email && !mailTo) setMailTo(currentUser.email);
+  }, [currentUser]);
+  const sendMailTest = async () => {
+    if (mailSending) return;
+    const to = (mailTo || '').trim();
+    if (!to || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+      showToast('error', t('common.error'), '올바른 이메일 주소를 입력하세요');
+      return;
+    }
+    setMailSending(true);
+    setMailResult(null);
+    try {
+      const res = await api.post('/admin/mail-test', { to });
+      setMailResult(res.data);
+      if (res.data?.sent) {
+        showToast('success', '메일 발송 성공', `provider: ${res.data.provider} · ${to} 수신함/스팸함 확인`);
+      } else {
+        showToast('error', '메일 발송 실패', res.data?.error || '알 수 없는 오류');
+      }
+    } catch (e: any) {
+      const data = e?.response?.data;
+      setMailResult(data || { ok: false, error: e?.message || 'request failed' });
+      showToast('error', '메일 발송 실패', data?.error || e?.message || '요청 실패');
+    } finally {
+      setMailSending(false);
+    }
+  };
+
   const load = async () => {
     setLoading(true);
     try {
@@ -2569,6 +2603,71 @@ function SystemTab({ t }: any) {
 
   return (
     <div className="space-y-6">
+      {/* === Email deliverability test === */}
+      <div className="rounded-2xl border border-exchange-border bg-exchange-card/60 p-5 lg:p-6">
+        <div className="flex items-center gap-2 mb-1">
+          <Bell size={18} className="text-exchange-accent" />
+          <h3 className="text-lg font-bold">이메일 발송 테스트</h3>
+        </div>
+        <p className="text-sm text-exchange-text-secondary mb-4">
+          로그인 코드·인증 메일과 <b>완전히 동일한 발송 경로</b>로 실제 테스트 메일을 보냅니다.
+          결과에 실제 사용된 provider와 실패 시 원인이 그대로 표시됩니다.
+        </p>
+        <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+          <input
+            type="email"
+            value={mailTo}
+            onChange={(e) => setMailTo(e.target.value)}
+            placeholder="받는사람@example.com"
+            className="flex-1 px-3 py-2 rounded-lg bg-exchange-bg border border-exchange-border text-sm focus:outline-none focus:border-exchange-accent"
+          />
+          <button
+            onClick={sendMailTest}
+            disabled={mailSending}
+            className="px-4 py-2 rounded-lg bg-exchange-accent text-black font-semibold text-sm hover:opacity-90 disabled:opacity-50 whitespace-nowrap"
+          >
+            {mailSending ? '보내는 중…' : '테스트 메일 보내기'}
+          </button>
+        </div>
+
+        {mailResult && (
+          <div className={`mt-4 rounded-xl border p-4 text-sm ${
+            mailResult.sent
+              ? 'border-exchange-buy/40 bg-exchange-buy/10'
+              : 'border-exchange-sell/40 bg-exchange-sell/10'
+          }`}>
+            <div className="font-semibold mb-2">
+              {mailResult.sent ? '✅ 발송 성공' : '❌ 발송 실패'}
+              {mailResult.provider ? ` · provider: ${mailResult.provider}` : ''}
+            </div>
+            <div className="space-y-1 text-exchange-text-secondary">
+              {mailResult.to && <div>받는사람: <span className="text-exchange-text">{mailResult.to}</span></div>}
+              {mailResult.config && (
+                <div>
+                  RESEND_API_KEY 설정됨:{' '}
+                  <span className={mailResult.config.resend_api_key ? 'text-exchange-buy' : 'text-exchange-sell'}>
+                    {mailResult.config.resend_api_key ? '예' : '아니오'}
+                  </span>
+                  {' · '}발신주소(MAIL_FROM): <span className="text-exchange-text">{mailResult.config.mail_from}</span>
+                  {mailResult.config.mail_dev_noop && (
+                    <span className="text-exchange-sell"> · ⚠️ MAIL_DEV_NOOP=1 (발송 비활성)</span>
+                  )}
+                </div>
+              )}
+              {mailResult.error && (
+                <div className="text-exchange-sell break-all">실패 원인: {mailResult.error}</div>
+              )}
+              {mailResult.hint && <div className="text-exchange-text-third">{mailResult.hint}</div>}
+              {mailResult.sent && (
+                <div className="text-exchange-text-third">
+                  * provider가 수락했다는 의미입니다. 받은편지함과 <b>스팸함</b>을 꼭 확인하세요.
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* === Hero status banner (PC-optimised, large) === */}
       <div className={`rounded-2xl border-2 p-6 lg:p-8 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 ${
         health.status === 'ok'
