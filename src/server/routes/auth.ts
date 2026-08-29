@@ -7,6 +7,7 @@ import {
   sendMail,
   templateBasic,
   tmplLoginAlert,
+  tmplPasswordChanged,
   fireAndForgetMail,
   metaFromReq,
 } from '../utils/mailer';
@@ -1891,6 +1892,25 @@ app.post('/reset-password', async (c) => {
       `UPDATE password_resets SET used_at = CURRENT_TIMESTAMP WHERE id = ?`
     ).bind(row.id),
   ]);
+
+  // Security notification: tell the user their password was just changed so
+  // an account takeover via a leaked reset link is noticed. Fire-and-forget
+  // so a mailer hiccup never blocks the reset response.
+  try {
+    const owner = await c.env.DB.prepare('SELECT email FROM users WHERE id = ?')
+      .bind(row.user_id).first<{ email: string }>();
+    if (owner?.email) {
+      const appUrl = (c.env as any).APP_URL || 'https://quantaex.io';
+      fireAndForgetMail(
+        c.env as any,
+        owner.email,
+        tmplPasswordChanged(appUrl, metaFromReq(c.req)),
+        c.executionCtx as any,
+      );
+    }
+  } catch (e) {
+    console.warn('[reset-password] confirmation email failed:', e);
+  }
 
   return c.json({ ok: true, message: 'Password reset successful' });
 });
