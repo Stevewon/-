@@ -1,7 +1,6 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../index';
 import { authMiddleware } from '../middleware/auth';
-import { requireKyc } from '../middleware/kyc';
 import { rateLimit } from '../middleware/rateLimit';
 import { getUserFeeTier, recordFeeLedger, type FeeTier } from '../utils/fees';
 import { getRiskState } from '../lib/risk';
@@ -24,8 +23,11 @@ function floorToDecimals(n: number, decimals: number): number {
   return Math.floor(n * p) / p;
 }
 
-// Place order — requires approved KYC (gates all trading)
-app.post('/', authMiddleware, rlPlaceOrder, requireKyc('approved'), async (c) => {
+// Place order — KYC is NOT required for trading (buy/sell).
+// KYC is enforced ONLY on withdrawals (see routes/wallet.ts).
+// SELL policy is unchanged: QTA daily sell cap for regular members,
+// company account exempt (see check below).
+app.post('/', authMiddleware, rlPlaceOrder, async (c) => {
   // Phase F: global circuit breaker. When admin flips this on (Risk tab),
   // all *new* order placement halts immediately; existing resting orders
   // remain on the book and can still be cancelled by the user.
