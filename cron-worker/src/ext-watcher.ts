@@ -255,13 +255,25 @@ export async function extDepositTick(env: ExtWatcherEnv): Promise<{
       ).bind(net.chain, net.network, head, nowIso).run();
     } catch { /* non-fatal */ }
 
+    // ★★★ OWNER RULE (2026-08-29) — DEPOSIT REQUIRES ADMIN APPROVAL ★★★
+    // A user's on-chain deposit must NOT auto-credit their tradable balance
+    // just because it confirmed on-chain. Once confirmed we park it in
+    // 'awaiting_approval' (no wallet credit); an admin verifies the main-wallet
+    // receipt and clicks Approve to credit it (see routes/admin.ts →
+    // /admin/ext-deposits/:id/approve).
+    //
+    // EXEMPTION: company / admin accounts auto-credit as before so exchange
+    // liquidity is never held up. We LEFT JOIN users to learn the role/email.
     const { results: pending } = await env.DB.prepare(
-      `SELECT id, user_id, coin_symbol, amount, block_height, required_confs
-         FROM ext_deposits
-        WHERE chain = ? AND network = ? AND status IN ('detected','confirming')`
+      `SELECT d.id, d.user_id, d.coin_symbol, d.amount, d.block_height,
+              d.required_confs, u.role AS user_role, u.email AS user_email
+         FROM ext_deposits d
+         LEFT JOIN users u ON u.id = d.user_id
+        WHERE d.chain = ? AND d.network = ? AND d.status IN ('detected','confirming')`
     ).bind(net.chain, net.network).all<{
       id: string; user_id: string; coin_symbol: string; amount: string;
       block_height: number | null; required_confs: number;
+      user_role: string | null; user_email: string | null;
     }>();
     pendingCount += (pending || []).length;
 
@@ -271,40 +283,60 @@ export async function extDepositTick(env: ExtWatcherEnv): Promise<{
       const confs = Math.max(0, head - d.block_height);
       const need = d.required_confs || net.requiredConfs;
 
+      // Company / admin account is exempt from the approval gate.
+      const isCompanyAccount =
+        String(d.user_role || '').toLowerCase() === 'admin' ||
+        String(d.user_email || '').toLowerCase() === 'admin@quantaex.io';
+
       if (confs >= need) {
         const asset = String(d.coin_symbol || 'USDT').toUpperCase();
         const amt = Number(d.amount || '0');
-        if (amt > 0) {
-          // Ensure wallet row exists.
+
+        if (isCompanyAccount) {
+          // ── AUTO-CREDIT (company/admin only) ──────────────────────────────
+          if (amt > 0) {
+            // Ensure wallet row exists.
+            stmts.push(
+              env.DB.prepare(
+                `INSERT INTO wallets (user_id, coin_symbol, available, locked)
+                 VALUES (?, ?, 0, 0)
+                 ON CONFLICT(user_id, coin_symbol) DO NOTHING`
+              ).bind(d.user_id, asset),
+            );
+            // Status-guarded credit (idempotent under racing ticks): the wallet
+            // UPDATE only fires while THIS deposit is still un-credited.
+            stmts.push(
+              env.DB.prepare(
+                `UPDATE wallets SET available = available + ?
+                   WHERE user_id = ? AND coin_symbol = ?
+                     AND EXISTS (
+                       SELECT 1 FROM ext_deposits
+                        WHERE id = ? AND status IN ('detected','confirming')
+                     )`
+              ).bind(amt, d.user_id, asset, d.id),
+            );
+          }
+          // Flip status AFTER the guarded credit (batch runs sequentially).
           stmts.push(
             env.DB.prepare(
-              `INSERT INTO wallets (user_id, coin_symbol, available, locked)
-               VALUES (?, ?, 0, 0)
-               ON CONFLICT(user_id, coin_symbol) DO NOTHING`
-            ).bind(d.user_id, asset),
+              `UPDATE ext_deposits
+                  SET status = 'credited', confirmations = ?, credited_at = ?, updated_at = ?
+                WHERE id = ? AND status IN ('detected','confirming')`
+            ).bind(confs, nowIso, nowIso, d.id),
           );
-          // Status-guarded credit (idempotent under racing ticks): the wallet
-          // UPDATE only fires while THIS deposit is still un-credited.
+          credited++;
+        } else {
+          // ── AWAIT ADMIN APPROVAL (regular users) ──────────────────────────
+          // Do NOT touch the wallet. Park the row so an admin can review the
+          // main-wallet receipt and approve/reject it in the admin panel.
           stmts.push(
             env.DB.prepare(
-              `UPDATE wallets SET available = available + ?
-                 WHERE user_id = ? AND coin_symbol = ?
-                   AND EXISTS (
-                     SELECT 1 FROM ext_deposits
-                      WHERE id = ? AND status IN ('detected','confirming')
-                   )`
-            ).bind(amt, d.user_id, asset, d.id),
+              `UPDATE ext_deposits
+                  SET status = 'awaiting_approval', confirmations = ?, updated_at = ?
+                WHERE id = ? AND status IN ('detected','confirming')`
+            ).bind(confs, nowIso, d.id),
           );
         }
-        // Flip status AFTER the guarded credit (batch runs sequentially).
-        stmts.push(
-          env.DB.prepare(
-            `UPDATE ext_deposits
-                SET status = 'credited', confirmations = ?, credited_at = ?, updated_at = ?
-              WHERE id = ? AND status IN ('detected','confirming')`
-          ).bind(confs, nowIso, nowIso, d.id),
-        );
-        credited++;
       } else {
         // Not yet confirmed: just bump the confirmation count / mark confirming.
         stmts.push(

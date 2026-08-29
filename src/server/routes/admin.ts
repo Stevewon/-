@@ -920,6 +920,160 @@ app.get('/deposits/manual', async (c) => {
 });
 
 // ============================================================================
+// On-chain (external) deposit APPROVAL queue — owner rule 2026-08-29.
+// ----------------------------------------------------------------------------
+// A confirmed on-chain USDT deposit for a REGULAR user is parked by the cron
+// watcher in ext_deposits.status = 'awaiting_approval' (NO wallet credit). The
+// admin verifies the main wallet actually received the funds, then Approves
+// here — only then is the user's `available` balance credited and the deposit
+// becomes usable for buying QTA. Company/admin accounts auto-credit (never
+// enter this queue). Approve/Reject are atomic + idempotent.
+// ============================================================================
+
+// GET /admin/ext-deposits?status=awaiting_approval|credited|rejected|confirming|detected|all
+app.get('/ext-deposits', async (c) => {
+  const db = c.env.DB;
+  const status = (c.req.query('status') || 'awaiting_approval').trim();
+  const limit = Math.min(parseInt(c.req.query('limit') || '200'), 500);
+
+  let sql = `
+    SELECT d.id, d.user_id, d.chain, d.network, d.coin_symbol, d.address,
+           d.tx_hash, d.block_height, d.amount, d.confirmations, d.required_confs,
+           d.status, d.credited_at, d.approved_by, d.approved_at, d.rejected_reason,
+           d.created_at, u.email, u.nickname
+      FROM ext_deposits d
+      LEFT JOIN users u ON u.id = d.user_id
+  `;
+  const params: any[] = [];
+  if (status && status !== 'all') {
+    sql += ' WHERE d.status = ?';
+    params.push(status);
+  }
+  sql += ' ORDER BY d.created_at DESC LIMIT ?';
+  params.push(limit);
+
+  const { results } = await db.prepare(sql).bind(...params).all<any>();
+
+  // Count still awaiting approval (for the badge), independent of the filter.
+  const pend = await db.prepare(
+    `SELECT COUNT(*) AS cnt FROM ext_deposits WHERE status = 'awaiting_approval'`
+  ).first<{ cnt: number }>();
+
+  return c.json({ rows: results || [], awaiting_count: pend?.cnt || 0 });
+});
+
+// POST /admin/ext-deposits/:id/approve — credit the user's wallet, mark credited.
+app.post('/ext-deposits/:id/approve', async (c) => {
+  const db = c.env.DB;
+  const admin = c.get('user') as { id: string; email: string };
+  const id = c.req.param('id');
+
+  const row = await db.prepare(
+    `SELECT id, user_id, coin_symbol, amount, status FROM ext_deposits WHERE id = ?`
+  ).bind(id).first<any>();
+  if (!row) return c.json({ error: 'not_found' }, 404);
+  if (row.status !== 'awaiting_approval') {
+    return c.json({ error: 'invalid_status', status: row.status }, 409);
+  }
+
+  const asset = String(row.coin_symbol || 'USDT').toUpperCase();
+  const amt = Number(row.amount || '0');
+  const nowIso = new Date().toISOString();
+
+  // Atomic claim: flip status ONLY while still awaiting_approval. If a
+  // concurrent approve already claimed it, changes === 0 and we bail — so the
+  // wallet is never credited twice.
+  const claim = await db.prepare(
+    `UPDATE ext_deposits
+        SET status = 'credited', credited_at = ?, approved_by = ?, approved_at = ?, updated_at = ?
+      WHERE id = ? AND status = 'awaiting_approval'`
+  ).bind(nowIso, admin.id, nowIso, nowIso, id).run();
+  if (!claim.meta || claim.meta.changes === 0) {
+    return c.json({ error: 'invalid_status' }, 409);
+  }
+
+  // Credit the user's balance now that an admin verified the main-wallet receipt.
+  if (amt > 0) {
+    await db.prepare(
+      `INSERT INTO wallets (id, user_id, coin_symbol, available, locked)
+       VALUES (?, ?, ?, 0, 0)
+       ON CONFLICT(user_id, coin_symbol) DO NOTHING`
+    ).bind(uuid(), row.user_id, asset).run();
+    await db.prepare(
+      `UPDATE wallets SET available = available + ? WHERE user_id = ? AND coin_symbol = ?`
+    ).bind(amt, row.user_id, asset).run();
+  }
+
+  try {
+    await createNotification(db, row.user_id, {
+      type: 'deposit',
+      title: 'Deposit Approved',
+      message: `+${amt} ${asset} deposit approved and credited to your wallet.`,
+      data: { coin: asset, amount: amt, tx_hash: row.tx_hash, onchain: true },
+    });
+  } catch { /* ignore */ }
+
+  await logAdminAction(c, {
+    action: 'ext_deposit.approve',
+    targetType: 'ext_deposit',
+    targetId: id,
+    payload: { user_id: row.user_id, coin: asset, amount: amt, tx_hash: row.tx_hash },
+  });
+
+  try {
+    const to = await lookupEmail(db, row.user_id);
+    if (to) {
+      const appUrl = (c.env as any).APP_URL || 'https://quantaex.io';
+      fireAndForgetMail(
+        c.env as any,
+        to,
+        tmplDepositCredited(appUrl, { amount: amt, coin: asset, txHash: row.tx_hash, note: null }),
+        c.executionCtx as any,
+      );
+    }
+  } catch (e) { console.warn('[ext_deposit.approve] mail failed:', e); }
+
+  return c.json({ ok: true, id, status: 'credited', credited: amt, coin: asset });
+});
+
+// POST /admin/ext-deposits/:id/reject — mark rejected (no credit). Body: { reason }
+app.post('/ext-deposits/:id/reject', async (c) => {
+  const db = c.env.DB;
+  const admin = c.get('user') as { id: string; email: string };
+  const id = c.req.param('id');
+  let body: any = {};
+  try { body = await c.req.json(); } catch { /* empty ok */ }
+  const reason = String(body.reason || 'rejected by admin').slice(0, 200);
+
+  const row = await db.prepare(
+    `SELECT id, user_id, coin_symbol, amount, status FROM ext_deposits WHERE id = ?`
+  ).bind(id).first<any>();
+  if (!row) return c.json({ error: 'not_found' }, 404);
+  if (row.status !== 'awaiting_approval') {
+    return c.json({ error: 'invalid_status', status: row.status }, 409);
+  }
+
+  const nowIso = new Date().toISOString();
+  const claim = await db.prepare(
+    `UPDATE ext_deposits
+        SET status = 'rejected', rejected_reason = ?, approved_by = ?, approved_at = ?, updated_at = ?
+      WHERE id = ? AND status = 'awaiting_approval'`
+  ).bind(reason, admin.id, nowIso, nowIso, id).run();
+  if (!claim.meta || claim.meta.changes === 0) {
+    return c.json({ error: 'invalid_status' }, 409);
+  }
+
+  await logAdminAction(c, {
+    action: 'ext_deposit.reject',
+    targetType: 'ext_deposit',
+    targetId: id,
+    payload: { user_id: row.user_id, coin: row.coin_symbol, amount: row.amount, reason },
+  });
+
+  return c.json({ ok: true, id, status: 'rejected' });
+});
+
+// ============================================================================
 // Trade history
 // ============================================================================
 app.get('/trades', async (c) => {

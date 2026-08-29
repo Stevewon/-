@@ -1056,17 +1056,31 @@ function DepositsTab({ t, onUpdate }: any) {
   // Sprint 5 Phase A1 — default to "pending" so the operator immediately
   // sees the manual-deposit work queue when entering this tab. Tab order
   // is also reshuffled to put pending first.
-  const [status, setStatus] = useState('pending');
+  // Default to the on-chain approval queue: after the 2026-08-29 owner rule,
+  // confirmed on-chain USDT deposits wait here for an admin to approve before
+  // the user's balance is credited (and they can buy QTA).
+  const [status, setStatus] = useState('onchain');
   const [list, setList] = useState<any[]>([]);
   const [showManual, setShowManual] = useState(false);
   // Manual (voucher / 인증코드) deposits view — separate live ledger with totals.
   const [manualTotals, setManualTotals] = useState<any[]>([]);
   const [manualQ, setManualQ] = useState('');
   const isManual = status === 'manual';
+  const isOnchain = status === 'onchain';
+  // On-chain approval queue state.
+  const [onchainStatus, setOnchainStatus] = useState('awaiting_approval');
+  const [awaitingCount, setAwaitingCount] = useState(0);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
   const load = async () => {
     try {
-      if (isManual) {
+      if (isOnchain) {
+        // On-chain deposit approval queue.
+        const res = await api.get(`/admin/ext-deposits?status=${onchainStatus}`);
+        setList(res.data.rows || []);
+        setAwaitingCount(Number(res.data.awaiting_count || 0));
+        setManualTotals([]);
+      } else if (isManual) {
         // Dedicated MANUAL ledger: rows + per-coin running totals (live).
         const url = `/admin/deposits/manual${manualQ.trim() ? `?q=${encodeURIComponent(manualQ.trim())}` : ''}`;
         const res = await api.get(url);
@@ -1082,7 +1096,34 @@ function DepositsTab({ t, onUpdate }: any) {
       showToast('error', t('common.error'), e.response?.data?.error || 'Load failed');
     }
   };
-  useEffect(() => { load(); }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [status, onchainStatus]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Approve an on-chain deposit → credits the user's balance.
+  const approveOnchain = async (d: any) => {
+    if (!window.confirm(`${d.email || d.nickname || d.user_id}\n+${d.amount} ${d.coin_symbol} 입금을 승인하시겠습니까?\n승인 시 사용자 잔고에 반영되어 매수가 가능해집니다.`)) return;
+    setBusyId(d.id);
+    try {
+      await api.post(`/admin/ext-deposits/${d.id}/approve`);
+      showToast('success', '승인 완료', `+${d.amount} ${d.coin_symbol} 가 사용자 잔고에 반영되었습니다.`);
+      load(); onUpdate?.();
+    } catch (e: any) {
+      showToast('error', t('common.error'), e.response?.data?.error || 'Approve failed');
+    } finally { setBusyId(null); }
+  };
+
+  // Reject an on-chain deposit → no credit.
+  const rejectOnchain = async (d: any) => {
+    const reason = window.prompt('거부 사유를 입력하세요 (선택)', '') ?? null;
+    if (reason === null) return; // cancelled
+    setBusyId(d.id);
+    try {
+      await api.post(`/admin/ext-deposits/${d.id}/reject`, { reason });
+      showToast('success', '거부 완료', '해당 입금을 거부했습니다 (잔고 미반영).');
+      load(); onUpdate?.();
+    } catch (e: any) {
+      showToast('error', t('common.error'), e.response?.data?.error || 'Reject failed');
+    } finally { setBusyId(null); }
+  };
 
   // Live refresh: while the MANUAL ledger is open, poll every 8s so newly
   // credited vouchers appear in real time without a manual reload.
@@ -1098,12 +1139,17 @@ function DepositsTab({ t, onUpdate }: any) {
     <div>
       <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
         <div className="flex items-center gap-1 bg-exchange-card rounded-lg border border-exchange-border p-1 w-fit flex-wrap">
-          {['pending', 'completed', 'rejected', '', 'manual'].map(s => (
+          {['onchain', 'pending', 'completed', 'rejected', '', 'manual'].map(s => (
             <button key={s || 'all'} onClick={() => setStatus(s)} className={`px-3 py-1 text-xs rounded-md flex items-center gap-1.5 ${status === s ? 'bg-exchange-hover text-exchange-yellow' : 'text-exchange-text-secondary'}`}>
-              {s === '' ? t('common.all') : s === 'manual' ? t('admin.manualLedger') : s}
+              {s === '' ? t('common.all') : s === 'manual' ? t('admin.manualLedger') : s === 'onchain' ? '온체인 승인' : s}
               {s === 'pending' && pendingCount !== null && pendingCount > 0 && (
                 <span className="bg-exchange-yellow text-black text-[9px] font-bold rounded px-1.5 py-0.5 tabular-nums">
                   {pendingCount}
+                </span>
+              )}
+              {s === 'onchain' && awaitingCount > 0 && (
+                <span className="bg-exchange-sell text-white text-[9px] font-bold rounded px-1.5 py-0.5 tabular-nums">
+                  {awaitingCount}
                 </span>
               )}
               {s === 'manual' && <span className="w-1.5 h-1.5 rounded-full bg-exchange-buy animate-pulse" title="LIVE" />}
@@ -1139,6 +1185,96 @@ function DepositsTab({ t, onUpdate }: any) {
         </div>
       )}
 
+      {/* ── ON-CHAIN approval queue ─────────────────────────────────────── */}
+      {isOnchain && (
+        <div>
+          <div className="mb-3 rounded-lg border border-exchange-border bg-exchange-card px-4 py-3 text-[11px] text-exchange-text-secondary leading-relaxed">
+            사용자의 온체인 USDT 입금은 <b className="text-exchange-yellow">자동으로 잔고에 반영되지 않습니다.</b> 메인지갑에 실제 입금된 것을 확인하신 뒤 <b className="text-exchange-buy">승인</b>을 누르셔야 사용자 잔고에 반영되어 매수가 가능합니다. (회사·관리자 계정은 자동 반영 예외)
+          </div>
+          <div className="flex items-center gap-1 mb-3 bg-exchange-card rounded-lg border border-exchange-border p-1 w-fit flex-wrap">
+            {[
+              ['awaiting_approval', '승인 대기'],
+              ['credited', '승인됨'],
+              ['rejected', '거부됨'],
+              ['confirming', '컨펌 중'],
+              ['all', '전체'],
+            ].map(([s, label]) => (
+              <button key={s} onClick={() => setOnchainStatus(s)} className={`px-3 py-1 text-xs rounded-md ${onchainStatus === s ? 'bg-exchange-hover text-exchange-yellow' : 'text-exchange-text-secondary'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="card overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-xs text-exchange-text-third border-b border-exchange-border">
+                  <th className="text-left px-3 py-2.5">회원</th>
+                  <th className="text-left px-3 py-2.5">{t('admin.coin')}</th>
+                  <th className="text-right px-3 py-2.5">{t('admin.amount')}</th>
+                  <th className="text-left px-3 py-2.5">{t('admin.network')}</th>
+                  <th className="text-left px-3 py-2.5">Tx</th>
+                  <th className="text-center px-3 py-2.5">컨펌</th>
+                  <th className="text-left px-3 py-2.5">{t('admin.status')}</th>
+                  <th className="text-left px-3 py-2.5">{t('trade.time')}</th>
+                  <th className="text-right px-3 py-2.5">처리</th>
+                </tr>
+              </thead>
+              <tbody>
+                {list.length === 0 ? (
+                  <tr><td colSpan={9} className="px-3 py-8 text-center text-exchange-text-third text-xs">{t('admin.noData')}</td></tr>
+                ) : list.map(d => (
+                  <tr key={d.id} className="border-b border-exchange-border/50 hover:bg-exchange-hover/30">
+                    <td className="px-3 py-2 text-xs">
+                      <div>{d.nickname || '-'}</div>
+                      <div className="text-[10px] text-exchange-text-third">{d.email}</div>
+                    </td>
+                    <td className="px-3 py-2 text-xs font-medium">{d.coin_symbol}</td>
+                    <td className="px-3 py-2 text-right text-xs tabular-nums text-exchange-buy">+{formatPrice(d.amount)}</td>
+                    <td className="px-3 py-2 text-[11px] uppercase">{d.network || '-'}</td>
+                    <td className="px-3 py-2 text-[11px] text-exchange-text-secondary font-mono" title={d.tx_hash}>
+                      {(d.tx_hash || '').slice(0, 12)}{d.tx_hash && d.tx_hash.length > 12 ? '…' : ''}
+                    </td>
+                    <td className="px-3 py-2 text-center text-[11px] tabular-nums">{d.confirmations}/{d.required_confs}</td>
+                    <td className="px-3 py-2">
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                        d.status === 'credited' ? 'bg-exchange-buy/15 text-exchange-buy' :
+                        d.status === 'awaiting_approval' ? 'bg-exchange-sell/15 text-exchange-sell' :
+                        d.status === 'rejected' ? 'bg-exchange-text-third/15 text-exchange-text-third' :
+                        'bg-exchange-yellow/15 text-exchange-yellow'
+                      }`}>
+                        {d.status === 'awaiting_approval' ? '승인 대기' : d.status === 'credited' ? '승인됨' : d.status === 'rejected' ? '거부됨' : d.status}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-[11px] text-exchange-text-third">{timeAgo(d.created_at, t)}</td>
+                    <td className="px-3 py-2 text-right whitespace-nowrap">
+                      {d.status === 'awaiting_approval' ? (
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button
+                            disabled={busyId === d.id}
+                            onClick={() => approveOnchain(d)}
+                            className="text-[11px] px-2.5 py-1 rounded-md bg-exchange-buy/15 text-exchange-buy hover:bg-exchange-buy/25 disabled:opacity-50"
+                          >{t('admin.approve')}</button>
+                          <button
+                            disabled={busyId === d.id}
+                            onClick={() => rejectOnchain(d)}
+                            className="text-[11px] px-2.5 py-1 rounded-md bg-exchange-sell/15 text-exchange-sell hover:bg-exchange-sell/25 disabled:opacity-50"
+                          >{t('admin.reject')}</button>
+                        </div>
+                      ) : (
+                        <span className="text-[10px] text-exchange-text-third">
+                          {d.rejected_reason ? d.rejected_reason : (d.approved_at ? '처리됨' : '-')}
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {!isOnchain && (
       <div className="card overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
@@ -1178,6 +1314,7 @@ function DepositsTab({ t, onUpdate }: any) {
           </tbody>
         </table>
       </div>
+      )}
 
       {showManual && <ManualDepositModal onClose={() => setShowManual(false)} onSuccess={() => { setShowManual(false); load(); onUpdate?.(); }} t={t} />}
     </div>
