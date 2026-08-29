@@ -308,6 +308,7 @@ let qtaWithdrawalsAssetBootstrapDone = false;
 let qtaDepositsAssetBootstrapDone = false;
 let coinPricePolicyBootstrapDone = false;
 let stakingSelfUsdBootstrapDone = false;
+let extDepositApprovalBootstrapDone = false;
 let adminPasswordRotateBootstrapDone = false;
 // One-off (2026-08): hard-delete the ENTIRE referral downline under nickname
 // 'sally1992' (all levels), freeing nickname+email for re-registration.
@@ -1799,6 +1800,71 @@ app.use('/api/*', async (c, next) => {
             console.log('[bootstrap] staking_positions.binary_counted_at (0052) applied to production D1');
           } catch (e) {
             captureError(c as any, e, { where: 'staking-self-usd-bootstrap' });
+          }
+        })()
+      );
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // 2026-08-29 · migration 0054 self-bootstrap:
+  //   On-chain USDT deposits for regular users now wait for admin
+  //   approval before being credited. This adds the approval-tracking
+  //   columns to ext_deposits (approved_by / approved_at /
+  //   rejected_reason) plus an index for the awaiting-approval queue.
+  //   Pages workers cannot run `wrangler d1 migrations apply`, so the
+  //   very first request after a cold start checks system_markers for
+  //   `migration_0054_ext_deposit_approval = live` and, if missing,
+  //   idempotently applies the schema. Each ALTER TABLE … ADD COLUMN is
+  //   wrapped in try/catch because it throws if the column already
+  //   exists (e.g. partial prior run).
+  // ------------------------------------------------------------------
+  if (!extDepositApprovalBootstrapDone) {
+    const ctx = c.executionCtx as any;
+    if (ctx && typeof ctx.waitUntil === 'function') {
+      ctx.waitUntil(
+        (async () => {
+          try {
+            const marker = await c.env.DB.prepare(
+              "SELECT value FROM system_markers WHERE key = 'migration_0054_ext_deposit_approval'"
+            ).first<{ value: string }>().catch(() => null);
+            if (marker && marker.value === 'live') {
+              extDepositApprovalBootstrapDone = true;
+              return;
+            }
+
+            try {
+              await c.env.DB.prepare(
+                `ALTER TABLE ext_deposits ADD COLUMN approved_by TEXT`
+              ).run();
+            } catch (_e) { /* column already exists */ }
+            try {
+              await c.env.DB.prepare(
+                `ALTER TABLE ext_deposits ADD COLUMN approved_at TEXT`
+              ).run();
+            } catch (_e) { /* column already exists */ }
+            try {
+              await c.env.DB.prepare(
+                `ALTER TABLE ext_deposits ADD COLUMN rejected_reason TEXT`
+              ).run();
+            } catch (_e) { /* column already exists */ }
+            try {
+              await c.env.DB.prepare(
+                `CREATE INDEX IF NOT EXISTS idx_ext_deposits_awaiting
+                   ON ext_deposits(status, created_at)`
+              ).run();
+            } catch (_e) { /* ignore */ }
+
+            await c.env.DB.prepare(
+              `INSERT INTO system_markers (key, value, updated_at)
+               VALUES ('migration_0054_ext_deposit_approval','live',CURRENT_TIMESTAMP)
+               ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP`
+            ).run();
+
+            extDepositApprovalBootstrapDone = true;
+            console.log('[bootstrap] ext_deposits approval columns (0054) applied to production D1');
+          } catch (e) {
+            captureError(c as any, e, { where: 'ext-deposit-approval-bootstrap' });
           }
         })()
       );
