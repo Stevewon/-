@@ -67,6 +67,11 @@ export type Env = {
   // add an r2_buckets entry in wrangler.jsonc to enable R2 storage:
   //   "r2_buckets": [{ "binding": "KYC_BUCKET", "bucket_name": "quantaex-kyc" }]
   KYC_BUCKET?: R2Bucket;
+  // Company-only TWAP split-sell: shared secret the cron worker presents to the
+  // internal /api/orders/twap-tick endpoint so only the trusted scheduler can
+  // fire treasury slices. Set via `wrangler pages secret put TWAP_CRON_SECRET`
+  // on this project AND as a var/secret on the cron worker (same value).
+  TWAP_CRON_SECRET?: string;
 };
 
 export type AppVars = {
@@ -309,6 +314,7 @@ let qtaDepositsAssetBootstrapDone = false;
 let coinPricePolicyBootstrapDone = false;
 let stakingSelfUsdBootstrapDone = false;
 let extDepositApprovalBootstrapDone = false;
+let twapOrdersBootstrapDone = false;
 let adminPasswordRotateBootstrapDone = false;
 // One-off (2026-08): hard-delete the ENTIRE referral downline under nickname
 // 'sally1992' (all levels), freeing nickname+email for re-registration.
@@ -1865,6 +1871,76 @@ app.use('/api/*', async (c, next) => {
             console.log('[bootstrap] ext_deposits approval columns (0054) applied to production D1');
           } catch (e) {
             captureError(c as any, e, { where: 'ext-deposit-approval-bootstrap' });
+          }
+        })()
+      );
+    }
+  }
+
+  // ── Migration 0055: company-only TWAP split-sell table ────────────────────
+  // The Pages worker owns the internal /api/orders/twap-tick endpoint that the
+  // cron worker calls, so we make sure the twap_orders table exists here too
+  // (redundant with cron-worker/src/migrate.ts — whichever runs first wins).
+  if (!twapOrdersBootstrapDone) {
+    const ctx = c.executionCtx as any;
+    if (ctx && typeof ctx.waitUntil === 'function') {
+      ctx.waitUntil(
+        (async () => {
+          try {
+            const marker = await c.env.DB.prepare(
+              "SELECT value FROM system_markers WHERE key = 'migration_0055_twap_orders'"
+            ).first<{ value: string }>().catch(() => null);
+            if (marker && marker.value === 'live') {
+              twapOrdersBootstrapDone = true;
+              return;
+            }
+
+            try {
+              await c.env.DB.prepare(
+                `CREATE TABLE IF NOT EXISTS twap_orders (
+                  id               TEXT PRIMARY KEY,
+                  user_id          TEXT NOT NULL,
+                  market_symbol    TEXT NOT NULL,
+                  side             TEXT NOT NULL DEFAULT 'sell',
+                  order_type       TEXT NOT NULL DEFAULT 'limit',
+                  limit_price      REAL,
+                  total_amount     REAL NOT NULL,
+                  remaining_amount REAL NOT NULL,
+                  slice_count      INTEGER NOT NULL,
+                  slice_amount     REAL NOT NULL,
+                  slices_done      INTEGER NOT NULL DEFAULT 0,
+                  interval_sec     INTEGER NOT NULL,
+                  next_run_at      TEXT NOT NULL,
+                  end_at           TEXT,
+                  status           TEXT NOT NULL DEFAULT 'active',
+                  note             TEXT,
+                  last_error       TEXT,
+                  created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+                  updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+                )`
+              ).run();
+            } catch (_e) { /* already exists */ }
+            try {
+              await c.env.DB.prepare(
+                `CREATE INDEX IF NOT EXISTS idx_twap_active ON twap_orders(status, next_run_at)`
+              ).run();
+            } catch (_e) { /* ignore */ }
+            try {
+              await c.env.DB.prepare(
+                `CREATE INDEX IF NOT EXISTS idx_twap_user ON twap_orders(user_id, created_at DESC)`
+              ).run();
+            } catch (_e) { /* ignore */ }
+
+            await c.env.DB.prepare(
+              `INSERT INTO system_markers (key, value, updated_at)
+               VALUES ('migration_0055_twap_orders','live',CURRENT_TIMESTAMP)
+               ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP`
+            ).run();
+
+            twapOrdersBootstrapDone = true;
+            console.log('[bootstrap] twap_orders table (0055) applied to production D1');
+          } catch (e) {
+            captureError(c as any, e, { where: 'twap-orders-bootstrap' });
           }
         })()
       );

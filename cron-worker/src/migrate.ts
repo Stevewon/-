@@ -279,6 +279,37 @@ const MIGRATIONS: Migration[] = [
       `ALTER TABLE users ADD COLUMN binary_leg_assigned_at TEXT`,
     ],
   },
+  {
+    // 0055 — Company-only TWAP split-sell engine. Parent order + slice tracking.
+    // Mirrors /migrations/0055_twap_orders.sql. All statements are
+    // CREATE ... IF NOT EXISTS / idempotent → re-running is a safe no-op.
+    id: '0055_twap_orders',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS twap_orders (
+        id               TEXT PRIMARY KEY,
+        user_id          TEXT NOT NULL,
+        market_symbol    TEXT NOT NULL,
+        side             TEXT NOT NULL DEFAULT 'sell',
+        order_type       TEXT NOT NULL DEFAULT 'limit',
+        limit_price      REAL,
+        total_amount     REAL NOT NULL,
+        remaining_amount REAL NOT NULL,
+        slice_count      INTEGER NOT NULL,
+        slice_amount     REAL NOT NULL,
+        slices_done      INTEGER NOT NULL DEFAULT 0,
+        interval_sec     INTEGER NOT NULL,
+        next_run_at      TEXT NOT NULL,
+        end_at           TEXT,
+        status           TEXT NOT NULL DEFAULT 'active',
+        note             TEXT,
+        last_error       TEXT,
+        created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_twap_active ON twap_orders(status, next_run_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_twap_user   ON twap_orders(user_id, created_at DESC)`,
+    ],
+  },
 ];
 
 export interface MigrateResult {

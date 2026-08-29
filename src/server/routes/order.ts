@@ -765,4 +765,164 @@ async function triggerAndMatch(
   return matchOrder(DB, orderId, market, lockInfo);
 }
 
+// ============================================================================
+// Company-only TWAP split-sell — internal slice executor.
+// ----------------------------------------------------------------------------
+// The cron worker (quantaex-cron) calls this endpoint every 5 minutes with the
+// shared TWAP_CRON_SECRET. For every ACTIVE twap_orders row whose next_run_at
+// has passed, we fire ONE slice using the exact same lock + insert + matchOrder
+// path as a normal order — so slippage refunds, fee tiers, candle updates and
+// price bookkeeping all behave identically. The company account is already
+// exempt from the QTA daily sell cap, so slices never hit that gate.
+//
+// Design notes:
+//   • ONE slice per parent per tick → the sell pressure is spread thin (the
+//     whole point of TWAP: 급락 방지 / avoid crashing the displayed price).
+//   • Limit slices rest on the book at limit_price if they don't fully fill;
+//     market slices are IOC and any unfilled base is refunded to available.
+//   • remaining_amount is decremented by the slice size we *attempted*; the
+//     matcher refunds any unconsumed lock, so the wallet stays correct even if
+//     a slice only partially fills. When remaining hits ~0 (or all slices are
+//     done) the parent flips to 'completed'.
+// ============================================================================
+app.post('/twap-tick', async (c) => {
+  const secret = c.req.header('x-twap-secret') || '';
+  const expected = (c.env as any).TWAP_CRON_SECRET || '';
+  if (!expected || secret !== expected) {
+    return c.json({ error: 'unauthorized' }, 401);
+  }
+
+  const DB = c.env.DB;
+  const nowIso = new Date().toISOString().slice(0, 19).replace('T', ' ');
+
+  // Ensure the table exists (defensive — normally created by migration 0055).
+  try {
+    await DB.prepare(
+      `CREATE TABLE IF NOT EXISTS twap_orders (
+        id TEXT PRIMARY KEY, user_id TEXT NOT NULL, market_symbol TEXT NOT NULL,
+        side TEXT NOT NULL DEFAULT 'sell', order_type TEXT NOT NULL DEFAULT 'limit',
+        limit_price REAL, total_amount REAL NOT NULL, remaining_amount REAL NOT NULL,
+        slice_count INTEGER NOT NULL, slice_amount REAL NOT NULL,
+        slices_done INTEGER NOT NULL DEFAULT 0, interval_sec INTEGER NOT NULL,
+        next_run_at TEXT NOT NULL, end_at TEXT, status TEXT NOT NULL DEFAULT 'active',
+        note TEXT, last_error TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )`
+    ).run();
+  } catch { /* ignore */ }
+
+  const { results: due } = await DB.prepare(
+    `SELECT * FROM twap_orders
+      WHERE status = 'active' AND next_run_at <= ?
+      ORDER BY next_run_at ASC LIMIT 20`
+  ).bind(nowIso).all<any>();
+
+  const executed: any[] = [];
+
+  for (const twap of (due || [])) {
+    try {
+      const [base, quote] = String(twap.market_symbol).split('-');
+      const market = await DB.prepare(
+        'SELECT * FROM markets WHERE base_coin = ? AND quote_coin = ? AND is_active = 1'
+      ).bind(base, quote).first<any>();
+      if (!market) {
+        await DB.prepare(
+          `UPDATE twap_orders SET status='cancelled', last_error='market not found', updated_at=datetime('now') WHERE id=?`
+        ).bind(twap.id).run();
+        continue;
+      }
+
+      // Slice size = the smaller of the configured slice and what's left.
+      let sliceAmt = Math.min(Number(twap.slice_amount), Number(twap.remaining_amount));
+      sliceAmt = floorToDecimals(sliceAmt, market.amount_decimals);
+      if (sliceAmt <= 0) {
+        await DB.prepare(
+          `UPDATE twap_orders SET status='completed', remaining_amount=0, updated_at=datetime('now') WHERE id=?`
+        ).bind(twap.id).run();
+        continue;
+      }
+
+      const isLimit = twap.order_type === 'limit';
+      const price = isLimit ? Number(twap.limit_price) : null;
+
+      // Fee tier for the company account.
+      const takerTier = await getUserFeeTier(DB, twap.user_id, {
+        maker_fee: market.maker_fee, taker_fee: market.taker_fee,
+      });
+
+      // SELL side: lock `sliceAmt` of the base coin (atomic conditional debit).
+      const lockRes = await DB.prepare(
+        'UPDATE wallets SET available = available - ?, locked = locked + ? ' +
+        'WHERE user_id = ? AND coin_symbol = ? AND available >= ?'
+      ).bind(sliceAmt, sliceAmt, twap.user_id, base, sliceAmt).run();
+      if (!lockRes.meta || lockRes.meta.changes === 0) {
+        // Not enough treasury balance right now — pause this parent so the
+        // operator can top up / cancel, and skip.
+        await DB.prepare(
+          `UPDATE twap_orders SET status='paused', last_error='insufficient balance', updated_at=datetime('now') WHERE id=?`
+        ).bind(twap.id).run();
+        continue;
+      }
+
+      const orderId = uuid();
+      const orderType = isLimit ? 'limit' : 'market';
+      const tif: 'GTC' | 'IOC' = isLimit ? 'GTC' : 'IOC';
+      const orderPrice = isLimit ? price : null;
+
+      await DB.prepare(
+        `INSERT INTO orders
+           (id, user_id, market_id, side, type, price, amount, remaining, total,
+            time_in_force, taker_fee_locked, maker_fee_locked, stop_price, status)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+      ).bind(
+        orderId, twap.user_id, market.id, 'sell', orderType, orderPrice,
+        sliceAmt, sliceAmt, (orderPrice || 0) * sliceAmt, tif,
+        takerTier.taker_fee, takerTier.maker_fee, null, 'open',
+      ).run();
+
+      const matched = await matchOrder(DB, orderId, market, {
+        lockAmount: sliceAmt, lockSymbol: base, tif,
+      });
+
+      // Advance the parent: bump slices_done, decrement remaining by slice size
+      // (any unfilled remainder either rests on the book as a limit or was
+      // refunded — either way the sell intent for this slice is spent).
+      const slicesDone = Number(twap.slices_done) + 1;
+      const remaining = floorToDecimals(
+        Math.max(0, Number(twap.remaining_amount) - sliceAmt),
+        market.amount_decimals,
+      );
+      const done = remaining <= 0 || slicesDone >= Number(twap.slice_count);
+      const nextRun = new Date(Date.now() + Number(twap.interval_sec) * 1000)
+        .toISOString().slice(0, 19).replace('T', ' ');
+
+      await DB.prepare(
+        `UPDATE twap_orders
+            SET slices_done = ?, remaining_amount = ?,
+                status = ?, next_run_at = ?, last_error = NULL,
+                updated_at = datetime('now')
+          WHERE id = ?`
+      ).bind(
+        slicesDone, remaining,
+        done ? 'completed' : 'active', nextRun, twap.id,
+      ).run();
+
+      executed.push({
+        twap_id: twap.id, slice_order_id: orderId, slice_amount: sliceAmt,
+        trades: (matched.trades || []).length, slices_done: slicesDone,
+        remaining, status: done ? 'completed' : 'active',
+      });
+    } catch (e: any) {
+      const msg = String(e?.message || e).slice(0, 300);
+      await DB.prepare(
+        `UPDATE twap_orders SET last_error=?, updated_at=datetime('now') WHERE id=?`
+      ).bind(msg, twap.id).run().catch(() => {});
+      executed.push({ twap_id: twap.id, error: msg });
+    }
+  }
+
+  return c.json({ ok: true, checked: (due || []).length, executed });
+});
+
 export default app;

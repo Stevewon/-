@@ -2425,4 +2425,143 @@ app.post('/binary/recompute', async (c) => {
   }
 });
 
+// ============================================================================
+// Company-only TWAP (분할 매도) management.
+// ----------------------------------------------------------------------------
+// Only the COMPANY account (role='admin' / admin@quantaex.io) may create TWAP
+// treasury sells. The operator enters a total amount + a duration (and how many
+// slices), and the cron worker sells it off in equal slices over time so a big
+// treasury liquidation never crashes the displayed price (급락 방지).
+// ============================================================================
+async function ensureTwapTable(db: any) {
+  await db.prepare(
+    `CREATE TABLE IF NOT EXISTS twap_orders (
+      id TEXT PRIMARY KEY, user_id TEXT NOT NULL, market_symbol TEXT NOT NULL,
+      side TEXT NOT NULL DEFAULT 'sell', order_type TEXT NOT NULL DEFAULT 'limit',
+      limit_price REAL, total_amount REAL NOT NULL, remaining_amount REAL NOT NULL,
+      slice_count INTEGER NOT NULL, slice_amount REAL NOT NULL,
+      slices_done INTEGER NOT NULL DEFAULT 0, interval_sec INTEGER NOT NULL,
+      next_run_at TEXT NOT NULL, end_at TEXT, status TEXT NOT NULL DEFAULT 'active',
+      note TEXT, last_error TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`
+  ).run().catch(() => {});
+}
+
+// GET /admin/twap — list this operator's TWAP orders with live progress.
+app.get('/twap', async (c) => {
+  const admin = c.get('user') as any;
+  await ensureTwapTable(c.env.DB);
+  const { results } = await c.env.DB.prepare(
+    `SELECT * FROM twap_orders WHERE user_id = ? ORDER BY created_at DESC LIMIT 100`
+  ).bind(admin.id).all<any>();
+  const rows = (results || []).map((r: any) => {
+    const total = Number(r.total_amount) || 0;
+    const remaining = Number(r.remaining_amount) || 0;
+    const sold = Math.max(0, total - remaining);
+    return {
+      ...r,
+      sold_amount: sold,
+      progress_pct: total > 0 ? Math.min(100, (sold / total) * 100) : 0,
+    };
+  });
+  return c.json({ ok: true, orders: rows });
+});
+
+// POST /admin/twap — create a new TWAP split-sell.
+// Body: { market_symbol, order_type('limit'|'market'), limit_price?,
+//         total_amount, slice_count, interval_sec, note? }
+app.post('/twap', async (c) => {
+  const admin = c.get('user') as any;
+  await ensureTwapTable(c.env.DB);
+
+  let body: any = {};
+  try { body = await c.req.json(); } catch { /* empty */ }
+
+  const market_symbol = String(body.market_symbol || '').trim().toUpperCase();
+  const order_type = body.order_type === 'market' ? 'market' : 'limit';
+  const total_amount = Number(body.total_amount);
+  const slice_count = Math.floor(Number(body.slice_count));
+  const interval_sec = Math.floor(Number(body.interval_sec));
+  const limit_price = order_type === 'limit' ? Number(body.limit_price) : null;
+  const note = body.note ? String(body.note).slice(0, 200) : null;
+
+  // Validation
+  const [base, quote] = market_symbol.split('-');
+  if (!base || !quote) return c.json({ ok: false, error: 'market_symbol 형식이 올바르지 않습니다 (예: QTA-USDT)' }, 400);
+  if (!isFinite(total_amount) || total_amount <= 0) return c.json({ ok: false, error: '총 매도 수량이 올바르지 않습니다' }, 400);
+  if (!Number.isInteger(slice_count) || slice_count < 1 || slice_count > 2000) return c.json({ ok: false, error: '분할 횟수는 1~2000 사이여야 합니다' }, 400);
+  if (!Number.isInteger(interval_sec) || interval_sec < 60 || interval_sec > 86400) return c.json({ ok: false, error: '분할 간격은 60초~86400초(24시간) 사이여야 합니다' }, 400);
+  if (order_type === 'limit' && (!isFinite(limit_price as number) || (limit_price as number) <= 0)) {
+    return c.json({ ok: false, error: '지정가 주문은 최저가(limit_price)가 필요합니다' }, 400);
+  }
+
+  // Market must exist and be active.
+  const market = await c.env.DB.prepare(
+    'SELECT * FROM markets WHERE base_coin = ? AND quote_coin = ? AND is_active = 1'
+  ).bind(base, quote).first<any>();
+  if (!market) return c.json({ ok: false, error: '해당 마켓을 찾을 수 없습니다' }, 404);
+
+  // Company must actually hold enough of the base coin (available balance).
+  const wallet = await c.env.DB.prepare(
+    'SELECT available FROM wallets WHERE user_id = ? AND coin_symbol = ?'
+  ).bind(admin.id, base).first<{ available: number }>();
+  const available = Number(wallet?.available || 0);
+  if (available < total_amount) {
+    return c.json({ ok: false, error: `보유 ${base} 수량이 부족합니다 (보유: ${available}, 필요: ${total_amount})` }, 400);
+  }
+
+  const slice_amount = total_amount / slice_count;
+  const nowMs = Date.now();
+  // First slice fires on the next cron tick (immediately eligible).
+  const next_run_at = new Date(nowMs).toISOString().slice(0, 19).replace('T', ' ');
+  const end_at = new Date(nowMs + (slice_count - 1) * interval_sec * 1000)
+    .toISOString().slice(0, 19).replace('T', ' ');
+
+  const id = uuid();
+  await c.env.DB.prepare(
+    `INSERT INTO twap_orders
+       (id, user_id, market_symbol, side, order_type, limit_price,
+        total_amount, remaining_amount, slice_count, slice_amount,
+        slices_done, interval_sec, next_run_at, end_at, status, note)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+  ).bind(
+    id, admin.id, market_symbol, 'sell', order_type, limit_price,
+    total_amount, total_amount, slice_count, slice_amount,
+    0, interval_sec, next_run_at, end_at, 'active', note,
+  ).run();
+
+  await logAdminAction(c, {
+    action: 'twap.create',
+    targetType: 'twap_order',
+    targetId: id,
+    payload: { market_symbol, order_type, limit_price, total_amount, slice_count, interval_sec },
+  }).catch(() => {});
+
+  const created = await c.env.DB.prepare('SELECT * FROM twap_orders WHERE id = ?').bind(id).first<any>();
+  return c.json({ ok: true, order: created });
+});
+
+// POST /admin/twap/:id/cancel — stop an active/paused TWAP.
+app.post('/twap/:id/cancel', async (c) => {
+  const admin = c.get('user') as any;
+  const id = c.req.param('id');
+  await ensureTwapTable(c.env.DB);
+  const row = await c.env.DB.prepare(
+    'SELECT * FROM twap_orders WHERE id = ? AND user_id = ?'
+  ).bind(id, admin.id).first<any>();
+  if (!row) return c.json({ ok: false, error: 'TWAP 주문을 찾을 수 없습니다' }, 404);
+  if (row.status === 'completed' || row.status === 'cancelled') {
+    return c.json({ ok: false, error: `이미 ${row.status} 상태입니다` }, 400);
+  }
+  await c.env.DB.prepare(
+    `UPDATE twap_orders SET status='cancelled', updated_at=datetime('now') WHERE id=?`
+  ).bind(id).run();
+  await logAdminAction(c, {
+    action: 'twap.cancel', targetType: 'twap_order', targetId: id,
+  }).catch(() => {});
+  return c.json({ ok: true });
+});
+
 export default app;

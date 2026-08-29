@@ -6,7 +6,7 @@ import {
   Coins, Send, ArrowDownToLine, Megaphone, Wallet, Hash, Bell,
   FileText, Receipt, Server, Database, HardDrive,
   Shield, AlertTriangle, Zap, Plus, Trash2,
-  Repeat, ArrowRightLeft, Pause, Play,
+  Repeat, ArrowRightLeft, Pause, Play, TrendingDown,
 } from 'lucide-react';
 import useStore from '../store/useStore';
 import { useI18n } from '../i18n';
@@ -2556,6 +2556,76 @@ function SystemTab({ t }: any) {
     }
   };
 
+  // --- Company-only TWAP split-sell (분할 매도) ----------------------------
+  const [twapList, setTwapList] = useState<any[]>([]);
+  const [twapForm, setTwapForm] = useState<any>({
+    market_symbol: 'QTA-USDT',
+    order_type: 'limit',
+    limit_price: '',
+    total_amount: '',
+    slice_count: '10',
+    interval_min: '30', // minutes between slices (converted to seconds on submit)
+    note: '',
+  });
+  const [twapSubmitting, setTwapSubmitting] = useState(false);
+
+  const loadTwap = async () => {
+    try {
+      const res = await api.get('/admin/twap');
+      setTwapList(res.data?.orders || []);
+    } catch { /* ignore */ }
+  };
+
+  const createTwap = async () => {
+    if (twapSubmitting) return;
+    const total = Number(twapForm.total_amount);
+    const slices = Math.floor(Number(twapForm.slice_count));
+    const intervalSec = Math.floor(Number(twapForm.interval_min) * 60);
+    if (!twapForm.market_symbol) { showToast('error', '입력 오류', '마켓을 입력하세요 (예: QTA-USDT)'); return; }
+    if (!isFinite(total) || total <= 0) { showToast('error', '입력 오류', '총 매도 수량이 올바르지 않습니다'); return; }
+    if (!Number.isInteger(slices) || slices < 1) { showToast('error', '입력 오류', '분할 횟수는 1 이상이어야 합니다'); return; }
+    if (!isFinite(intervalSec) || intervalSec < 60) { showToast('error', '입력 오류', '분할 간격은 최소 1분 이상이어야 합니다'); return; }
+    if (twapForm.order_type === 'limit') {
+      const p = Number(twapForm.limit_price);
+      if (!isFinite(p) || p <= 0) { showToast('error', '입력 오류', '지정가 주문은 최저가를 입력해야 합니다'); return; }
+    }
+    setTwapSubmitting(true);
+    try {
+      const body: any = {
+        market_symbol: twapForm.market_symbol,
+        order_type: twapForm.order_type,
+        total_amount: total,
+        slice_count: slices,
+        interval_sec: intervalSec,
+        note: twapForm.note || undefined,
+      };
+      if (twapForm.order_type === 'limit') body.limit_price = Number(twapForm.limit_price);
+      const res = await api.post('/admin/twap', body);
+      if (res.data?.ok) {
+        showToast('success', 'TWAP 생성 완료', `${slices}회 분할 매도가 예약되었습니다`);
+        setTwapForm({ ...twapForm, total_amount: '', note: '' });
+        loadTwap();
+      } else {
+        showToast('error', 'TWAP 생성 실패', res.data?.error || '알 수 없는 오류');
+      }
+    } catch (e: any) {
+      showToast('error', 'TWAP 생성 실패', e?.response?.data?.error || e?.message || '요청 실패');
+    } finally {
+      setTwapSubmitting(false);
+    }
+  };
+
+  const cancelTwap = async (id: string) => {
+    if (!confirm('이 TWAP 분할 매도를 중지하시겠습니까? (진행된 슬라이스는 되돌릴 수 없습니다)')) return;
+    try {
+      const res = await api.post(`/admin/twap/${id}/cancel`, {});
+      if (res.data?.ok) { showToast('success', '중지됨', 'TWAP 분할 매도를 중지했습니다'); loadTwap(); }
+      else showToast('error', '중지 실패', res.data?.error || '오류');
+    } catch (e: any) {
+      showToast('error', '중지 실패', e?.response?.data?.error || e?.message || '요청 실패');
+    }
+  };
+
   const load = async () => {
     setLoading(true);
     try {
@@ -2567,6 +2637,7 @@ function SystemTab({ t }: any) {
       setHealth(h);
       setAuditStats(a);
       setFeeStats(f);
+      loadTwap();
     } finally {
       setLoading(false);
     }
@@ -2666,6 +2737,196 @@ function SystemTab({ t }: any) {
             </div>
           </div>
         )}
+      </div>
+
+      {/* === Company TWAP split-sell (분할 매도) === */}
+      <div className="rounded-2xl border border-exchange-border bg-exchange-card/60 p-5 lg:p-6">
+        <div className="flex items-center gap-2 mb-1">
+          <TrendingDown size={18} className="text-exchange-accent" />
+          <h3 className="text-lg font-bold">회사 보유분 TWAP 분할 매도</h3>
+        </div>
+        <p className="text-sm text-exchange-text-secondary mb-4">
+          회사(관리자) 보유 물량을 <b>여러 번에 걸쳐 잘게 나눠 자동 매도</b>합니다.
+          한 번에 대량 매도해서 가격이 급락하는 것을 방지합니다 (TWAP 방식).
+          <br />
+          <span className="text-exchange-text-third">
+            총 수량을 분할 횟수로 나눠, 설정한 간격마다 자동으로 한 조각씩 매도합니다.
+            지정가를 넣으면 그 가격 밑으로는 팔지 않습니다.
+          </span>
+        </p>
+
+        {/* Create form */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-exchange-text-third">마켓</span>
+            <input
+              type="text"
+              value={twapForm.market_symbol}
+              onChange={(e) => setTwapForm({ ...twapForm, market_symbol: e.target.value.toUpperCase() })}
+              placeholder="QTA-USDT"
+              className="px-3 py-2 rounded-lg bg-exchange-bg border border-exchange-border text-sm focus:outline-none focus:border-exchange-accent"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-exchange-text-third">주문 방식</span>
+            <select
+              value={twapForm.order_type}
+              onChange={(e) => setTwapForm({ ...twapForm, order_type: e.target.value })}
+              className="px-3 py-2 rounded-lg bg-exchange-bg border border-exchange-border text-sm focus:outline-none focus:border-exchange-accent"
+            >
+              <option value="limit">지정가 (최저가 지정)</option>
+              <option value="market">시장가</option>
+            </select>
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-exchange-text-third">
+              최저가 (지정가일 때){twapForm.order_type === 'market' ? ' · 시장가는 불필요' : ''}
+            </span>
+            <input
+              type="number"
+              value={twapForm.limit_price}
+              disabled={twapForm.order_type === 'market'}
+              onChange={(e) => setTwapForm({ ...twapForm, limit_price: e.target.value })}
+              placeholder="예: 0.85"
+              className="px-3 py-2 rounded-lg bg-exchange-bg border border-exchange-border text-sm focus:outline-none focus:border-exchange-accent disabled:opacity-40"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-exchange-text-third">총 매도 수량</span>
+            <input
+              type="number"
+              value={twapForm.total_amount}
+              onChange={(e) => setTwapForm({ ...twapForm, total_amount: e.target.value })}
+              placeholder="예: 100000"
+              className="px-3 py-2 rounded-lg bg-exchange-bg border border-exchange-border text-sm focus:outline-none focus:border-exchange-accent"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-exchange-text-third">분할 횟수</span>
+            <input
+              type="number"
+              value={twapForm.slice_count}
+              onChange={(e) => setTwapForm({ ...twapForm, slice_count: e.target.value })}
+              placeholder="예: 10"
+              className="px-3 py-2 rounded-lg bg-exchange-bg border border-exchange-border text-sm focus:outline-none focus:border-exchange-accent"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-exchange-text-third">분할 간격 (분)</span>
+            <input
+              type="number"
+              value={twapForm.interval_min}
+              onChange={(e) => setTwapForm({ ...twapForm, interval_min: e.target.value })}
+              placeholder="예: 30"
+              className="px-3 py-2 rounded-lg bg-exchange-bg border border-exchange-border text-sm focus:outline-none focus:border-exchange-accent"
+            />
+          </label>
+        </div>
+
+        {/* Summary preview */}
+        {(() => {
+          const total = Number(twapForm.total_amount);
+          const slices = Math.floor(Number(twapForm.slice_count));
+          const intMin = Number(twapForm.interval_min);
+          if (isFinite(total) && total > 0 && slices >= 1 && isFinite(intMin) && intMin > 0) {
+            const per = total / slices;
+            const totalMin = (slices - 1) * intMin;
+            const hrs = Math.floor(totalMin / 60);
+            const mins = Math.round(totalMin % 60);
+            return (
+              <div className="mb-4 text-xs text-exchange-text-secondary bg-exchange-bg/50 border border-exchange-border rounded-lg px-3 py-2">
+                예상: 한 번에 <b className="text-exchange-text">{per.toLocaleString('en-US', { maximumFractionDigits: 4 })}</b> 씩,
+                {' '}<b className="text-exchange-text">{intMin}</b>분 간격으로 총 <b className="text-exchange-text">{slices}</b>회
+                {' '}→ 완료까지 약 <b className="text-exchange-text">{hrs > 0 ? `${hrs}시간 ` : ''}{mins}분</b> 소요
+              </div>
+            );
+          }
+          return null;
+        })()}
+
+        <button
+          onClick={createTwap}
+          disabled={twapSubmitting}
+          className="px-4 py-2 rounded-lg bg-exchange-accent text-black font-semibold text-sm hover:opacity-90 disabled:opacity-50"
+        >
+          {twapSubmitting ? '생성 중…' : '분할 매도 시작'}
+        </button>
+
+        {/* Active/history list */}
+        <div className="mt-5">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-semibold">진행 중 / 이력</span>
+            <button
+              onClick={loadTwap}
+              className="px-2.5 py-1 text-xs text-exchange-text-secondary hover:text-exchange-text bg-exchange-card/60 rounded-lg flex items-center gap-1.5"
+            >
+              <RefreshCw size={13} /> 새로고침
+            </button>
+          </div>
+          {twapList.length === 0 ? (
+            <div className="text-sm text-exchange-text-third py-4 text-center">등록된 TWAP 분할 매도가 없습니다.</div>
+          ) : (
+            <div className="space-y-2">
+              {twapList.map((tw: any) => {
+                const statusColor =
+                  tw.status === 'active' ? 'text-exchange-buy' :
+                  tw.status === 'completed' ? 'text-exchange-text-secondary' :
+                  tw.status === 'paused' ? 'text-exchange-yellow' : 'text-exchange-sell';
+                const statusLabel =
+                  tw.status === 'active' ? '진행 중' :
+                  tw.status === 'completed' ? '완료' :
+                  tw.status === 'paused' ? '일시중지(잔고부족)' :
+                  tw.status === 'cancelled' ? '중지됨' : tw.status;
+                return (
+                  <div key={tw.id} className="rounded-xl border border-exchange-border bg-exchange-bg/40 p-3">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <div className="flex items-center gap-2 text-sm">
+                        <span className="font-semibold">{tw.market_symbol}</span>
+                        <span className="text-exchange-text-third">·</span>
+                        <span className="text-exchange-text-secondary">
+                          {tw.order_type === 'limit' ? `지정가 ≥ ${Number(tw.limit_price).toLocaleString('en-US', { maximumFractionDigits: 6 })}` : '시장가'}
+                        </span>
+                        <span className={`text-xs font-semibold ${statusColor}`}>· {statusLabel}</span>
+                      </div>
+                      {(tw.status === 'active' || tw.status === 'paused') && (
+                        <button
+                          onClick={() => cancelTwap(tw.id)}
+                          className="px-2.5 py-1 text-xs rounded-lg bg-exchange-sell/15 text-exchange-sell hover:bg-exchange-sell/25"
+                        >
+                          중지
+                        </button>
+                      )}
+                    </div>
+                    {/* Progress bar */}
+                    <div className="mt-2">
+                      <div className="h-2 rounded-full bg-exchange-border overflow-hidden">
+                        <div
+                          className="h-full bg-exchange-accent transition-all"
+                          style={{ width: `${Math.min(100, tw.progress_pct || 0)}%` }}
+                        />
+                      </div>
+                      <div className="flex items-center justify-between mt-1.5 text-xs text-exchange-text-secondary">
+                        <span>
+                          매도 {Number(tw.sold_amount || 0).toLocaleString('en-US', { maximumFractionDigits: 4 })}
+                          {' / '}
+                          {Number(tw.total_amount || 0).toLocaleString('en-US', { maximumFractionDigits: 4 })}
+                          {' '}({(tw.progress_pct || 0).toFixed(1)}%)
+                        </span>
+                        <span>
+                          {tw.slices_done}/{tw.slice_count}회
+                          {' · '}{Math.round(Number(tw.interval_sec) / 60)}분 간격
+                        </span>
+                      </div>
+                      {tw.last_error && (
+                        <div className="mt-1 text-xs text-exchange-sell break-all">최근 오류: {tw.last_error}</div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* === Hero status banner (PC-optimised, large) === */}

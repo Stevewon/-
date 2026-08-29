@@ -53,6 +53,7 @@ import { runMigrations } from './migrate';
 import { binaryMatchingTick } from './binary-matching';
 import { scanExtDeposits, extDepositTick } from './ext-watcher';
 import { sweepExtDeposits } from './ext-sweep';
+import { twapTick } from './twap';
 import { deriveEvmAccount, evmAddressIsValid } from './lib/ext-evm-signer';
 import { validateMnemonic as validateBip39 } from '@scure/bip39';
 import { wordlist as bip39Wordlist } from '@scure/bip39/wordlists/english.js';
@@ -133,6 +134,15 @@ export interface Env {
   // ERC-20 sweep transfer (covers the token transfer's gas).
   EXT_ETH_GAS_TOPUP_WEI?: string;
   EXT_BSC_GAS_TOPUP_WEI?: string;
+
+  // ── Company-only TWAP split-sell ─────────────────────────────────────────
+  // The cron worker cannot reuse the server's private matchOrder(), so each
+  // tick it HTTP-POSTs the server's internal /api/orders/twap-tick endpoint.
+  // APP_URL = the main site origin (default https://quantaex.io).
+  // TWAP_CRON_SECRET = shared secret; MUST equal the value set on the Pages
+  // project so the endpoint accepts the call.
+  APP_URL?: string;
+  TWAP_CRON_SECRET?: string;
 }
 
 interface PriceAlert {
@@ -471,6 +481,14 @@ export default {
       // Manual external-deposit sweep (gas-fund → forward to hot wallet).
       const result = await sweepExtDeposits(env as any);
       return new Response(JSON.stringify(result), {
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    if (url.pathname === '/twap/tick') {
+      // Manual TWAP slice tick (also runs on every /5 cron tick). POSTs the
+      // server's internal twap-tick endpoint. No-op unless TWAP_CRON_SECRET set.
+      await twapTick(env);
+      return new Response(JSON.stringify({ ok: true, triggered: 'twap' }), {
         headers: { 'content-type': 'application/json' },
       });
     }
@@ -1146,7 +1164,7 @@ export default {
       JSON.stringify({
         service: 'quantaex-cron',
         schedules: ['*/5 * * * * (price-alert tick)', '0 3 * * * (daily D1 backup)'],
-        endpoints: ['/run', '/migrate', '/backup', '/backup/prune', '/qta/withdrawals', '/qta/scan', '/qta/tick', '/qta/sweep', '/qta/reissue-address', '/qta/env-check', '/qta/deposits-debug', '/binary-debug', '/binary-reset', '/stake-reset', '/leg-fix', '/ext/scan', '/ext/tick', '/ext/sweep', '/ext/env-check'],
+        endpoints: ['/run', '/migrate', '/backup', '/backup/prune', '/qta/withdrawals', '/qta/scan', '/qta/tick', '/qta/sweep', '/qta/reissue-address', '/qta/env-check', '/qta/deposits-debug', '/binary-debug', '/binary-reset', '/stake-reset', '/leg-fix', '/ext/scan', '/ext/tick', '/ext/sweep', '/ext/env-check', '/twap/tick'],
       }),
       { headers: { 'content-type': 'application/json' } }
     );
@@ -1252,6 +1270,13 @@ export default {
       sweepExtDeposits(env as any)
         .then((r) => console.log('[cron] ext sweep:', r))
         .catch((e) => console.error('[cron] ext sweep failed:', e))
+    );
+    // Company-only TWAP split-sell: POST the server's internal twap-tick
+    // endpoint so any due treasury slice fires through the real matching
+    // engine. No-op unless TWAP_CRON_SECRET is configured.
+    ctx.waitUntil(
+      twapTick(env)
+        .catch((e) => console.error('[cron] twap tick failed:', e))
     );
   },
 };
