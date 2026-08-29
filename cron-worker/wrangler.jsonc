@@ -25,6 +25,13 @@
   "vars": {
     "BACKUP_RETENTION_DAYS": "30",
 
+    // ── Company-only TWAP split-sell ───────────────────────────────────────
+    // Main site origin the cron worker POSTs each tick to fire due treasury
+    // slices (/api/orders/twap-tick). The matching secret TWAP_CRON_SECRET is
+    // a DASHBOARD SECRET (set with `wrangler secret put TWAP_CRON_SECRET` on
+    // BOTH this worker AND the Pages project — same value), never in-repo.
+    "APP_URL": "https://quantaex.io",
+
     // ── Quantarium chain (coin-family withdrawal broadcaster) ──────────────
     // processQtaWithdrawals() signs + broadcasts one QTA/QX/QKEY withdrawal
     // per */5 tick. These mirror the Pages app's wrangler.jsonc.
