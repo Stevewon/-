@@ -2760,7 +2760,8 @@ function SystemTab({ t }: any) {
           <button
             onClick={sendMailTest}
             disabled={mailSending}
-            className="px-4 py-2 rounded-lg bg-exchange-accent text-black font-semibold text-sm hover:opacity-90 disabled:opacity-50 whitespace-nowrap"
+            style={{ backgroundColor: '#F0B90B', color: '#000000' }}
+            className="px-4 py-2 rounded-lg font-semibold text-sm hover:brightness-110 disabled:opacity-60 whitespace-nowrap"
           >
             {mailSending ? '보내는 중…' : '테스트 메일 보내기'}
           </button>
@@ -2912,8 +2913,10 @@ function SystemTab({ t }: any) {
         <button
           onClick={createTwap}
           disabled={twapSubmitting}
-          className="px-4 py-2 rounded-lg bg-exchange-accent text-black font-semibold text-sm hover:opacity-90 disabled:opacity-50"
+          style={{ backgroundColor: twapSubmitting ? '#8a6d0a' : '#F0B90B', color: '#000000' }}
+          className="mt-1 w-full px-4 py-3 rounded-xl font-bold text-base hover:brightness-110 disabled:opacity-60 flex items-center justify-center gap-2 shadow-lg"
         >
+          <TrendingDown size={18} />
           {twapSubmitting ? '생성 중…' : '분할 매도 시작'}
         </button>
 
@@ -3110,7 +3113,8 @@ function SystemTab({ t }: any) {
         <button
           onClick={createStakingGrant}
           disabled={stkSubmitting}
-          className="mt-4 w-full px-4 py-3 rounded-xl bg-exchange-accent text-black font-bold text-base hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg"
+          style={{ backgroundColor: stkSubmitting ? '#0a8f5b' : '#0ECB81', color: '#ffffff' }}
+          className="mt-4 w-full px-4 py-3 rounded-xl font-bold text-base hover:brightness-110 disabled:opacity-60 flex items-center justify-center gap-2 shadow-lg border border-white/10"
         >
           <Coins size={18} />
           {stkSubmitting ? '개설 중…' : '스테이킹 개설 완료'}
