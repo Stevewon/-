@@ -2564,4 +2564,132 @@ app.post('/twap/:id/cancel', async (c) => {
   return c.json({ ok: true });
 });
 
+// ============================================================================
+// Admin-granted staking with a BONUS (인정) principal.
+// ----------------------------------------------------------------------------
+// The admin opens a staking position ON BEHALF OF a member with an inflated
+// principal:  principal_usd = real + bonus.
+//   • Daily dividend + binary matching run on the FULL principal_usd (2,000).
+//   • At MATURITY only real_principal_usd (1,000) worth of QTA is returned;
+//     the bonus evaporates.
+//   • EARLY exit charges the 30% penalty on the WHOLE inflated base.
+// No wallet balance is deducted from the user — this is a company grant.
+// Because principal_qta / qta_price_at_stake are left 0, the binary tick falls
+// back to principal_usd, so 몸값/matching count the full 2,000. (migration 0056)
+// ============================================================================
+async function qtaPriceUsd(db: any): Promise<number> {
+  try {
+    const row = await db.prepare(`SELECT price_usd FROM coins WHERE symbol = 'QTA'`).first<{ price_usd: number }>();
+    const p = Number(row?.price_usd || 0);
+    if (p > 0) return p;
+  } catch { /* ignore */ }
+  return 0.00357142857; // fallback ≈ 5원 @1,400
+}
+
+// GET /admin/staking-grants — list admin-granted positions with progress.
+app.get('/staking-grants', async (c) => {
+  const { results } = await c.env.DB.prepare(
+    `SELECT sp.*, u.email, u.nickname
+       FROM staking_positions sp
+       JOIN users u ON u.id = sp.user_id
+      WHERE sp.granted_by IS NOT NULL
+      ORDER BY sp.created_at DESC LIMIT 200`
+  ).all<any>().catch(() => ({ results: [] as any[] }));
+  return c.json({ ok: true, grants: results || [] });
+});
+
+// POST /admin/staking-grant — create a bonus-principal staking position.
+// Body: { user_id, product_id, real_usd, bonus_usd }
+app.post('/staking-grant', async (c) => {
+  const admin = c.get('user') as any;
+  const db = c.env.DB;
+  let body: any = {};
+  try { body = await c.req.json(); } catch { /* empty */ }
+
+  const user_id = String(body.user_id || '').trim();
+  const product_id = String(body.product_id || '').trim();
+  const realUsd = Number(body.real_usd);
+  const bonusUsd = Number(body.bonus_usd || 0);
+
+  if (!user_id) return c.json({ ok: false, error: '회원(user_id)을 선택하세요' }, 400);
+  if (!product_id) return c.json({ ok: false, error: '스테이킹 상품(product_id)을 선택하세요' }, 400);
+  if (!isFinite(realUsd) || realUsd <= 0) return c.json({ ok: false, error: '실원금(real_usd)은 0보다 커야 합니다' }, 400);
+  if (!isFinite(bonusUsd) || bonusUsd < 0) return c.json({ ok: false, error: '인정보너스(bonus_usd)가 올바르지 않습니다' }, 400);
+
+  const principalUsd = realUsd + bonusUsd; // inflated base for dividend + matching
+
+  const u = await db.prepare('SELECT id FROM users WHERE id = ?').bind(user_id).first();
+  if (!u) return c.json({ ok: false, error: '회원을 찾을 수 없습니다' }, 404);
+
+  const product = await db.prepare(
+    `SELECT id, min_usd, max_usd, term_days, daily_rate, total_return
+       FROM staking_products WHERE id = ? AND is_active = 1`
+  ).bind(product_id).first<any>();
+  if (!product) return c.json({ ok: false, error: '스테이킹 상품을 찾을 수 없습니다' }, 404);
+
+  // Validate the INFLATED principal against the tier band (dividend basis).
+  if (product.min_usd != null && principalUsd < product.min_usd) {
+    return c.json({ ok: false, error: `이 티어 최소 금액은 $${product.min_usd} 입니다 (실+보너스 합계 기준)` }, 400);
+  }
+  if (product.max_usd != null && principalUsd > product.max_usd) {
+    return c.json({ ok: false, error: `이 티어 최대 금액은 $${product.max_usd} 입니다 (실+보너스 합계 기준)` }, 400);
+  }
+
+  const price = await qtaPriceUsd(db);
+  const now = Date.now();
+  const nowIso = new Date(now).toISOString();
+  const termEndIso = new Date(now + Number(product.term_days) * 86_400_000).toISOString();
+  const posId = uuid();
+
+  // principal_qta / qta_price_at_stake = 0 → binary tick uses principal_usd
+  // fallback (full 2,000). principal_usd = inflated. real_principal_usd = real.
+  await db.prepare(
+    `INSERT INTO staking_positions
+       (id, user_id, product_id, coin_symbol, kind, apr, principal,
+        accrued_interest, status, lock_days,
+        principal_usd, principal_qta, qta_price_at_stake,
+        daily_rate, term_days, accrued_dividend_usd,
+        paid_dividend_qta, payout_coin, lock_end_at, term_end_at,
+        last_accrued_at, created_at,
+        real_principal_usd, bonus_principal_usd, granted_by)
+     VALUES (?,?,?, 'QTA','fixed', ?, ?, 0, 'active', ?,
+             ?, 0, 0, ?,?,0, 0, 'QTA', ?,?, ?, ?,
+             ?, ?, ?)`
+  ).bind(
+    posId, user_id, product.id, product.total_return || (product.daily_rate * product.term_days),
+    0, product.term_days,
+    principalUsd, product.daily_rate, product.term_days,
+    termEndIso, termEndIso, nowIso, nowIso,
+    realUsd, bonusUsd, admin.id,
+  ).run();
+
+  await db.prepare(
+    `UPDATE staking_products SET total_staked = COALESCE(total_staked,0) + ?, updated_at = ? WHERE id = ?`
+  ).bind(principalUsd, nowIso, product.id).run().catch(() => {});
+
+  // Roll the FULL inflated principal into binary 몸값/volume immediately.
+  try {
+    await recomputeBinaryFromStaking(db, price);
+  } catch (e) { console.warn('[staking-grant] binary recompute failed:', e); }
+
+  await logAdminAction(c, {
+    action: 'staking.grant',
+    targetType: 'staking_position',
+    targetId: posId,
+    payload: { user_id, product_id, real_usd: realUsd, bonus_usd: bonusUsd, principal_usd: principalUsd },
+  }).catch(() => {});
+
+  try {
+    await createNotification(db, user_id, {
+      type: 'staking',
+      title: '스테이킹이 개설되었습니다',
+      message: `관리자가 회원님의 스테이킹을 개설했습니다 (적용 원금 $${principalUsd}).`,
+      data: { position_id: posId, principal_usd: principalUsd, real_usd: realUsd, bonus_usd: bonusUsd },
+    });
+  } catch { /* ignore */ }
+
+  const created = await db.prepare('SELECT * FROM staking_positions WHERE id = ?').bind(posId).first<any>();
+  return c.json({ ok: true, position: created });
+});
+
 export default app;

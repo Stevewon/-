@@ -2626,6 +2626,70 @@ function SystemTab({ t }: any) {
     }
   };
 
+  // --- Admin-granted staking with BONUS principal (인정 원금) ---------------
+  const [stkProducts, setStkProducts] = useState<any[]>([]);
+  const [stkGrants, setStkGrants] = useState<any[]>([]);
+  const [stkUserQuery, setStkUserQuery] = useState('');
+  const [stkUserResults, setStkUserResults] = useState<any[]>([]);
+  const [stkUser, setStkUser] = useState<any>(null); // {id,email,nickname}
+  const [stkForm, setStkForm] = useState<any>({ product_id: '', real_usd: '', bonus_usd: '' });
+  const [stkSubmitting, setStkSubmitting] = useState(false);
+
+  const loadStaking = async () => {
+    try {
+      const [p, g] = await Promise.all([
+        api.get('/earn/products').then((r) => r.data?.products || []).catch(() => []),
+        api.get('/admin/staking-grants').then((r) => r.data?.grants || []).catch(() => []),
+      ]);
+      setStkProducts(p);
+      setStkGrants(g);
+      if (!stkForm.product_id && p.length) setStkForm((f: any) => ({ ...f, product_id: p[0].id }));
+    } catch { /* ignore */ }
+  };
+
+  // Debounced user search (nickname / email) for the grant form.
+  useEffect(() => {
+    const term = stkUserQuery.trim();
+    if (!term || stkUser) { setStkUserResults([]); return; }
+    const h = setTimeout(async () => {
+      try {
+        const res = await api.get(`/admin/users?q=${encodeURIComponent(term)}&limit=8`);
+        const rows = res.data?.rows || res.data?.users || res.data || [];
+        setStkUserResults(Array.isArray(rows) ? rows : []);
+      } catch { setStkUserResults([]); }
+    }, 300);
+    return () => clearTimeout(h);
+  }, [stkUserQuery, stkUser]);
+
+  const createStakingGrant = async () => {
+    if (stkSubmitting) return;
+    if (!stkUser?.id) { showToast('error', '입력 오류', '회원을 검색해서 선택하세요'); return; }
+    if (!stkForm.product_id) { showToast('error', '입력 오류', '스테이킹 상품을 선택하세요'); return; }
+    const real = Number(stkForm.real_usd);
+    const bonus = Number(stkForm.bonus_usd || 0);
+    if (!isFinite(real) || real <= 0) { showToast('error', '입력 오류', '실원금은 0보다 커야 합니다'); return; }
+    if (!isFinite(bonus) || bonus < 0) { showToast('error', '입력 오류', '인정보너스가 올바르지 않습니다'); return; }
+    setStkSubmitting(true);
+    try {
+      const res = await api.post('/admin/staking-grant', {
+        user_id: stkUser.id, product_id: stkForm.product_id,
+        real_usd: real, bonus_usd: bonus,
+      });
+      if (res.data?.ok) {
+        showToast('success', '스테이킹 개설 완료', `적용 원금 $${(real + bonus).toLocaleString('en-US')} (실 $${real.toLocaleString('en-US')} + 보너스 $${bonus.toLocaleString('en-US')})`);
+        setStkForm((f: any) => ({ ...f, real_usd: '', bonus_usd: '' }));
+        setStkUser(null); setStkUserQuery('');
+        loadStaking();
+      } else {
+        showToast('error', '개설 실패', res.data?.error || '알 수 없는 오류');
+      }
+    } catch (e: any) {
+      showToast('error', '개설 실패', e?.response?.data?.error || e?.message || '요청 실패');
+    } finally {
+      setStkSubmitting(false);
+    }
+  };
+
   const load = async () => {
     setLoading(true);
     try {
@@ -2638,6 +2702,7 @@ function SystemTab({ t }: any) {
       setAuditStats(a);
       setFeeStats(f);
       loadTwap();
+      loadStaking();
     } finally {
       setLoading(false);
     }
@@ -2920,6 +2985,171 @@ function SystemTab({ t }: any) {
                       {tw.last_error && (
                         <div className="mt-1 text-xs text-exchange-sell break-all">최근 오류: {tw.last_error}</div>
                       )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* === Admin-granted staking with BONUS principal (인정 원금) === */}
+      <div className="rounded-2xl border border-exchange-border bg-exchange-card/60 p-5 lg:p-6">
+        <div className="flex items-center gap-2 mb-1">
+          <Coins size={18} className="text-exchange-accent" />
+          <h3 className="text-lg font-bold">스테이킹 개설 (인정 보너스 원금)</h3>
+        </div>
+        <p className="text-sm text-exchange-text-secondary mb-4">
+          관리자가 회원 대신 스테이킹을 열어줍니다. <b>실원금 + 인정보너스</b>를 입력하면:
+          <br />
+          <span className="text-exchange-text-third">
+            • 데일리 배당 · 매칭보너스는 <b className="text-exchange-text">실+보너스 합계(예: $2,000)</b> 기준으로 지급됩니다.<br />
+            • 만기 원금 반환은 <b className="text-exchange-text">실원금(예: $1,000)만</b> 돌려주고, 보너스는 소멸됩니다.<br />
+            • 중도 해지 시 <b className="text-exchange-text">합계($2,000) + 이자 전체의 30% 페널티</b>를 제한 후 지급됩니다.
+          </span>
+        </p>
+
+        {/* User picker */}
+        <div className="mb-3">
+          <span className="text-xs text-exchange-text-third">회원 검색 (닉네임 / 이메일)</span>
+          {stkUser ? (
+            <div className="mt-1 flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-exchange-bg border border-exchange-accent/40">
+              <span className="text-sm">
+                <b>{stkUser.nickname || '(닉네임 없음)'}</b>
+                <span className="text-exchange-text-third"> · {stkUser.email}</span>
+              </span>
+              <button
+                onClick={() => { setStkUser(null); setStkUserQuery(''); }}
+                className="text-xs text-exchange-sell hover:underline"
+              >변경</button>
+            </div>
+          ) : (
+            <div className="relative mt-1">
+              <input
+                type="text"
+                value={stkUserQuery}
+                onChange={(e) => setStkUserQuery(e.target.value)}
+                placeholder="닉네임 또는 이메일 입력"
+                className="w-full px-3 py-2 rounded-lg bg-exchange-bg border border-exchange-border text-sm focus:outline-none focus:border-exchange-accent"
+              />
+              {stkUserResults.length > 0 && (
+                <div className="absolute z-10 left-0 right-0 mt-1 rounded-lg border border-exchange-border bg-exchange-card shadow-lg max-h-56 overflow-auto">
+                  {stkUserResults.map((u: any) => (
+                    <button
+                      key={u.id}
+                      onClick={() => { setStkUser(u); setStkUserResults([]); }}
+                      className="w-full text-left px-3 py-2 text-sm hover:bg-exchange-hover/60 border-b border-exchange-border/40 last:border-0"
+                    >
+                      <b>{u.nickname || '(닉네임 없음)'}</b>
+                      <span className="text-exchange-text-third"> · {u.email}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Form */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-exchange-text-third">스테이킹 상품(티어)</span>
+            <select
+              value={stkForm.product_id}
+              onChange={(e) => setStkForm({ ...stkForm, product_id: e.target.value })}
+              className="px-3 py-2 rounded-lg bg-exchange-bg border border-exchange-border text-sm focus:outline-none focus:border-exchange-accent"
+            >
+              {stkProducts.length === 0 && <option value="">(상품 없음)</option>}
+              {stkProducts.map((p: any) => (
+                <option key={p.id} value={p.id}>
+                  {p.id} · {p.term_days}일 · 일{(Number(p.daily_rate) * 100).toFixed(2)}% (${p.min_usd}~${p.max_usd ?? '∞'})
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-exchange-text-third">실원금 (USDT · 만기에 반환)</span>
+            <input
+              type="number"
+              value={stkForm.real_usd}
+              onChange={(e) => setStkForm({ ...stkForm, real_usd: e.target.value })}
+              placeholder="예: 1000"
+              className="px-3 py-2 rounded-lg bg-exchange-bg border border-exchange-border text-sm focus:outline-none focus:border-exchange-accent"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-exchange-text-third">인정보너스 (USDT · 반환 안 함)</span>
+            <input
+              type="number"
+              value={stkForm.bonus_usd}
+              onChange={(e) => setStkForm({ ...stkForm, bonus_usd: e.target.value })}
+              placeholder="예: 1000"
+              className="px-3 py-2 rounded-lg bg-exchange-bg border border-exchange-border text-sm focus:outline-none focus:border-exchange-accent"
+            />
+          </label>
+        </div>
+
+        {/* Summary */}
+        {(() => {
+          const real = Number(stkForm.real_usd);
+          const bonus = Number(stkForm.bonus_usd || 0);
+          if (isFinite(real) && real > 0) {
+            const total = real + (isFinite(bonus) ? bonus : 0);
+            return (
+              <div className="mt-3 text-xs text-exchange-text-secondary bg-exchange-bg/50 border border-exchange-border rounded-lg px-3 py-2">
+                적용 원금(배당·매칭 기준): <b className="text-exchange-text">${total.toLocaleString('en-US')}</b>
+                {' · '}만기 반환: <b className="text-exchange-buy">${real.toLocaleString('en-US')}</b>
+                {' · '}보너스(소멸): <b className="text-exchange-yellow">${(isFinite(bonus) ? bonus : 0).toLocaleString('en-US')}</b>
+              </div>
+            );
+          }
+          return null;
+        })()}
+
+        <button
+          onClick={createStakingGrant}
+          disabled={stkSubmitting}
+          className="mt-3 px-4 py-2 rounded-lg bg-exchange-accent text-black font-semibold text-sm hover:opacity-90 disabled:opacity-50"
+        >
+          {stkSubmitting ? '개설 중…' : '스테이킹 개설'}
+        </button>
+
+        {/* Granted list */}
+        <div className="mt-5">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-semibold">개설 이력 (관리자 개설분)</span>
+            <button
+              onClick={loadStaking}
+              className="px-2.5 py-1 text-xs text-exchange-text-secondary hover:text-exchange-text bg-exchange-card/60 rounded-lg flex items-center gap-1.5"
+            >
+              <RefreshCw size={13} /> 새로고침
+            </button>
+          </div>
+          {stkGrants.length === 0 ? (
+            <div className="text-sm text-exchange-text-third py-4 text-center">관리자가 개설한 스테이킹이 없습니다.</div>
+          ) : (
+            <div className="space-y-2">
+              {stkGrants.map((g: any) => {
+                const real = Number(g.real_principal_usd ?? g.principal_usd ?? 0);
+                const bonus = Number(g.bonus_principal_usd ?? 0);
+                const total = Number(g.principal_usd ?? 0);
+                const statusColor = g.status === 'active' ? 'text-exchange-buy' : 'text-exchange-text-secondary';
+                return (
+                  <div key={g.id} className="rounded-xl border border-exchange-border bg-exchange-bg/40 p-3 text-sm">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <span>
+                        <b>{g.nickname || '(닉네임 없음)'}</b>
+                        <span className="text-exchange-text-third"> · {g.email}</span>
+                      </span>
+                      <span className={`text-xs font-semibold ${statusColor}`}>{g.status}</span>
+                    </div>
+                    <div className="mt-1.5 text-xs text-exchange-text-secondary flex flex-wrap gap-x-4 gap-y-1">
+                      <span>적용원금 <b className="text-exchange-text">${total.toLocaleString('en-US')}</b></span>
+                      <span>실원금 <b className="text-exchange-buy">${real.toLocaleString('en-US')}</b></span>
+                      <span>보너스 <b className="text-exchange-yellow">${bonus.toLocaleString('en-US')}</b></span>
+                      <span>기간 {g.term_days}일</span>
+                      <span>만기 {g.term_end_at ? String(g.term_end_at).slice(0, 10) : '—'}</span>
                     </div>
                   </div>
                 );

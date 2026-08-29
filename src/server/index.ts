@@ -315,6 +315,7 @@ let coinPricePolicyBootstrapDone = false;
 let stakingSelfUsdBootstrapDone = false;
 let extDepositApprovalBootstrapDone = false;
 let twapOrdersBootstrapDone = false;
+let stakingBonusPrincipalBootstrapDone = false;
 let adminPasswordRotateBootstrapDone = false;
 // One-off (2026-08): hard-delete the ENTIRE referral downline under nickname
 // 'sally1992' (all levels), freeing nickname+email for re-registration.
@@ -1941,6 +1942,41 @@ app.use('/api/*', async (c, next) => {
             console.log('[bootstrap] twap_orders table (0055) applied to production D1');
           } catch (e) {
             captureError(c as any, e, { where: 'twap-orders-bootstrap' });
+          }
+        })()
+      );
+    }
+  }
+
+  // ── Migration 0056: admin-granted staking bonus-principal columns ─────────
+  // earn.ts (Pages worker) reads real_principal_usd on redeem, so make sure the
+  // columns exist here too (redundant with cron migrate.ts).
+  if (!stakingBonusPrincipalBootstrapDone) {
+    const ctx = c.executionCtx as any;
+    if (ctx && typeof ctx.waitUntil === 'function') {
+      ctx.waitUntil(
+        (async () => {
+          try {
+            const marker = await c.env.DB.prepare(
+              "SELECT value FROM system_markers WHERE key = 'migration_0056_staking_bonus_principal'"
+            ).first<{ value: string }>().catch(() => null);
+            if (marker && marker.value === 'live') {
+              stakingBonusPrincipalBootstrapDone = true;
+              return;
+            }
+            try { await c.env.DB.prepare(`ALTER TABLE staking_positions ADD COLUMN real_principal_usd REAL`).run(); } catch (_e) {}
+            try { await c.env.DB.prepare(`ALTER TABLE staking_positions ADD COLUMN bonus_principal_usd REAL DEFAULT 0`).run(); } catch (_e) {}
+            try { await c.env.DB.prepare(`ALTER TABLE staking_positions ADD COLUMN granted_by TEXT`).run(); } catch (_e) {}
+            try { await c.env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_staking_granted ON staking_positions(granted_by)`).run(); } catch (_e) {}
+            await c.env.DB.prepare(
+              `INSERT INTO system_markers (key, value, updated_at)
+               VALUES ('migration_0056_staking_bonus_principal','live',CURRENT_TIMESTAMP)
+               ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP`
+            ).run();
+            stakingBonusPrincipalBootstrapDone = true;
+            console.log('[bootstrap] staking bonus-principal columns (0056) applied to production D1');
+          } catch (e) {
+            captureError(c as any, e, { where: 'staking-bonus-principal-bootstrap' });
           }
         })()
       );

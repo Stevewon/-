@@ -280,6 +280,18 @@ const MIGRATIONS: Migration[] = [
     ],
   },
   {
+    // 0056 — Admin-granted staking with a BONUS (인정) principal.
+    // Mirrors /migrations/0056_staking_bonus_principal.sql. ADD COLUMN is
+    // idempotent-guarded ("duplicate column name" is swallowed by runMigrations).
+    id: '0056_staking_bonus_principal',
+    statements: [
+      `ALTER TABLE staking_positions ADD COLUMN real_principal_usd REAL`,
+      `ALTER TABLE staking_positions ADD COLUMN bonus_principal_usd REAL DEFAULT 0`,
+      `ALTER TABLE staking_positions ADD COLUMN granted_by TEXT`,
+      `CREATE INDEX IF NOT EXISTS idx_staking_granted ON staking_positions(granted_by)`,
+    ],
+  },
+  {
     // 0055 — Company-only TWAP split-sell engine. Parent order + slice tracking.
     // Mirrors /migrations/0055_twap_orders.sql. All statements are
     // CREATE ... IF NOT EXISTS / idempotent → re-running is a safe no-op.

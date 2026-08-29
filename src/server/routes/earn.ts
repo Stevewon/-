@@ -573,11 +573,30 @@ app.post('/redeem', authMiddleware, async (c) => {
   const nowIso = new Date(now).toISOString();
   const price = await qtaPrice(c);
   const principalUsd = pos.principal_usd || 0;
-  // QTA principal that was locked at stake time. Fall back to `principal`
-  // (the QTA quantity is now stored there) or derive from the staked-price.
+
+  // ── Admin-granted BONUS position (migration 0056) ────────────────────────
+  //   principal_usd is INFLATED (real + bonus). real_principal_usd holds the
+  //   REAL money that must be returned; the bonus portion evaporates. These
+  //   positions locked NO QTA at grant time (principal_qta = 0), so nothing is
+  //   released from `locked` — the returned QTA is simply credited.
+  const isGranted = pos.real_principal_usd != null;
+  const realPrincipalUsd = isGranted ? Number(pos.real_principal_usd || 0) : principalUsd;
+
+  // QTA principal that was locked at stake time (legacy self-subscribed only).
+  // Fall back to `principal` (the QTA quantity is now stored there) or derive
+  // from the staked-price.
   const principalQta = pos.principal_qta
     || pos.principal
     || (pos.qta_price_at_stake > 0 ? principalUsd / pos.qta_price_at_stake : 0);
+  // How much QTA was actually LOCKED (to release back). Granted positions
+  // locked nothing.
+  const lockedQta = isGranted ? 0 : principalQta;
+  // The REAL principal to return, expressed in QTA:
+  //   • granted → real_principal_usd converted at TODAY's price
+  //   • legacy  → the QTA that was locked
+  const realPrincipalQta = isGranted
+    ? (price > 0 ? realPrincipalUsd / price : 0)
+    : principalQta;
   // Early == before this position's own maturity date (per-position).
   const isEarly = pos.term_end_at ? Date.parse(pos.term_end_at) > now : false;
 
@@ -604,22 +623,35 @@ app.post('/redeem', authMiddleware, async (c) => {
     // dividend (USD) is converted to QTA at today's price, and any dividend
     // the user ALREADY claimed is netted out of the base so it isn't paid
     // twice.
+    //
+    // For ADMIN-GRANTED (bonus) positions the owner rule (2026-08-29) is:
+    // the 30% penalty applies to the WHOLE INFLATED base (2,000 principal +
+    // accrued dividend), and only 70% of that is returned. So the base uses
+    // realPrincipalQta for legacy, but the FULL inflated principal for grants.
     const totalDivUsd = accruedUsd(pos, now);                 // total interest so far (USD)
     const alreadyPaidUsd = pos.accrued_dividend_usd || 0;      // dividend already taken (USD)
     const remainingDivUsd = Math.max(0, totalDivUsd - alreadyPaidUsd);
     const remainingDivQta = price > 0 ? remainingDivUsd / price : 0;
 
-    const baseQta = principalQta + remainingDivQta;           // 원금 + 적립이자 (QTA)
-    penaltyQta = baseQta * EARLY_PENALTY;                      // 30% of (principal + dividend)
-    returnedQta = Math.max(0, baseQta - penaltyQta);          // remaining 70%, paid as QTA
+    // Principal portion of the penalty base:
+    //   • granted → the FULL inflated principal_usd (2,000) as QTA
+    //   • legacy  → the locked principalQta
+    const penaltyPrincipalQta = isGranted
+      ? (price > 0 ? principalUsd / price : 0)
+      : principalQta;
+
+    const baseQta = penaltyPrincipalQta + remainingDivQta;   // 원금(부풀린) + 적립이자 (QTA)
+    penaltyQta = baseQta * EARLY_PENALTY;                     // 30% of (base)
+    returnedQta = Math.max(0, baseQta - penaltyQta);         // remaining 70%, paid as QTA
   } else {
-    // Matured: return the full QTA principal + pay remaining unpaid dividend
-    // (valued in USD, paid as QTA at today's price).
+    // Matured: return the REAL principal (granted → real only, legacy → full)
+    // + pay remaining unpaid dividend (valued in USD, paid as QTA at today's
+    // price). The BONUS principal is NOT returned.
     const totalUsd = accruedUsd(pos, now);
     const paidUsd = pos.accrued_dividend_usd || 0;
     const payableUsd = Math.max(0, totalUsd - paidUsd);
     dividendQta = payableUsd / price;
-    returnedQta = principalQta;
+    returnedQta = realPrincipalQta;
 
     if (dividendQta > 0) {
       await creditQta(c, user.id, dividendQta);
@@ -631,27 +663,28 @@ app.post('/redeem', authMiddleware, async (c) => {
     }
   }
 
-  // Return the QTA principal (net of any early penalty): move it out of locked
-  // and back into available. Non-negative guard keeps locked from underflowing.
+  // Return the QTA principal (net of any early penalty): credit `available`
+  // and release only the QTA that was actually LOCKED (0 for admin grants).
+  // Non-negative guard keeps locked from underflowing.
   if (returnedQta > 0) {
     const upd = await c.env.DB.prepare(
       `UPDATE wallets
           SET available = available + ?,
               locked = MAX(0, COALESCE(locked,0) - ?)
         WHERE user_id = ? AND coin_symbol = 'QTA'`
-    ).bind(returnedQta, principalQta, user.id).run();
+    ).bind(returnedQta, lockedQta, user.id).run();
     if (!upd.meta || upd.meta.changes === 0) {
       await c.env.DB.prepare(
         `INSERT INTO wallets (id, user_id, coin_symbol, available, available_initial)
          VALUES (?,?, 'QTA', ?, 0)`
       ).bind(uuid(), user.id, returnedQta).run();
     }
-  } else {
+  } else if (lockedQta > 0) {
     // Nothing returned (100% forfeit edge case): just release the lock.
     await c.env.DB.prepare(
       `UPDATE wallets SET locked = MAX(0, COALESCE(locked,0) - ?)
         WHERE user_id = ? AND coin_symbol = 'QTA'`
-    ).bind(principalQta, user.id).run();
+    ).bind(lockedQta, user.id).run();
   }
 
   await c.env.DB.prepare(
@@ -663,6 +696,9 @@ app.post('/redeem', authMiddleware, async (c) => {
     ok: true, early: isEarly,
     returned_qta: returnedQta, penalty_qta: penaltyQta,
     principal_qta: principalQta,
+    real_principal_usd: realPrincipalUsd,
+    bonus_principal_usd: isGranted ? Number(pos.bonus_principal_usd || 0) : 0,
+    granted: isGranted,
     dividend_qta: dividendQta, qta_price: price,
   });
 });
