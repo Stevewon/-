@@ -3110,9 +3110,10 @@ function SystemTab({ t }: any) {
         <button
           onClick={createStakingGrant}
           disabled={stkSubmitting}
-          className="mt-3 px-4 py-2 rounded-lg bg-exchange-accent text-black font-semibold text-sm hover:opacity-90 disabled:opacity-50"
+          className="mt-4 w-full px-4 py-3 rounded-xl bg-exchange-accent text-black font-bold text-base hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg"
         >
-          {stkSubmitting ? '개설 중…' : '스테이킹 개설'}
+          <Coins size={18} />
+          {stkSubmitting ? '개설 중…' : '스테이킹 개설 완료'}
         </button>
 
         {/* Granted list */}
