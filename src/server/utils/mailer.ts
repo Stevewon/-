@@ -47,6 +47,12 @@ export async function sendMail(env: MailEnv, payload: MailPayload): Promise<{ se
   }
 
   // ── Provider 1: Resend (when API key is configured) ─────────────────────
+  // This is now the PRIMARY (and effectively only reliable) provider:
+  // MailChannels shut down its free Cloudflare Workers relay in 2024, so the
+  // fallback below almost always fails. If RESEND_API_KEY is not configured,
+  // transactional email (login OTP, verification, alerts) will NOT be
+  // delivered — set it as a Cloudflare secret in production.
+  let resendError: string | undefined;
   if (env.RESEND_API_KEY) {
     try {
       const r = await fetch('https://api.resend.com/emails', {
@@ -65,22 +71,32 @@ export async function sendMail(env: MailEnv, payload: MailPayload): Promise<{ se
       });
       if (!r.ok) {
         const t = await r.text();
+        resendError = `resend ${r.status}: ${t.slice(0, 200)}`;
         console.warn('[mailer] resend failed:', r.status, t);
         // Fall through to MailChannels rather than giving up.
       } else {
         return { sent: true, provider: 'resend' };
       }
     } catch (e: any) {
+      resendError = `resend exception: ${String(e?.message || e)}`;
       console.warn('[mailer] resend exception:', e);
       // Fall through to MailChannels.
     }
+  } else {
+    resendError = 'RESEND_API_KEY not configured';
+    console.warn(
+      '[mailer] RESEND_API_KEY is not set — falling back to MailChannels, ' +
+      'which is no longer free on Cloudflare Workers and will likely fail. ' +
+      'Set RESEND_API_KEY as a production secret to deliver login/verification emails.'
+    );
   }
 
   // ── Provider 2: MailChannels (Cloudflare Workers default) ──────────────
-  // Free, no API key, requires only:
-  //   • SPF DNS: TXT @ "v=spf1 include:relay.mailchannels.net ~all"
-  //   • (Strongly recommended) DKIM per MailChannels docs.
-  // Endpoint accepts a Resend-like JSON shape but with `personalizations`.
+  // ⚠️ DEPRECATED: MailChannels ended its free Cloudflare Workers email
+  // relay in mid-2024. This path is retained only as a best-effort fallback
+  // (e.g. for accounts with a paid MailChannels plan / valid API). In the
+  // common case it returns a 4xx and this function reports sent:false with
+  // the Resend error surfaced so the operator knows to configure Resend.
   try {
     const fromParsed = parseFrom(from);
     const r = await fetch('https://api.mailchannels.net/tx/v1/send', {
@@ -100,12 +116,15 @@ export async function sendMail(env: MailEnv, payload: MailPayload): Promise<{ se
     if (!r.ok) {
       const t = await r.text();
       console.warn('[mailer] mailchannels failed:', r.status, t);
-      return { sent: false, provider: 'mailchannels', error: `${r.status}: ${t.slice(0, 200)}` };
+      const mcError = `mailchannels ${r.status}: ${t.slice(0, 200)}`;
+      // Surface the Resend error first (it's the actionable one) when present.
+      return { sent: false, provider: 'mailchannels', error: resendError ? `${resendError}; ${mcError}` : mcError };
     }
     return { sent: true, provider: 'mailchannels' };
   } catch (e: any) {
     console.warn('[mailer] mailchannels exception:', e);
-    return { sent: false, provider: 'mailchannels', error: String(e?.message || e) };
+    const mcError = `mailchannels exception: ${String(e?.message || e)}`;
+    return { sent: false, provider: 'mailchannels', error: resendError ? `${resendError}; ${mcError}` : mcError };
   }
 }
 
