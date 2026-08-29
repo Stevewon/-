@@ -728,6 +728,7 @@ async function ensureLoginOtpTable(c: any): Promise<void> {
            expires_at DATETIME NOT NULL,
            used_at DATETIME,
            attempts INTEGER NOT NULL DEFAULT 0,
+           delivered INTEGER NOT NULL DEFAULT 0,
            ip_address TEXT,
            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
          )`
@@ -739,6 +740,13 @@ async function ensureLoginOtpTable(c: any): Promise<void> {
         `CREATE INDEX IF NOT EXISTS idx_login_otps_hash ON login_otps(code_hash)`
       ),
     ]);
+    // Existing production tables predate the `delivered` column, so add it
+    // idempotently. ALTER TABLE … ADD COLUMN throws if it already exists.
+    try {
+      await c.env.DB.prepare(
+        `ALTER TABLE login_otps ADD COLUMN delivered INTEGER NOT NULL DEFAULT 0`
+      ).run();
+    } catch { /* column already exists — fine */ }
   } catch (e) {
     console.warn('[login-otp] ensure table failed:', e);
   }
@@ -764,17 +772,21 @@ async function issueLoginOtp(
 ): Promise<{ sent: boolean; cooldown?: boolean; dev_code?: string }> {
   await ensureLoginOtpTable(c);
 
-  // Throttle: reuse the still-valid code if one was issued < 30s ago.
+  // Throttle: reuse the still-valid code if one was SUCCESSFULLY sent < 30s
+  // ago. We only look at rows flagged `delivered = 1`: a previous attempt
+  // that failed to deliver (Resend rejected, etc.) must NOT trigger the
+  // cooldown, otherwise a user who never received the first code is stuck
+  // for 30s pressing "resend" with nothing actually going out.
   try {
     const recent = await c.env.DB.prepare(
       `SELECT created_at FROM login_otps
-       WHERE email = ? AND used_at IS NULL
+       WHERE email = ? AND used_at IS NULL AND delivered = 1
        ORDER BY created_at DESC LIMIT 1`
     ).bind(user.email).first<{ created_at: string }>();
     if (recent && Date.now() - new Date(recent.created_at + 'Z').getTime() < 30 * 1000) {
       return { sent: true, cooldown: true };
     }
-  } catch { /* table brand new — no rows yet */ }
+  } catch { /* table brand new / delivered column not yet added — no rows yet */ }
 
   const code = randomOtpCode();
   const codeHash = await sha256Hex(code);
@@ -792,10 +804,11 @@ async function issueLoginOtp(
     ).bind(user.email).run();
   } catch { /* ignore */ }
 
+  const otpId = uuid();
   await c.env.DB.prepare(
     `INSERT INTO login_otps (id, user_id, email, code_hash, expires_at, ip_address)
      VALUES (?, ?, ?, ?, ?, ?)`
-  ).bind(uuid(), user.id, user.email, codeHash, expires, ip).run();
+  ).bind(otpId, user.id, user.email, codeHash, expires, ip).run();
 
   const mail = await sendMail(c.env as any, {
     to: user.email,
@@ -811,7 +824,23 @@ async function issueLoginOtp(
     text: `Your QuantaEX login code is ${code}. It expires in 10 minutes. Never share this code.`,
   });
 
-  return { sent: mail.sent, ...(mail.sent ? {} : { dev_code: code }) };
+  if (mail.sent) {
+    // Flag the row as delivered so the 30s cooldown applies to it.
+    try {
+      await c.env.DB.prepare(`UPDATE login_otps SET delivered = 1 WHERE id = ?`)
+        .bind(otpId).run();
+    } catch { /* delivered column may not exist yet on a cold DB — safe to skip */ }
+  } else {
+    // Delivery failed — invalidate this code immediately so it does NOT block
+    // the next resend via the cooldown, and log the real provider error.
+    console.error('[login-otp] delivery failed:', mail.provider, mail.error || '(no error detail)');
+    try {
+      await c.env.DB.prepare(`UPDATE login_otps SET used_at = CURRENT_TIMESTAMP WHERE id = ?`)
+        .bind(otpId).run();
+    } catch { /* ignore */ }
+  }
+
+  return { sent: mail.sent, mail_error: mail.error, ...(mail.sent ? {} : { dev_code: code }) };
 }
 
 app.post('/login-otp/request', rlOtpReq, turnstile, async (c) => {
