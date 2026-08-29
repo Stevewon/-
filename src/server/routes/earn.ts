@@ -59,6 +59,15 @@ async function usdtPrice(c: any): Promise<number> {
 }
 
 // Accrued dividend in USD for a position, capped at the full term.
+//
+// ★ Owner rule (2026-08-29): dividends accrue "익일부터 하루 단위로" — exactly
+//   like every major exchange / bank deposit. The day the user subscribes pays
+//   NOTHING; a whole day's dividend only lands once a FULL 24h has elapsed:
+//     • subscribe today            → 0 days  (no dividend yet)
+//     • +24h (다음 날 이 시각)       → 1 day
+//     • +48h                       → 2 days   … and so on.
+//   We floor the elapsed days so the balance steps up in clean whole-day
+//   increments rather than creeping up continuously second-by-second.
 function accruedUsd(p: {
   principal_usd: number;
   daily_rate: number;
@@ -66,8 +75,10 @@ function accruedUsd(p: {
   created_at: string | null;
 }, nowMs: number): number {
   const start = p.created_at ? Date.parse(p.created_at) : nowMs;
-  const elapsedDays = Math.max(0, (nowMs - (isNaN(start) ? nowMs : start)) / MS_PER_DAY);
-  const cappedDays = Math.min(elapsedDays, p.term_days || 0);
+  const rawDays = Math.max(0, (nowMs - (isNaN(start) ? nowMs : start)) / MS_PER_DAY);
+  // Whole COMPLETED days only → income starts the day AFTER subscription (D+1).
+  const completedDays = Math.floor(rawDays);
+  const cappedDays = Math.min(completedDays, p.term_days || 0);
   const usd = (p.principal_usd || 0) * (p.daily_rate || 0) * cappedDays;
   return isFinite(usd) ? usd : 0;
 }
