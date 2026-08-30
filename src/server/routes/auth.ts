@@ -3,6 +3,7 @@ import type { AppEnv } from '../index';
 import { generateToken, authMiddleware } from '../middleware/auth';
 import { rateLimit } from '../middleware/rateLimit';
 import { requireTurnstile } from '../middleware/turnstile';
+import { hasHangul } from '../utils/noHangul';
 import {
   sendMail,
   templateBasic,
@@ -293,6 +294,10 @@ app.post('/register', rlRegister, turnstile, async (c) => {
   // ---- Validation (matches frontend rules) ----
   if (!email || !password || !nickname) return c.json({ error: 'All fields required' }, 400);
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return c.json({ error: 'Invalid email format' }, 400);
+  // Boss's rule: no Korean (Hangul) anywhere in signup.
+  if (hasHangul(nickname) || hasHangul(email)) {
+    return c.json({ error: '한글은 입력할 수 없습니다 (Korean characters are not allowed)' }, 400);
+  }
   if (nickname.length < 2 || nickname.length > 20) return c.json({ error: 'Nickname must be 2-20 characters' }, 400);
   if (password.length < 8) return c.json({ error: 'Password must be at least 8 characters' }, 400);
   if (!/[A-Za-z]/.test(password) || !/[0-9]/.test(password)) {

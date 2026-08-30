@@ -4,6 +4,7 @@ import useStore from './store/useStore';
 import Layout from './components/layout/Layout';
 import ToastContainer from './components/common/Toast';
 import ErrorBoundary from './components/common/ErrorBoundary';
+import { useGlobalNoHangul } from './utils/useGlobalNoHangul';
 
 // Eagerly loaded (critical path)
 import TradePage from './pages/TradePage';
@@ -73,6 +74,10 @@ function AdminProtectedRoute({ children }: { children: React.ReactNode }) {
 export default function App() {
   const loadAuth = useStore((s) => s.loadAuth);
   const fetchMarkets = useStore((s) => s.fetchMarkets);
+
+  // Boss's rule: block Korean (Hangul) from being keyed into ANY input/textarea
+  // across the whole app (signup, KYC, exchange, admin). Single global guard.
+  useGlobalNoHangul();
 
   useEffect(() => {
     loadAuth();

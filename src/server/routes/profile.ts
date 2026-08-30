@@ -11,6 +11,7 @@ import {
   metaFromReq,
 } from '../utils/mailer';
 import { getUserHolding, getFeeTierByHolding, HOLDING_FEE_SCHEDULE } from '../utils/fees';
+import { hasHangul } from '../utils/noHangul';
 
 const app = new Hono<AppEnv>();
 
@@ -210,6 +211,10 @@ app.post('/kyc', authMiddleware, async (c) => {
   const idDoc     = body.id_document_url != null ? String(body.id_document_url) : null;
   const addrDoc   = body.address_document_url != null ? String(body.address_document_url) : null;
 
+  // Boss's rule: no Korean (Hangul) anywhere in KYC.
+  if (hasHangul(name) || hasHangul(phone) || hasHangul(idNumber) || hasHangul(address)) {
+    return c.json({ error: '한글은 입력할 수 없습니다 (Korean characters are not allowed)' }, 400);
+  }
   if (name.length < 2 || name.length > 100) {
     return c.json({ error: 'Name must be 2-100 characters' }, 400);
   }
