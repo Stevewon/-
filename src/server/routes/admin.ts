@@ -4,7 +4,7 @@ import { authMiddleware, adminMiddleware } from '../middleware/auth';
 import { createNotification } from './notifications';
 import { logAdminAction } from '../utils/audit';
 import { computeBalanceBreakdown } from '../lib/balance-breakdown';
-import { recomputeBinaryFromStaking } from '../lib/binary-matching';
+import { recomputeBinaryFromStaking, rollStakeUpBinary } from '../lib/binary-matching';
 import {
   tmplWithdrawApproved,
   tmplWithdrawRejected,
@@ -2641,6 +2641,30 @@ app.post('/staking-grant', async (c) => {
   const termEndIso = new Date(now + Number(product.term_days) * 86_400_000).toISOString();
   const posId = uuid();
 
+  // ── IDEMPOTENCY GUARD (prevents duplicate grants / double-click / retry) ──
+  //   If an IDENTICAL admin grant for the same user+product+principal was
+  //   created within the last 5 minutes, refuse — the earlier one already took.
+  //   This is what caused the "볼륨 2배 / 중복 개설" report: a failing UI let the
+  //   admin click 개설 multiple times, inserting the same position twice.
+  try {
+    const dupe = await db.prepare(
+      `SELECT id, created_at FROM staking_positions
+        WHERE user_id = ? AND product_id = ? AND granted_by IS NOT NULL
+          AND ABS(COALESCE(principal_usd,0) - ?) < 0.5
+          AND created_at >= ?
+        ORDER BY created_at DESC LIMIT 1`
+    ).bind(user_id, product_id, principalUsd, new Date(now - 5 * 60_000).toISOString())
+     .first<any>();
+    if (dupe) {
+      return c.json({
+        ok: false,
+        error: `동일 조건(회원·상품·원금 $${principalUsd})의 개설이 방금(5분 이내) 이미 처리되었습니다. 중복 개설을 막았습니다. 개설 이력을 확인해 주세요.`,
+        existing_id: dupe.id,
+        existing_created_at: dupe.created_at,
+      }, 409);
+    }
+  } catch { /* column may be missing pre-migration — skip guard */ }
+
   // principal_qta / qta_price_at_stake = 0 → binary tick uses principal_usd
   // fallback (full 2,000). principal_usd = inflated. real_principal_usd = real.
   await db.prepare(
@@ -2667,10 +2691,25 @@ app.post('/staking-grant', async (c) => {
     `UPDATE staking_products SET total_staked = COALESCE(total_staked,0) + ?, updated_at = ? WHERE id = ?`
   ).bind(principalUsd, nowIso, product.id).run().catch(() => {});
 
-  // Roll the FULL inflated principal into binary 몸값/volume immediately.
+  // Roll the FULL inflated principal into binary 몸값/volume for THIS position
+  // ONLY — same mechanism as POST /earn/subscribe (rollStakeUpBinary = additive)
+  // then stamp binary_counted_at so the cron sweeper never double-counts it.
+  //
+  // ⚠️ We deliberately do NOT call recomputeBinaryFromStaking here anymore.
+  //   recompute does a full reset+rebuild (self_usd = SET), while subscribe and
+  //   the cron sweeper are additive (self_usd += ). Mixing the two on every
+  //   grant is what let volume drift / double-count. Additive + stamp keeps a
+  //   single, consistent code path for ALL staking (self-subscribed OR granted).
   try {
-    await recomputeBinaryFromStaking(db, price);
-  } catch (e) { console.warn('[staking-grant] binary recompute failed:', e); }
+    await rollStakeUpBinary(db, user_id, principalUsd, price);
+    await db.prepare(
+      `UPDATE staking_positions SET binary_counted_at = datetime('now')
+        WHERE id = ? AND binary_counted_at IS NULL`
+    ).bind(posId).run();
+  } catch (e) {
+    // On failure, leave binary_counted_at NULL so the cron sweeper rolls it in.
+    console.warn('[staking-grant] binary roll-up failed (cron will retry):', e);
+  }
 
   await logAdminAction(c, {
     action: 'staking.grant',
