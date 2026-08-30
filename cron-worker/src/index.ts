@@ -775,6 +775,65 @@ export default {
     }
 
     // ------------------------------------------------------------------------
+    // /staking-audit — read-only. Lists ALL staking_positions grouped by user,
+    //   with a heuristic to flag DUPLICATES: rows with the same
+    //   (user_id, product_id, principal_usd) created within 120s of each other.
+    //   Used to diagnose the "볼륨 2배 / 중복 개설" report.
+    // ------------------------------------------------------------------------
+    if (url.pathname === '/staking-audit') {
+      const out: any = { note: 'staking positions audit (read-only)' };
+      try {
+        const { results } = await env.DB.prepare(
+          `SELECT id, user_id, product_id, status, principal_usd,
+                  real_principal_usd, bonus_principal_usd, granted_by,
+                  principal_qta, qta_price_at_stake, binary_counted_at, created_at
+             FROM staking_positions
+            ORDER BY user_id, created_at ASC`
+        ).all<any>();
+        const all = results || [];
+        // group by user
+        const byUser: Record<string, any[]> = {};
+        for (const r of all) (byUser[r.user_id] ||= []).push(r);
+        // duplicate detection: same user+product+principal within 120s
+        const dupGroups: any[] = [];
+        for (const [uid, rows] of Object.entries(byUser)) {
+          for (let i = 0; i < rows.length; i++) {
+            for (let j = i + 1; j < rows.length; j++) {
+              const a = rows[i], b = rows[j];
+              const sameKey = a.product_id === b.product_id &&
+                Number(a.principal_usd) === Number(b.principal_usd);
+              const dt = Math.abs(new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+              if (sameKey && dt <= 120_000) {
+                dupGroups.push({
+                  user_id: uid, product_id: a.product_id, principal_usd: a.principal_usd,
+                  delta_ms: dt, ids: [a.id, b.id],
+                  created_at: [a.created_at, b.created_at],
+                  granted_by: [a.granted_by, b.granted_by],
+                });
+              }
+            }
+          }
+        }
+        // resolve nicknames for dup users
+        for (const g of dupGroups) {
+          const u = await env.DB.prepare(`SELECT nickname, email FROM users WHERE id = ?`)
+            .bind(g.user_id).first<any>().catch(() => null);
+          g.nickname = u?.nickname || null; g.email = u?.email || null;
+        }
+        out.total_positions = all.length;
+        out.total_users = Object.keys(byUser).length;
+        out.duplicate_groups = dupGroups;
+        out.duplicate_count = dupGroups.length;
+        out.positions = all;
+      } catch (e: any) {
+        out.error = String(e?.message || e);
+      }
+      return new Response(JSON.stringify(out, null, 2), {
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+
+    // ------------------------------------------------------------------------
     // /stake-reset — FULLY reset a SINGLE member's staking so they look like a
     //   brand-new (never-staked) member. Used for testing the new sponsor flow.
     //   ?user=<nickname|email|id>  (required)   +  &confirm=RESET_STAKE to apply
@@ -1164,7 +1223,7 @@ export default {
       JSON.stringify({
         service: 'quantaex-cron',
         schedules: ['*/5 * * * * (price-alert tick)', '0 3 * * * (daily D1 backup)'],
-        endpoints: ['/run', '/migrate', '/backup', '/backup/prune', '/qta/withdrawals', '/qta/scan', '/qta/tick', '/qta/sweep', '/qta/reissue-address', '/qta/env-check', '/qta/deposits-debug', '/binary-debug', '/binary-reset', '/stake-reset', '/leg-fix', '/ext/scan', '/ext/tick', '/ext/sweep', '/ext/env-check', '/twap/tick'],
+        endpoints: ['/run', '/migrate', '/backup', '/backup/prune', '/qta/withdrawals', '/qta/scan', '/qta/tick', '/qta/sweep', '/qta/reissue-address', '/qta/env-check', '/qta/deposits-debug', '/binary-debug', '/staking-audit', '/binary-reset', '/stake-reset', '/leg-fix', '/ext/scan', '/ext/tick', '/ext/sweep', '/ext/env-check', '/twap/tick'],
       }),
       { headers: { 'content-type': 'application/json' } }
     );
