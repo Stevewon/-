@@ -867,11 +867,38 @@ export default {
         if (!matches || matches.length === 0) { out.error = 'no matching user'; return new Response(JSON.stringify(out, null, 2), { headers: { 'content-type': 'application/json' } }); }
         if (matches.length > 1) { out.error = 'ambiguous — multiple users'; out.candidates = matches; return new Response(JSON.stringify(out, null, 2), { headers: { 'content-type': 'application/json' } }); }
         const u = matches[0];
-        out.user = { id: u.id, nickname: u.nickname, email: u.email };
-        const { results: wallets } = await env.DB.prepare(
-          `SELECT coin_symbol, available, locked FROM wallets WHERE user_id = ? ORDER BY coin_symbol`,
-        ).bind(u.id).all<any>();
-        out.wallets = wallets || [];
+        const urow = await env.DB.prepare(
+          `SELECT id, nickname, email, created_at FROM users WHERE id = ?`,
+        ).bind(u.id).first<any>();
+        out.user = { id: u.id, nickname: u.nickname, email: u.email, joined_at: urow?.created_at };
+        // Wallets incl. available_initial (company-issued float) + wallet created_at.
+        let wallets: any[] = [];
+        try {
+          const r = await env.DB.prepare(
+            `SELECT coin_symbol, available, locked,
+                    COALESCE(available_initial, 0) AS available_initial, created_at, updated_at
+               FROM wallets WHERE user_id = ? ORDER BY coin_symbol`,
+          ).bind(u.id).all<any>();
+          wallets = r.results || [];
+        } catch {
+          const r = await env.DB.prepare(
+            `SELECT coin_symbol, available, locked FROM wallets WHERE user_id = ? ORDER BY coin_symbol`,
+          ).bind(u.id).all<any>();
+          wallets = r.results || [];
+        }
+        out.wallets = wallets;
+        // Deposits (incl. admin credits — tx_hash prefixed 'admin-') per coin, to
+        // trace WHEN/HOW a balance (e.g. QTA 1,000) came in.
+        try {
+          const dep = await env.DB.prepare(
+            `SELECT coin_symbol, amount, tx_hash, status, created_at
+               FROM deposits WHERE user_id = ? ORDER BY created_at DESC LIMIT 100`,
+          ).bind(u.id).all<any>();
+          out.deposits = (dep.results || []).map((d: any) => ({
+            ...d,
+            source: (typeof d.tx_hash === 'string' && d.tx_hash.startsWith('admin-')) ? 'admin_credit' : 'deposit',
+          }));
+        } catch (e: any) { out.deposits_error = String(e?.message || e); }
         const { results: pos } = await env.DB.prepare(
           `SELECT id, product_id, status, principal_usd, principal_qta, granted_by, created_at
              FROM staking_positions WHERE user_id = ? ORDER BY created_at`,
