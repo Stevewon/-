@@ -2473,6 +2473,73 @@ app.post('/binary/recompute', async (c) => {
 });
 
 // ============================================================================
+// POST /admin/staking-positions/delete — delete ONE staking position by id,
+// then RECOMPUTE binary volume so the tree exactly reflects the remaining
+// positions. Used to remove a DUPLICATE position (e.g. a member's own stake
+// that got duplicated by a later admin-granted position). Admin-only.
+//
+// Body: { position_id: string, confirm?: true }
+// Returns the deleted position snapshot + the fresh recompute report.
+// ============================================================================
+app.post('/staking-positions/delete', async (c) => {
+  const db = c.env.DB;
+  const body = await c.req.json().catch(() => ({} as any));
+  const positionId = String(body.position_id || '').trim();
+  if (!positionId) return c.json({ ok: false, error: 'position_id가 필요합니다' }, 400);
+
+  // Snapshot the position BEFORE deletion (for audit + response).
+  const pos = await db.prepare(
+    `SELECT id, user_id, product_id, principal_usd, real_principal_usd,
+            bonus_principal_usd, principal_qta, granted_by, status, created_at
+       FROM staking_positions WHERE id = ?`
+  ).bind(positionId).first<any>();
+  if (!pos) return c.json({ ok: false, error: '해당 포지션을 찾을 수 없습니다', position_id: positionId }, 404);
+
+  // Delete the position.
+  const del = await db.prepare(`DELETE FROM staking_positions WHERE id = ?`).bind(positionId).run();
+  const deletedCount = Number((del as any)?.meta?.changes ?? 0);
+  if (deletedCount < 1) {
+    return c.json({ ok: false, error: '삭제에 실패했습니다 (변경된 행 없음)', position_id: positionId }, 500);
+  }
+
+  // Best-effort: roll back the product's total_staked by the deleted principal.
+  try {
+    await db.prepare(
+      `UPDATE staking_products
+          SET total_staked = MAX(0, COALESCE(total_staked,0) - ?), updated_at = ?
+        WHERE id = ?`
+    ).bind(Number(pos.principal_usd) || 0, new Date().toISOString(), pos.product_id).run();
+  } catch { /* ignore */ }
+
+  // Recompute the FULL binary tree from the remaining staking positions so the
+  // deleted position's volume is removed cleanly (no drift / no double count).
+  let recompute: any = null;
+  try {
+    let qtaPrice = 0;
+    try {
+      const row = await db.prepare(`SELECT price_usd FROM coins WHERE symbol = 'QTA'`).first<any>();
+      qtaPrice = Number(row?.price_usd || 0);
+    } catch { /* ignore */ }
+    if (!(qtaPrice > 0)) qtaPrice = 0.00357142857;
+    recompute = await recomputeBinaryFromStaking(db, qtaPrice);
+    recompute.qta_price = qtaPrice;
+  } catch (e: any) {
+    recompute = { ok: false, error: String(e?.message || e).slice(0, 200) };
+  }
+
+  try {
+    await logAdminAction(c, {
+      action: 'staking.position.delete',
+      targetType: 'staking_position',
+      targetId: positionId,
+      payload: { deleted: pos, recompute },
+    });
+  } catch { /* audit best-effort */ }
+
+  return c.json({ ok: true, deleted: pos, recompute });
+});
+
+// ============================================================================
 // Company-only TWAP (분할 매도) management.
 // ----------------------------------------------------------------------------
 // Only the COMPANY account (role='admin' / admin@quantaex.io) may create TWAP
