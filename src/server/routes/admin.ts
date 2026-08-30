@@ -769,6 +769,23 @@ app.post('/deposits/manual', async (c) => {
   const coin = await db.prepare('SELECT symbol FROM coins WHERE symbol = ?').bind(coin_symbol).first();
   if (!coin) return c.json({ error: 'Unknown coin' }, 400);
 
+  // Optional referral link (윗 직대 연결). Manual deposit ONLY connects the
+  // member under the referrer — it does NOT choose a binary leg (L/R). The
+  // referrer later picks L/R themselves from their own account, after seeing
+  // "누가 나를 추천으로 얼마 했다" in their team view. So we attach the member
+  // (binary_parent_id = referrer, binary_leg stays NULL) and write the L1
+  // referrals row (idempotent). If the member is already placed, we leave it.
+  const referrerCode = String(body.referrer_code || '').trim().toUpperCase();
+  let referrer: { id: string; nickname: string | null; email: string | null } | null = null;
+  if (referrerCode) {
+    const rf = await db.prepare(
+      `SELECT id, nickname, email FROM users WHERE referral_code = ?`
+    ).bind(referrerCode).first<any>();
+    if (!rf) return c.json({ error: `추천코드 "${referrerCode}"에 해당하는 회원을 찾을 수 없습니다` }, 404);
+    if (rf.id === user_id) return c.json({ error: '본인을 추천인으로 지정할 수 없습니다' }, 400);
+    referrer = { id: rf.id, nickname: rf.nickname ?? null, email: rf.email ?? null };
+  }
+
   const id = uuid();
   // ★ A3 fix: optional idempotency. If the caller supplies idempotency_key,
   //   it becomes the deposit tx_hash and a duplicate submit (same key) is a
@@ -831,6 +848,36 @@ app.post('/deposits/manual', async (c) => {
 
   await db.batch(statements);
 
+  // ── REFERRAL LINK (윗 직대 연결, 좌/우는 추천인이 나중에 본인이 선택) ──────────
+  const placement: any = { referrer: referrer ? { id: referrer.id, nickname: referrer.nickname, email: referrer.email } : null, linked: false, already_placed: false };
+  if (referrer) {
+    try {
+      // 1) L1 referral relationship — this is what the referrer's team/직대
+      //    view reads to show "이 회원이 나를 추천으로 가입/입금".
+      await db.prepare(
+        `INSERT OR IGNORE INTO referrals
+           (id, referrer_id, referred_id, referral_code, reward_qta, rewarded_in_qx, level)
+         VALUES (?, ?, ?, ?, 0, 1, 1)`
+      ).bind(uuid(), referrer.id, user_id, referrerCode).run();
+
+      // 2) Binary attach (parent only, leg stays NULL). Referrer later assigns
+      //    L/R themselves from their own account.
+      const existing = await db.prepare(
+        `SELECT binary_parent_id, binary_leg FROM users WHERE id = ?`
+      ).bind(user_id).first<any>();
+      if (existing?.binary_parent_id) {
+        placement.already_placed = true;
+        placement.leg = existing.binary_leg || null;
+      } else {
+        await placeInBinaryTree(db, user_id, referrer.id);
+        placement.linked = true;
+      }
+    } catch (e) {
+      console.warn('[deposit.manual] referral link failed:', e);
+      placement.error = String((e as any)?.message || e).slice(0, 200);
+    }
+  }
+
   try {
     await createNotification(db, user_id, {
       type: 'deposit',
@@ -861,7 +908,7 @@ app.post('/deposits/manual', async (c) => {
     }
   } catch (e) { console.warn('[deposit.manual] mail failed:', e); }
 
-  return c.json({ id, tx_hash: tx, amount: amt });
+  return c.json({ id, tx_hash: tx, amount: amt, placement });
 });
 
 // ---------------------------------------------------------------------------

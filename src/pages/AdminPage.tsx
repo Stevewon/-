@@ -1326,6 +1326,7 @@ function ManualDepositModal({ onClose, onSuccess, t }: any) {
   const [coin, setCoin] = useState('USDT');
   const [amount, setAmount] = useState('');
   const [note, setNote] = useState('');
+  const [referrerCode, setReferrerCode] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [coins, setCoins] = useState<any[]>([]);
   // false = company-issued (NOT externally withdrawable, boss's default);
@@ -1405,8 +1406,16 @@ function ManualDepositModal({ onClose, onSuccess, t }: any) {
         amount: Number(amount),
         note: note.trim() || undefined,
         withdrawable: withdrawable === true,
+        referrer_code: referrerCode.trim() || undefined,
       });
-      showToast('success', t('admin.manualDepositDone'), `+${res.data.amount} ${coin}`);
+      const pl = res.data?.placement;
+      let extra = '';
+      if (pl?.referrer) {
+        extra = pl.already_placed
+          ? ` · 추천인 ${pl.referrer.nickname || pl.referrer.email} (기존 연결 유지)`
+          : ` · 추천인 ${pl.referrer.nickname || pl.referrer.email} 연결됨 (좌/우는 추천인이 선택)`;
+      }
+      showToast('success', t('admin.manualDepositDone'), `+${res.data.amount} ${coin}${extra}`);
       onSuccess();
     } catch (e: any) {
       showToast('error', t('common.error'), e.response?.data?.error || 'Failed');
@@ -1483,6 +1492,22 @@ function ManualDepositModal({ onClose, onSuccess, t }: any) {
           <div>
             <label className="text-xs text-exchange-text-third mb-1 block">Note</label>
             <input type="text" value={note} onChange={e => setNote(e.target.value)} className="input-field text-sm" placeholder={t('admin.manualDepositNote')} maxLength={120} />
+          </div>
+          {/* Referral code (윗 직대 연결) — leg는 추천인이 본인 계정에서 선택 */}
+          <div>
+            <label className="text-xs text-exchange-text-third mb-1 block">추천코드 (선택)</label>
+            <input
+              type="text"
+              value={referrerCode}
+              onChange={e => setReferrerCode(e.target.value.toUpperCase())}
+              className="input-field text-sm font-mono"
+              placeholder="추천인 코드 (비우면 연결 안 함)"
+              maxLength={32}
+              autoComplete="off"
+            />
+            <div className="text-[11px] text-exchange-text-third mt-1">
+              추천코드를 넣으면 해당 회원(윗 직대) 밑으로 연결됩니다. 좌/우 배치는 추천인이 본인 계정에서 직접 선택합니다.
+            </div>
           </div>
           {/* Withdrawable toggle: company-issued (default) vs real user-owned */}
           <div className="rounded-lg border border-exchange-border p-3">
