@@ -2632,7 +2632,7 @@ function SystemTab({ t }: any) {
   const [stkUserQuery, setStkUserQuery] = useState('');
   const [stkUserResults, setStkUserResults] = useState<any[]>([]);
   const [stkUser, setStkUser] = useState<any>(null); // {id,email,nickname}
-  const [stkForm, setStkForm] = useState<any>({ product_id: '', real_usd: '', bonus_usd: '' });
+  const [stkForm, setStkForm] = useState<any>({ product_id: '', real_usd: '', bonus_usd: '', referrer_code: '', leg: '' });
   const [stkSubmitting, setStkSubmitting] = useState(false);
 
   const loadStaking = async () => {
@@ -2669,15 +2669,25 @@ function SystemTab({ t }: any) {
     const bonus = Number(stkForm.bonus_usd || 0);
     if (!isFinite(real) || real <= 0) { showToast('error', '입력 오류', '실원금은 0보다 커야 합니다'); return; }
     if (!isFinite(bonus) || bonus < 0) { showToast('error', '입력 오류', '인정보너스가 올바르지 않습니다'); return; }
+    const refCode = String(stkForm.referrer_code || '').trim();
+    if (stkForm.leg && !refCode) { showToast('error', '입력 오류', '좌/우 배치를 선택하려면 추천코드를 먼저 입력하세요'); return; }
     setStkSubmitting(true);
     try {
       const res = await api.post('/admin/staking-grant', {
         user_id: stkUser.id, product_id: stkForm.product_id,
         real_usd: real, bonus_usd: bonus,
+        referrer_code: refCode || undefined,
+        leg: stkForm.leg || undefined,
       });
       if (res.data?.ok) {
-        showToast('success', '스테이킹 개설 완료', `적용 원금 $${(real + bonus).toLocaleString('en-US')} (실 $${real.toLocaleString('en-US')} + 보너스 $${bonus.toLocaleString('en-US')})`);
-        setStkForm((f: any) => ({ ...f, real_usd: '', bonus_usd: '' }));
+        const pl = res.data?.placement;
+        let extra = '';
+        if (pl?.referrer) {
+          const legTxt = pl.leg === 'L' ? '좌(L)' : pl.leg === 'R' ? '우(R)' : (pl.already_placed ? '기존배치' : '미배치');
+          extra = ` · 추천인 ${pl.referrer.nickname || pl.referrer.email} / ${legTxt}`;
+        }
+        showToast('success', '스테이킹 개설 완료', `적용 원금 $${(real + bonus).toLocaleString('en-US')} (실 $${real.toLocaleString('en-US')} + 보너스 $${bonus.toLocaleString('en-US')})${extra}`);
+        setStkForm((f: any) => ({ ...f, real_usd: '', bonus_usd: '', referrer_code: '', leg: '' }));
         setStkUser(null); setStkUserQuery('');
         loadStaking();
       } else {
@@ -3091,6 +3101,53 @@ function SystemTab({ t }: any) {
               className="px-3 py-2 rounded-lg bg-exchange-bg border border-exchange-border text-sm focus:outline-none focus:border-exchange-accent"
             />
           </label>
+        </div>
+
+        {/* Referral placement (추천인 + 좌/우 배치) */}
+        <div className="mt-3 rounded-lg border border-exchange-border bg-exchange-bg/40 p-3">
+          <div className="text-xs text-exchange-text-secondary mb-2">
+            <b className="text-exchange-text">추천인 배치 (선택)</b> — 추천코드를 넣으면 그 회원(윗 직대) 밑으로 연결되고,
+            좌/우를 선택하면 바이너리 배치까지 됩니다. (윗 직대 화면에 “누가 나를 추천으로 얼마 스테이킹”이 보입니다.)
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <label className="flex flex-col gap-1">
+              <span className="text-xs text-exchange-text-third">추천코드 (추천인)</span>
+              <input
+                type="text"
+                value={stkForm.referrer_code}
+                onChange={(e) => setStkForm({ ...stkForm, referrer_code: e.target.value.toUpperCase() })}
+                placeholder="예: 4ZS6QW49 (비우면 배치 안 함)"
+                className="px-3 py-2 rounded-lg bg-exchange-bg border border-exchange-border text-sm font-mono focus:outline-none focus:border-exchange-accent"
+              />
+            </label>
+            <div className="flex flex-col gap-1">
+              <span className="text-xs text-exchange-text-third">좌/우 배치 (추천인 기준)</span>
+              <div className="flex gap-2">
+                {[
+                  { v: '', label: '미선택' },
+                  { v: 'L', label: '좌 (L)' },
+                  { v: 'R', label: '우 (R)' },
+                ].map((opt) => (
+                  <button
+                    key={opt.v || 'none'}
+                    type="button"
+                    onClick={() => setStkForm({ ...stkForm, leg: opt.v })}
+                    style={stkForm.leg === opt.v ? { backgroundColor: '#F0B90B', color: '#000' } : {}}
+                    className={`flex-1 px-3 py-2 rounded-lg text-sm font-semibold border ${
+                      stkForm.leg === opt.v
+                        ? 'border-transparent'
+                        : 'border-exchange-border bg-exchange-bg text-exchange-text-secondary hover:text-exchange-text'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          {stkForm.leg && !String(stkForm.referrer_code || '').trim() && (
+            <div className="mt-2 text-xs text-exchange-sell">⚠️ 좌/우 배치를 하려면 추천코드를 먼저 입력하세요.</div>
+          )}
         </div>
 
         {/* Summary */}

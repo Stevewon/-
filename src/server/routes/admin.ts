@@ -4,7 +4,7 @@ import { authMiddleware, adminMiddleware } from '../middleware/auth';
 import { createNotification } from './notifications';
 import { logAdminAction } from '../utils/audit';
 import { computeBalanceBreakdown } from '../lib/balance-breakdown';
-import { recomputeBinaryFromStaking, rollStakeUpBinary } from '../lib/binary-matching';
+import { recomputeBinaryFromStaking, rollStakeUpBinary, placeInBinaryTree, assignBinaryLeg } from '../lib/binary-matching';
 import {
   tmplWithdrawApproved,
   tmplWithdrawRejected,
@@ -2610,6 +2610,12 @@ app.post('/staking-grant', async (c) => {
   const product_id = String(body.product_id || '').trim();
   const realUsd = Number(body.real_usd);
   const bonusUsd = Number(body.bonus_usd || 0);
+  // Optional referral placement: the referrer (윗 직대) and the L/R leg the
+  // referrer wants this new member placed on. Both optional — if referrer_code
+  // is blank we skip placement entirely (standalone position).
+  const referrerCode = String(body.referrer_code || '').trim().toUpperCase();
+  const legRaw = String(body.leg || '').trim().toUpperCase();
+  const leg: 'L' | 'R' | null = legRaw === 'L' || legRaw === 'R' ? legRaw : null;
 
   if (!user_id) return c.json({ ok: false, error: '회원(user_id)을 선택하세요' }, 400);
   if (!product_id) return c.json({ ok: false, error: '스테이킹 상품(product_id)을 선택하세요' }, 400);
@@ -2620,6 +2626,20 @@ app.post('/staking-grant', async (c) => {
 
   const u = await db.prepare('SELECT id FROM users WHERE id = ?').bind(user_id).first();
   if (!u) return c.json({ ok: false, error: '회원을 찾을 수 없습니다' }, 404);
+
+  // Resolve the referrer (윗 직대) from the referral code, if provided.
+  let referrer: { id: string; nickname: string | null; email: string | null } | null = null;
+  if (referrerCode) {
+    const rf = await db.prepare(
+      `SELECT id, nickname, email FROM users WHERE referral_code = ?`
+    ).bind(referrerCode).first<any>();
+    if (!rf) return c.json({ ok: false, error: `추천코드 "${referrerCode}"에 해당하는 회원을 찾을 수 없습니다` }, 404);
+    if (rf.id === user_id) return c.json({ ok: false, error: '본인을 추천인으로 지정할 수 없습니다' }, 400);
+    referrer = { id: rf.id, nickname: rf.nickname ?? null, email: rf.email ?? null };
+  }
+  if (leg && !referrer) {
+    return c.json({ ok: false, error: '좌/우(L/R) 배치를 선택하려면 추천코드를 먼저 입력하세요' }, 400);
+  }
 
   const product = await db.prepare(
     `SELECT id, min_usd, max_usd, term_days, daily_rate
@@ -2691,6 +2711,51 @@ app.post('/staking-grant', async (c) => {
     `UPDATE staking_products SET total_staked = COALESCE(total_staked,0) + ?, updated_at = ? WHERE id = ?`
   ).bind(principalUsd, nowIso, product.id).run().catch(() => {});
 
+  // ── REFERRAL PLACEMENT (윗 직대 연결 + 좌/우 바이너리 배치) ──────────────────
+  //   If a referrer_code was given, link this member under the referrer so the
+  //   referrer's team/직대 view shows "이 회원이 나를 추천인으로 $N 스테이킹" and
+  //   the member's staking volume rolls UP the referrer's binary tree.
+  //
+  //   IMPORTANT: placement must happen BEFORE rollStakeUpBinary below, and the
+  //   leg (L/R) must be assigned first, otherwise rollStakeUpBinary stops at the
+  //   member (binary_leg NULL => no roll-up to the sponsor). We only place a
+  //   binary parent/leg if the member is NOT already placed (one-time, like
+  //   normal signup). The referrals(L1) row is idempotent (INSERT OR IGNORE).
+  const placement: any = { referrer: referrer ? { id: referrer.id, nickname: referrer.nickname, email: referrer.email } : null, leg: null, leg_assigned: false, already_placed: false };
+  if (referrer) {
+    try {
+      // 1) L1 referral relationship (used by the referrer's downline/team view).
+      await db.prepare(
+        `INSERT OR IGNORE INTO referrals
+           (id, referrer_id, referred_id, referral_code, reward_qta, rewarded_in_qx, level)
+         VALUES (?, ?, ?, ?, 0, 1, 1)`
+      ).bind(uuid(), referrer.id, user_id, referrerCode).run();
+
+      // 2) Binary placement — attach under the referrer if not already placed.
+      const existing = await db.prepare(
+        `SELECT binary_parent_id, binary_leg FROM users WHERE id = ?`
+      ).bind(user_id).first<any>();
+      if (existing?.binary_parent_id && (existing.binary_leg === 'L' || existing.binary_leg === 'R')) {
+        // Already fully placed — don't move them, just report.
+        placement.already_placed = true;
+        placement.leg = existing.binary_leg;
+        placement.leg_assigned = true;
+      } else {
+        // Attach under the referrer (sets binary_parent_id, leg stays NULL).
+        await placeInBinaryTree(db, user_id, referrer.id);
+        // If the admin chose a leg, assign it now (one-time, irreversible).
+        if (leg) {
+          const r = await assignBinaryLeg(db, referrer.id, user_id, leg);
+          if (r.ok) { placement.leg = leg; placement.leg_assigned = true; }
+          else { placement.leg_assign_error = r.code; }
+        }
+      }
+    } catch (e) {
+      console.warn('[staking-grant] referral placement failed:', e);
+      placement.error = String((e as any)?.message || e).slice(0, 200);
+    }
+  }
+
   // Roll the FULL inflated principal into binary 몸값/volume for THIS position
   // ONLY — same mechanism as POST /earn/subscribe (rollStakeUpBinary = additive)
   // then stamp binary_counted_at so the cron sweeper never double-counts it.
@@ -2728,7 +2793,7 @@ app.post('/staking-grant', async (c) => {
   } catch { /* ignore */ }
 
   const created = await db.prepare('SELECT * FROM staking_positions WHERE id = ?').bind(posId).first<any>();
-  return c.json({ ok: true, position: created });
+  return c.json({ ok: true, position: created, placement });
 });
 
 export default app;
