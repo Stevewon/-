@@ -845,6 +845,42 @@ export default {
     //     4) clear binary_parent_id / binary_leg on the user.
     //   Free-signup referral relationships (referrals table) are NOT touched.
     // ------------------------------------------------------------------------
+    // ------------------------------------------------------------------------
+    // /wallet-debug — read-only: show one member's wallet balances + their
+    // staking positions, so we can confirm what a reset will look like BEFORE
+    // touching anything. ?user=nickname|email|id
+    // ------------------------------------------------------------------------
+    if (url.pathname === '/wallet-debug') {
+      const who = (url.searchParams.get('user') || '').trim();
+      const out: any = { note: 'wallet + staking snapshot (read-only)' };
+      try {
+        if (!who) {
+          out.error = 'user param required (?user=nickname|email|id)';
+          return new Response(JSON.stringify(out, null, 2), { headers: { 'content-type': 'application/json' } });
+        }
+        const like = `%${who}%`;
+        const { results: matches } = await env.DB.prepare(
+          `SELECT id, nickname, email FROM users
+            WHERE id = ? OR email = ? OR nickname = ? OR nickname LIKE ? OR email LIKE ?
+            LIMIT 5`,
+        ).bind(who, who, who, like, like).all<any>();
+        if (!matches || matches.length === 0) { out.error = 'no matching user'; return new Response(JSON.stringify(out, null, 2), { headers: { 'content-type': 'application/json' } }); }
+        if (matches.length > 1) { out.error = 'ambiguous — multiple users'; out.candidates = matches; return new Response(JSON.stringify(out, null, 2), { headers: { 'content-type': 'application/json' } }); }
+        const u = matches[0];
+        out.user = { id: u.id, nickname: u.nickname, email: u.email };
+        const { results: wallets } = await env.DB.prepare(
+          `SELECT coin_symbol, available, locked FROM wallets WHERE user_id = ? ORDER BY coin_symbol`,
+        ).bind(u.id).all<any>();
+        out.wallets = wallets || [];
+        const { results: pos } = await env.DB.prepare(
+          `SELECT id, product_id, status, principal_usd, principal_qta, granted_by, created_at
+             FROM staking_positions WHERE user_id = ? ORDER BY created_at`,
+        ).bind(u.id).all<any>();
+        out.staking_positions = pos || [];
+      } catch (e: any) { out.error = String(e?.message || e); }
+      return new Response(JSON.stringify(out, null, 2), { headers: { 'content-type': 'application/json' } });
+    }
+
     if (url.pathname === '/stake-reset') {
       const who = (url.searchParams.get('user') || '').trim();
       const confirm = url.searchParams.get('confirm') === 'RESET_STAKE';
