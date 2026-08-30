@@ -2712,6 +2712,63 @@ app.get('/staking-grants', async (c) => {
   return c.json({ ok: true, grants: results || [] });
 });
 
+// GET /admin/staking-positions?user_id=... OR ?q=email/nickname
+//   List ALL staking positions (both user-created AND admin-granted) for a
+//   member so the operator can spot & remove DUPLICATES. Returns per-position
+//   detail + a duplicate flag (same product_id appears more than once).
+app.get('/staking-positions', async (c) => {
+  const db = c.env.DB;
+  const userId = String(c.req.query('user_id') || '').trim();
+  const q = String(c.req.query('q') || '').trim();
+
+  let uid = userId;
+  let userRow: any = null;
+  if (!uid && q) {
+    // Resolve a member by email / nickname / id / referral_code.
+    userRow = await db.prepare(
+      `SELECT id, email, nickname, referral_code FROM users
+        WHERE id = ? OR email = ? OR nickname = ? OR referral_code = ?
+        LIMIT 1`
+    ).bind(q, q, q, q.toUpperCase()).first<any>().catch(() => null);
+    if (userRow) uid = userRow.id;
+  }
+  if (!uid) return c.json({ ok: false, error: 'user_id 또는 q(이메일/닉네임/추천코드)가 필요합니다' }, 400);
+
+  if (!userRow) {
+    userRow = await db.prepare(
+      `SELECT id, email, nickname, referral_code FROM users WHERE id = ?`
+    ).bind(uid).first<any>().catch(() => null);
+  }
+  if (!userRow) return c.json({ ok: false, error: '회원을 찾을 수 없습니다' }, 404);
+
+  const { results } = await db.prepare(
+    `SELECT id, product_id, coin_symbol, status, principal_usd,
+            real_principal_usd, bonus_principal_usd, principal_qta,
+            term_days, granted_by, binary_counted_at, created_at, term_end_at
+       FROM staking_positions
+      WHERE user_id = ?
+      ORDER BY created_at ASC`
+  ).bind(uid).all<any>().catch(() => ({ results: [] as any[] }));
+
+  // Flag duplicates: more than one position on the same product_id.
+  const countByProduct: Record<string, number> = {};
+  for (const p of (results || [])) countByProduct[p.product_id] = (countByProduct[p.product_id] || 0) + 1;
+  const positions = (results || []).map((p: any) => ({
+    ...p,
+    is_admin: p.granted_by != null,
+    is_duplicate: (countByProduct[p.product_id] || 0) > 1,
+  }));
+  const totalUsd = positions.reduce((s: number, p: any) => s + (Number(p.principal_usd) || 0), 0);
+
+  return c.json({
+    ok: true,
+    user: { id: userRow.id, email: userRow.email, nickname: userRow.nickname, referral_code: userRow.referral_code },
+    positions,
+    count: positions.length,
+    total_usd: totalUsd,
+  });
+});
+
 // POST /admin/staking-grant — create a bonus-principal staking position.
 // Body: { user_id, product_id, real_usd, bonus_usd }
 app.post('/staking-grant', async (c) => {

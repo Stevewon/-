@@ -2660,6 +2660,55 @@ function SystemTab({ t }: any) {
   const [stkForm, setStkForm] = useState<any>({ product_id: '', real_usd: '', bonus_usd: '', referrer_code: '', leg: '' });
   const [stkSubmitting, setStkSubmitting] = useState(false);
 
+  // --- Duplicate-position cleanup tool (중복 포지션 정리) --------------------
+  const [dupQuery, setDupQuery] = useState('');            // email/nickname/id/code
+  const [dupUser, setDupUser] = useState<any>(null);        // resolved user
+  const [dupPositions, setDupPositions] = useState<any[]>([]);
+  const [dupLoading, setDupLoading] = useState(false);
+  const [dupDeleting, setDupDeleting] = useState<string>(''); // position id being deleted
+
+  const loadDupPositions = async () => {
+    const q = dupQuery.trim();
+    if (!q) { showToast('warning', '입력 필요', '회원 이메일/닉네임/추천코드를 입력하세요'); return; }
+    setDupLoading(true);
+    try {
+      const res = await api.get('/admin/staking-positions', { params: { q } });
+      if (res.data?.ok) {
+        setDupUser(res.data.user);
+        setDupPositions(res.data.positions || []);
+        if (!res.data.positions?.length) showToast('info', '조회 완료', '해당 회원의 스테이킹 포지션이 없습니다');
+      } else {
+        showToast('error', '조회 실패', res.data?.error || '조회 실패');
+        setDupUser(null); setDupPositions([]);
+      }
+    } catch (e: any) {
+      showToast('error', '조회 실패', e?.response?.data?.error || e?.message || '조회 실패');
+      setDupUser(null); setDupPositions([]);
+    } finally {
+      setDupLoading(false);
+    }
+  };
+
+  const deletePosition = async (posId: string) => {
+    if (!window.confirm('이 스테이킹 포지션을 삭제하시겠습니까?\n삭제 후 바이너리 볼륨이 자동 재계산됩니다. (되돌릴 수 없음)')) return;
+    setDupDeleting(posId);
+    try {
+      const res = await api.post('/admin/staking-positions/delete', { position_id: posId });
+      if (res.data?.ok) {
+        showToast('success', '삭제 완료', `포지션 삭제 + 볼륨 재계산 완료`);
+        // reload the list so counts/duplicate flags refresh
+        await loadDupPositions();
+        loadStaking();
+      } else {
+        showToast('error', '삭제 실패', res.data?.error || '삭제 실패');
+      }
+    } catch (e: any) {
+      showToast('error', '삭제 실패', e?.response?.data?.error || e?.message || '삭제 실패');
+    } finally {
+      setDupDeleting('');
+    }
+  };
+
   const loadStaking = async () => {
     try {
       const [p, g] = await Promise.all([
@@ -3241,6 +3290,87 @@ function SystemTab({ t }: any) {
                   </div>
                 );
               })}
+            </div>
+          )}
+        </div>
+
+        {/* === 중복 포지션 정리 (Duplicate cleanup) ============================ */}
+        <div className="mt-6 rounded-xl border border-exchange-sell/40 bg-exchange-sell/5 p-4">
+          <div className="text-sm font-bold text-exchange-sell mb-1">중복 포지션 정리</div>
+          <div className="text-xs text-exchange-text-third mb-3">
+            회원을 조회해 스테이킹 포지션을 모두 보고, 중복 건을 삭제합니다. 삭제하면 바이너리 볼륨이 자동 재계산됩니다.
+          </div>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={dupQuery}
+              onChange={(e) => setDupQuery(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') loadDupPositions(); }}
+              placeholder="회원 이메일 / 닉네임 / 추천코드 / user_id"
+              className="flex-1 px-3 py-2 rounded-lg bg-exchange-bg border border-exchange-border text-sm focus:outline-none focus:border-exchange-accent"
+            />
+            <button
+              type="button"
+              onClick={loadDupPositions}
+              disabled={dupLoading}
+              style={{ backgroundColor: '#F0B90B', color: '#000' }}
+              className="px-4 py-2 rounded-lg text-sm font-bold disabled:opacity-60 whitespace-nowrap"
+            >
+              {dupLoading ? '조회 중…' : '조회'}
+            </button>
+          </div>
+
+          {dupUser && (
+            <div className="mt-3">
+              <div className="text-xs text-exchange-text-secondary mb-2">
+                <b className="text-exchange-text">{dupUser.nickname || '(닉네임 없음)'}</b>
+                <span className="text-exchange-text-third"> · {dupUser.email}</span>
+                <span className="text-exchange-text-third"> · 포지션 {dupPositions.length}건</span>
+              </div>
+              {dupPositions.length === 0 ? (
+                <div className="text-sm text-exchange-text-third py-3 text-center">스테이킹 포지션이 없습니다.</div>
+              ) : (
+                <div className="space-y-2">
+                  {dupPositions.map((p: any) => (
+                    <div
+                      key={p.id}
+                      className={`rounded-xl border p-3 text-sm ${
+                        p.is_duplicate ? 'border-exchange-sell/50 bg-exchange-sell/10' : 'border-exchange-border bg-exchange-bg/40'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between flex-wrap gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                            p.is_admin ? 'bg-exchange-yellow/20 text-exchange-yellow' : 'bg-exchange-buy/20 text-exchange-buy'
+                          }`}>
+                            {p.is_admin ? '관리자 개설' : '사용자 스테이킹'}
+                          </span>
+                          {p.is_duplicate && (
+                            <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-exchange-sell/20 text-exchange-sell">중복</span>
+                          )}
+                          <span className="text-exchange-text-third text-[11px] font-mono">{String(p.id).slice(0, 8)}…</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => deletePosition(p.id)}
+                          disabled={dupDeleting === p.id}
+                          style={{ backgroundColor: '#F6465D', color: '#fff' }}
+                          className="px-3 py-1.5 rounded-lg text-xs font-bold disabled:opacity-60"
+                        >
+                          {dupDeleting === p.id ? '삭제 중…' : '삭제'}
+                        </button>
+                      </div>
+                      <div className="mt-1.5 text-xs text-exchange-text-secondary flex flex-wrap gap-x-4 gap-y-1">
+                        <span>상품 <b className="text-exchange-text">{p.product_id}</b></span>
+                        <span>적용원금 <b className="text-exchange-text">${Number(p.principal_usd || 0).toLocaleString('en-US')}</b></span>
+                        <span>QTA <b className="text-exchange-text">{Number(p.principal_qta || 0).toLocaleString('en-US')}</b></span>
+                        <span>상태 {p.status}</span>
+                        <span>개설일 {p.created_at ? String(p.created_at).slice(0, 10) : '—'}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
