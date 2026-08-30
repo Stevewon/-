@@ -329,13 +329,31 @@ app.delete('/:id', authMiddleware, async (c) => {
 
   const market = await c.env.DB.prepare('SELECT * FROM markets WHERE id = ?').bind(order.market_id).first() as any;
 
-  // Unlock remaining funds. Only limit orders can reach this point with
-  // status in ('open','partial'); market orders always finalise inside
-  // matchOrder, so order.price is guaranteed to be a valid number here.
+  // Validate buy-side price BEFORE we flip the status (so a bad row doesn't get
+  // stuck in 'cancelled' with no refund). Only limit orders reach here with a
+  // cancellable status; market orders always finalise inside matchOrder.
+  if (order.side === 'buy' && (!order.price || order.price <= 0)) {
+    return c.json({ error: 'Cannot cancel: invalid order price' }, 400);
+  }
+
+  // ★ RACE FIX (2026-08-30): flip the status to 'cancelled' ATOMICALLY FIRST,
+  //   guarded by the current status. Only the request whose UPDATE actually
+  //   changed a row (changes === 1) is the "winner" and proceeds to refund the
+  //   locked funds. A second concurrent cancel sees changes === 0 and returns
+  //   409 WITHOUT refunding — so the lock can never be released (double-
+  //   refunded) twice. Previously the refund ran before the status flip with
+  //   no atomic guard, so two overlapping cancels could both refund.
+  const flip = await c.env.DB.prepare(
+    "UPDATE orders SET status = 'cancelled', updated_at = datetime('now') " +
+    "WHERE id = ? AND status IN ('open','partial','pending')"
+  ).bind(order.id).run();
+  if (!flip.meta || flip.meta.changes === 0) {
+    return c.json({ error: 'Order already processed' }, 409);
+  }
+
+  // Unlock remaining funds. We are the sole winner of the atomic flip above,
+  // so this refund runs exactly once for this order.
   if (order.side === 'buy') {
-    if (!order.price || order.price <= 0) {
-      return c.json({ error: 'Cannot cancel: invalid order price' }, 400);
-    }
     // S3-5: use the fee rate snapshotted at placement so we refund exactly
     // what was locked, even if the user's tier has since changed.
     const lockedRate = order.taker_fee_locked != null ? order.taker_fee_locked : market.taker_fee;
@@ -347,7 +365,6 @@ app.delete('/:id', authMiddleware, async (c) => {
       .bind(order.remaining, order.remaining, user.id, market.base_coin).run();
   }
 
-  await c.env.DB.prepare("UPDATE orders SET status = 'cancelled', updated_at = datetime('now') WHERE id = ?").bind(order.id).run();
   return c.json({ message: 'Order cancelled' });
 });
 

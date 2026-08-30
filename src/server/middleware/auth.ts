@@ -57,8 +57,13 @@ export async function authMiddleware(c: Context<AppEnv>, next: Next) {
 
   try {
     const payload = await verify(token, c.env.JWT_SECRET);
-    // Check token_version for forced-logout / revocation. Best-effort:
-    // if the column doesn't exist yet (pre-migration), skip the check.
+    // Check token_version for forced-logout / revocation, and is_active for
+    // bans. ★ SECURITY FIX (2026-08-30): this now FAILS CLOSED. Previously a
+    // DB hiccup on this lookup was swallowed and the request was allowed
+    // through (fail-open), which would let a revoked/banned session slip past
+    // during a transient outage. The token_version column has been live in
+    // production for a long time, so a genuine query failure is a real error,
+    // not a "migration pending" state — we reject rather than trust the token.
     try {
       const row = await c.env.DB.prepare(
         'SELECT token_version, is_active FROM users WHERE id = ?'
@@ -68,7 +73,13 @@ export async function authMiddleware(c: Context<AppEnv>, next: Next) {
       if ((row.token_version || 0) !== (payload.tv || 0)) {
         return c.json({ error: 'Session expired — please login again' }, 401);
       }
-    } catch { /* migration pending — fail open */ }
+    } catch (e) {
+      // Fail CLOSED: if we cannot confirm the session is still valid, do not
+      // trust the bearer token. This blocks a revoked session from being
+      // accepted during a DB outage.
+      console.error('[auth] token_version/is_active check failed — denying:', e);
+      return c.json({ error: 'Authentication temporarily unavailable' }, 503);
+    }
     c.set('user', payload);
     await next();
   } catch {
