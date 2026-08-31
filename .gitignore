@@ -15,3 +15,5 @@ signup_healthcheck.log
 signup_healthcheck.ALERT.log
 signup_healthcheck.stdout.log
 *.healthcheck.log
+backups/
+manual/
