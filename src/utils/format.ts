@@ -1,29 +1,43 @@
+// ── Robust numeric coercion ─────────────────────────────────────────────
+// API rows can carry null / undefined / string amounts. Passing those into
+// .toLocaleString()/.toFixed() throws a TypeError which, during React render,
+// crashes the whole page ("오류가 발생했습니다"). Every formatter below first
+// coerces its input to a finite number (fallback 0) so a single bad row can
+// never take down a table/screen.
+function num(v: unknown): number {
+  const n = typeof v === 'number' ? v : Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
 export function formatPrice(price: number, decimals: number = 2): string {
-  if (price >= 1000000) return price.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
-  if (price >= 1) return price.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
-  if (price >= 0.01) return price.toFixed(4);
-  return price.toFixed(6);
+  const p = num(price);
+  if (p >= 1000000) return p.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  if (p >= 1) return p.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+  if (p >= 0.01) return p.toFixed(4);
+  return p.toFixed(6);
 }
 
 export function formatAmount(amount: number): string {
   // No K/M abbreviation — show the full number with thousand separators so
   // it's always unambiguous (e.g. 1,000 / 1,000,000 instead of 1.00K / 1.00M).
-  if (amount >= 1000) {
-    return amount.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  const a = num(amount);
+  if (a >= 1000) {
+    return a.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
   }
-  if (amount >= 1) return amount.toFixed(4);
-  return amount.toFixed(6);
+  if (a >= 1) return a.toFixed(4);
+  return a.toFixed(6);
 }
 
 export function formatPercent(pct: number): string {
-  const sign = pct >= 0 ? '+' : '';
-  return `${sign}${pct.toFixed(2)}%`;
+  const p = num(pct);
+  const sign = p >= 0 ? '+' : '';
+  return `${sign}${p.toFixed(2)}%`;
 }
 
 export function formatVolume(vol: number): string {
   // No B/M/K abbreviation — full number with thousand separators so large
   // volumes read as 1,234,567 instead of 1.23M.
-  return vol.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  return num(vol).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 }
 
 /**
@@ -35,7 +49,7 @@ export function formatUSD(price: number): string {
   return new Intl.NumberFormat('en-US', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  }).format(price);
+  }).format(num(price));
 }
 
 export function timeAgo(dateStr: string, t?: (key: string, params?: Record<string, string | number>) => string): string {

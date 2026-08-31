@@ -745,8 +745,15 @@ app.get('/deposits', async (c) => {
   sql += ' ORDER BY d.created_at DESC LIMIT ?';
   params.push(limit);
 
-  const { results } = await db.prepare(sql).bind(...params).all();
-  return c.json(results);
+  // Defensive: never let a DB hiccup 500 the whole 입금 탭 — return [] so the
+  // page renders and the operator can still switch tabs / do manual deposits.
+  try {
+    const { results } = await db.prepare(sql).bind(...params).all();
+    return c.json(results);
+  } catch (err: any) {
+    console.warn('[admin/deposits] query failed:', err?.message || err);
+    return c.json([]);
+  }
 });
 
 // Manual credit
@@ -945,9 +952,6 @@ app.get('/deposits/manual', async (c) => {
       ${where}
      ORDER BY d.created_at DESC
      LIMIT ?`;
-  const { results: rows } = await db.prepare(listSql).bind(...params, limit).all<any>();
-
-  // Per-coin totals + overall count (respect the same filters, ignore limit).
   const totalsSql = `
     SELECT d.coin_symbol AS coin, COUNT(*) AS count, COALESCE(SUM(d.amount),0) AS total
       FROM deposits d
@@ -955,16 +959,23 @@ app.get('/deposits/manual', async (c) => {
       ${where}
      GROUP BY d.coin_symbol
      ORDER BY total DESC`;
-  const { results: totals } = await db.prepare(totalsSql).bind(...params).all<any>();
 
-  const grandCount = (rows || []).length;
-  return c.json({
-    rows: rows || [],
-    totals: totals || [],       // [{ coin, count, total }]
-    returned: grandCount,
-    limit,
-    filter: { coin: coin || null, q: q || null },
-  });
+  // Defensive: keep the 입금 탭 alive even if a DB error occurs.
+  try {
+    const { results: rows } = await db.prepare(listSql).bind(...params, limit).all<any>();
+    const { results: totals } = await db.prepare(totalsSql).bind(...params).all<any>();
+    const grandCount = (rows || []).length;
+    return c.json({
+      rows: rows || [],
+      totals: totals || [],       // [{ coin, count, total }]
+      returned: grandCount,
+      limit,
+      filter: { coin: coin || null, q: q || null },
+    });
+  } catch (err: any) {
+    console.warn('[admin/deposits/manual] query failed:', err?.message || err);
+    return c.json({ rows: [], totals: [], returned: 0, limit, filter: { coin: coin || null, q: q || null }, degraded: true });
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -1092,14 +1103,20 @@ app.get('/ext-deposits', async (c) => {
   sql += ' ORDER BY d.created_at DESC LIMIT ?';
   params.push(limit);
 
-  const { results } = await db.prepare(sql).bind(...params).all<any>();
-
-  // Count still awaiting approval (for the badge), independent of the filter.
-  const pend = await db.prepare(
-    `SELECT COUNT(*) AS cnt FROM ext_deposits WHERE status = 'awaiting_approval'`
-  ).first<{ cnt: number }>();
-
-  return c.json({ rows: results || [], awaiting_count: pend?.cnt || 0 });
+  // Defensive: if the ext_deposits table/columns are missing on an environment
+  // where migration 0046 has not been applied yet, the query throws SQLITE_ERROR
+  // and the whole 입금 탭 fails to load. Return an empty queue instead of 500 so
+  // the admin page still renders (the other tabs keep working).
+  try {
+    const { results } = await db.prepare(sql).bind(...params).all<any>();
+    const pend = await db.prepare(
+      `SELECT COUNT(*) AS cnt FROM ext_deposits WHERE status = 'awaiting_approval'`
+    ).first<{ cnt: number }>();
+    return c.json({ rows: results || [], awaiting_count: pend?.cnt || 0 });
+  } catch (err: any) {
+    console.warn('[admin/ext-deposits] query failed:', err?.message || err);
+    return c.json({ rows: [], awaiting_count: 0, degraded: true });
+  }
 });
 
 // POST /admin/ext-deposits/:id/approve — credit the user's wallet, mark credited.
