@@ -58,16 +58,31 @@ async function usdtPrice(c: any): Promise<number> {
   return p > 0 ? p : 1.0;
 }
 
+// KST(한국 표준시, UTC+9) offset in ms — dividends roll over at KST midnight.
+const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+
+// The KST calendar-day index for an instant (ms since epoch). Two instants on
+// the SAME Korean calendar day share the same index; each crossing of KST
+// midnight (00:00 한국시각) increments it by exactly 1. Implemented by shifting
+// the UTC clock forward 9h and flooring to whole days — no Date/timezone libs
+// needed (Workers runtime is UTC-only).
+function kstDayIndex(ms: number): number {
+  return Math.floor((ms + KST_OFFSET_MS) / MS_PER_DAY);
+}
+
 // Accrued dividend in USD for a position, capped at the full term.
 //
-// ★ Owner rule (2026-08-29): dividends accrue "익일부터 하루 단위로" — exactly
-//   like every major exchange / bank deposit. The day the user subscribes pays
-//   NOTHING; a whole day's dividend only lands once a FULL 24h has elapsed:
-//     • subscribe today            → 0 days  (no dividend yet)
-//     • +24h (다음 날 이 시각)       → 1 day
-//     • +48h                       → 2 days   … and so on.
-//   We floor the elapsed days so the balance steps up in clean whole-day
-//   increments rather than creeping up continuously second-by-second.
+// ★ Owner rule (2026-08-31, REVISED — CALENDAR-DAY / KST): dividends accrue by
+//   KOREAN CALENDAR DATE, not by elapsed 24h clock. Income starts the day AFTER
+//   subscription (D+1) and steps up by ONE whole day every time the Korean
+//   calendar date rolls over at KST midnight (한국시각 자정) — regardless of the
+//   time-of-day the member subscribed.
+//     • subscribe 토요일 (any time)         → 0 days  (당일은 0)
+//     • 일요일 (KST 자정 1번 지남)            → 1 day
+//     • 월요일 (KST 자정 2번 지남)            → 2 days   … and so on.
+//   So a Saturday entrant, once it is Monday in Korea, is paid 2 days
+//   (일요일치 + 월요일치) — matching the owner's "날이 바뀌었으니 2회" rule.
+//   completedDays = (오늘 KST 날짜 - 진입 KST 날짜), clamped to [0, term_days].
 function accruedUsd(p: {
   principal_usd: number;
   daily_rate: number;
@@ -75,9 +90,10 @@ function accruedUsd(p: {
   created_at: string | null;
 }, nowMs: number): number {
   const start = p.created_at ? Date.parse(p.created_at) : nowMs;
-  const rawDays = Math.max(0, (nowMs - (isNaN(start) ? nowMs : start)) / MS_PER_DAY);
-  // Whole COMPLETED days only → income starts the day AFTER subscription (D+1).
-  const completedDays = Math.floor(rawDays);
+  const startMs = isNaN(start) ? nowMs : start;
+  // Whole Korean calendar days elapsed since subscription (D+1 = first payout).
+  const dayDiff = kstDayIndex(nowMs) - kstDayIndex(startMs);
+  const completedDays = Math.max(0, dayDiff);
   const cappedDays = Math.min(completedDays, p.term_days || 0);
   const usd = (p.principal_usd || 0) * (p.daily_rate || 0) * cappedDays;
   return isFinite(usd) ? usd : 0;
