@@ -912,13 +912,13 @@ app.post('/deposits/manual', async (c) => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /deposits/manual — LIVE list of MANUAL (voucher/인증코드) deposits.
-//   Every manual credit created by POST /deposits/manual is stored in the
-//   `deposits` table with network = 'MANUAL' and tx_hash = 'MANUAL-...'. This
-//   endpoint returns those rows (newest first) with the member's email/
-//   nickname, plus per-coin totals so the admin can see the running tally in
-//   real time. Optional filters: ?coin=QTA  &q=<email/nickname substring>
-//   &limit=<n up to 1000>.
+// GET /deposits/manual — LIVE list of ALL admin-created MANUAL deposits.
+//   Two creation paths both count as "수동입금":
+//     • POST /admin/deposits/manual → network='MANUAL', tx_hash='MANUAL-...'
+//     • POST /wallet/admin-credit   → tx_hash='admin-...' (network may be NULL)
+//   This endpoint returns BOTH (newest first) with the member's email/nickname,
+//   plus per-coin totals so the admin can see the running tally in real time.
+//   Optional filters: ?coin=QTA  &q=<email/nickname substring>  &limit=<n up to 1000>.
 // ---------------------------------------------------------------------------
 app.get('/deposits/manual', async (c) => {
   const db = c.env.DB;
@@ -926,7 +926,8 @@ app.get('/deposits/manual', async (c) => {
   const q = (c.req.query('q') || '').trim();
   const limit = Math.min(parseInt(c.req.query('limit') || '200'), 1000);
 
-  const conds: string[] = [`d.network = 'MANUAL'`];
+  // Include BOTH manual paths: network='MANUAL' OR admin-credit tx_hash prefix.
+  const conds: string[] = [`(d.network = 'MANUAL' OR d.tx_hash LIKE 'admin-%')`];
   const params: any[] = [];
   if (coin) { conds.push('d.coin_symbol = ?'); params.push(coin); }
   if (q) {
@@ -938,7 +939,7 @@ app.get('/deposits/manual', async (c) => {
 
   const listSql = `
     SELECT d.id, d.user_id, d.coin_symbol, d.amount, d.tx_hash, d.memo,
-           d.status, d.created_at, u.email, u.nickname
+           d.status, d.network, d.created_at, u.email, u.nickname
       FROM deposits d
       JOIN users u ON u.id = d.user_id
       ${where}
@@ -964,6 +965,98 @@ app.get('/deposits/manual', async (c) => {
     limit,
     filter: { coin: coin || null, q: q || null },
   });
+});
+
+// ---------------------------------------------------------------------------
+// DELETE /deposits/manual/:id — 수동입금 삭제(취소).
+//   관리자가 잘못 넣은 수동입금(두 경로 모두)을 되돌린다:
+//     • POST /admin/deposits/manual → network='MANUAL', tx_hash='MANUAL-...'
+//     • POST /wallet/admin-credit   → tx_hash='admin-...'
+//   되돌림 규칙:
+//     1) 대상은 '수동입금 + completed' 건만 (실입금/온체인 건은 거부).
+//     2) 지갑 available 를 원자적으로 차감 (available >= amount 가드).
+//        → 이미 사용(스테이킹/출금/거래)된 잔액이면 changes=0 → 409 거부.
+//     3) available_initial(회사지급분 추적)은 차감 후 available 를 넘지 못하도록
+//        MIN(available_initial, available) 로 정합성 유지 → 회사지급/출금가능
+//        어느 쪽이든 인베리언트가 깨지지 않음.
+//     4) claim-first: deposits 행을 상태 가드와 함께 삭제 → 이중삭제 방지.
+//     5) 감사로그 기록.
+// ---------------------------------------------------------------------------
+app.delete('/deposits/manual/:id', async (c) => {
+  const db = c.env.DB;
+  const id = c.req.param('id');
+
+  // 1) 대상 조회 — 수동입금(두 경로) + completed 만 삭제 허용.
+  const dep = await db.prepare(
+    `SELECT id, user_id, coin_symbol, amount, tx_hash, status, network
+       FROM deposits WHERE id = ?`
+  ).bind(id).first<any>();
+  if (!dep) return c.json({ error: '입금 내역을 찾을 수 없습니다' }, 404);
+
+  const isManual = dep.network === 'MANUAL' || String(dep.tx_hash || '').startsWith('admin-');
+  if (!isManual) {
+    return c.json({ error: '수동입금 건만 삭제할 수 있습니다 (온체인/실입금은 삭제 불가)' }, 400);
+  }
+  if (dep.status !== 'completed') {
+    return c.json({ error: `삭제할 수 없는 상태입니다 (status=${dep.status})` }, 409);
+  }
+
+  const amt = Number(dep.amount) || 0;
+  if (!(amt > 0)) {
+    // 금액이 0 이하면 지갑을 건드리지 않고 행만 정리.
+    await db.prepare(`DELETE FROM deposits WHERE id = ? AND status = 'completed'`).bind(id).run();
+    await logAdminAction(c, {
+      action: 'deposit.manual_delete', targetType: 'deposit', targetId: id,
+      payload: { user_id: dep.user_id, coin_symbol: dep.coin_symbol, amount: amt, tx_hash: dep.tx_hash, zero_amount: true },
+    });
+    return c.json({ ok: true, message: '수동입금이 삭제되었습니다', reversed_amount: 0 });
+  }
+
+  // 2) 지갑 available 원자적 차감 (available >= amount 가드).
+  //    이미 사용된 잔액이면 changes=0 → 되돌릴 수 없음.
+  //    available_initial(회사지급분 추적): 회사지급 수동입금은 생성 시 +amount
+  //    되었으므로 되돌릴 때 -amount. 단, 음수가 되지 않도록 MAX(0,...),
+  //    그리고 차감 후 available 를 넘지 않도록 MIN(..., available-amount)
+  //    로 인베리언트(available_initial ≤ available)를 항상 유지한다.
+  const rev = await db.prepare(
+    `UPDATE wallets
+        SET available_initial = MIN(
+              MAX(0, COALESCE(available_initial, 0) - ?),
+              available - ?
+            ),
+            available = available - ?
+      WHERE user_id = ? AND coin_symbol = ? AND available >= ?`
+  ).bind(amt, amt, amt, dep.user_id, dep.coin_symbol, amt).run();
+
+  if (!rev.meta || rev.meta.changes === 0) {
+    return c.json({
+      error: '잔액이 부족하여 삭제할 수 없습니다 (해당 자금이 이미 사용/출금/스테이킹됨)',
+    }, 409);
+  }
+
+  // 3) claim-first: deposits 행 삭제 (completed 상태일 때만) → 이중삭제 방지.
+  const del = await db.prepare(
+    `DELETE FROM deposits WHERE id = ? AND status = 'completed'`
+  ).bind(id).run();
+
+  if (!del.meta || del.meta.changes === 0) {
+    // 극히 드문 동시성 케이스: 지갑은 이미 되돌렸는데 행이 사라짐 → 롤백(재크레딧).
+    await db.prepare(
+      `UPDATE wallets SET available = available + ? WHERE user_id = ? AND coin_symbol = ?`
+    ).bind(amt, dep.user_id, dep.coin_symbol).run();
+    return c.json({ error: '동시 처리로 삭제가 취소되었습니다. 다시 시도하세요' }, 409);
+  }
+
+  // 4) 감사로그.
+  await logAdminAction(c, {
+    action: 'deposit.manual_delete', targetType: 'deposit', targetId: id,
+    payload: {
+      user_id: dep.user_id, coin_symbol: dep.coin_symbol,
+      amount: amt, tx_hash: dep.tx_hash, network: dep.network,
+    },
+  });
+
+  return c.json({ ok: true, message: '수동입금이 삭제되었습니다', reversed_amount: amt });
 });
 
 // ============================================================================

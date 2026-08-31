@@ -1125,6 +1125,21 @@ function DepositsTab({ t, onUpdate }: any) {
     } finally { setBusyId(null); }
   };
 
+  // Delete (reverse) a MANUAL deposit → debits the credited balance back.
+  const deleteManual = async (d: any) => {
+    if (!window.confirm(
+      `${d.email || d.nickname || d.user_id}\n${d.coin_symbol} +${formatPrice(d.amount)} 수동입금을 삭제하시겠습니까?\n\n삭제 시 해당 금액이 회원 지갑에서 차감(회수)됩니다.\n※ 이미 사용(스테이킹/출금/거래)된 잔액이면 삭제할 수 없습니다.`
+    )) return;
+    setBusyId(d.id);
+    try {
+      const res = await api.delete(`/admin/deposits/manual/${d.id}`);
+      showToast('success', '삭제 완료', res.data?.message || `-${d.amount} ${d.coin_symbol} 회수 완료`);
+      load(); onUpdate?.();
+    } catch (e: any) {
+      showToast('error', t('common.error'), e.response?.data?.error || '삭제 실패');
+    } finally { setBusyId(null); }
+  };
+
   // Live refresh: while the MANUAL ledger is open, poll every 8s so newly
   // credited vouchers appear in real time without a manual reload.
   useEffect(() => {
@@ -1286,11 +1301,12 @@ function DepositsTab({ t, onUpdate }: any) {
               <th className="text-left px-3 py-2.5">Tx</th>
               <th className="text-left px-3 py-2.5">{t('admin.status')}</th>
               <th className="text-left px-3 py-2.5">{t('trade.time')}</th>
+              {isManual && <th className="text-right px-3 py-2.5">처리</th>}
             </tr>
           </thead>
           <tbody>
             {list.length === 0 ? (
-              <tr><td colSpan={7} className="px-3 py-8 text-center text-exchange-text-third text-xs">{t('admin.noData')}</td></tr>
+              <tr><td colSpan={isManual ? 8 : 7} className="px-3 py-8 text-center text-exchange-text-third text-xs">{t('admin.noData')}</td></tr>
             ) : list.map(d => (
               <tr key={d.id} className="border-b border-exchange-border/50 hover:bg-exchange-hover/30">
                 <td className="px-3 py-2 text-xs">{d.nickname}</td>
@@ -1309,6 +1325,18 @@ function DepositsTab({ t, onUpdate }: any) {
                   }`}>{d.status}</span>
                 </td>
                 <td className="px-3 py-2 text-[11px] text-exchange-text-third">{timeAgo(d.created_at, t)}</td>
+                {isManual && (
+                  <td className="px-3 py-2 text-right whitespace-nowrap">
+                    <button
+                      disabled={busyId === d.id}
+                      onClick={() => deleteManual(d)}
+                      title="수동입금 삭제(회수)"
+                      className="text-[11px] px-2.5 py-1 rounded-md bg-exchange-sell/15 text-exchange-sell hover:bg-exchange-sell/25 disabled:opacity-50 inline-flex items-center gap-1"
+                    >
+                      <Trash2 size={12} /> 삭제
+                    </button>
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>
