@@ -422,6 +422,7 @@ function DownlinePurgePanel({ t, onUpdate }: any) {
       <div className="flex flex-wrap items-center gap-2">
         <input
           type="text"
+          data-allow-hangul
           value={nickname}
           onChange={e => setNickname(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') doPreview(); }}
@@ -1190,6 +1191,7 @@ function DepositsTab({ t, onUpdate }: any) {
             ))}
           </div>
           <input
+            data-allow-hangul
             value={manualQ}
             onChange={(e) => setManualQ(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') load(); }}
@@ -1476,6 +1478,7 @@ function ManualDepositModal({ onClose, onSuccess, t }: any) {
                 <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-exchange-text-third pointer-events-none" />
                 <input
                   type="text"
+                  data-allow-hangul
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                   onFocus={() => { if (results.length) setShowDropdown(true); }}
@@ -3143,6 +3146,7 @@ function SystemTab({ t }: any) {
             <div className="relative mt-1">
               <input
                 type="text"
+                data-allow-hangul
                 value={stkUserQuery}
                 onChange={(e) => setStkUserQuery(e.target.value)}
                 placeholder="닉네임 또는 이메일 입력"
@@ -3331,6 +3335,7 @@ function SystemTab({ t }: any) {
           <div className="flex gap-2">
             <input
               type="text"
+              data-allow-hangul
               value={dupQuery}
               onChange={(e) => setDupQuery(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') loadDupPositions(); }}
