@@ -1012,6 +1012,32 @@ app.delete('/deposits/manual/:id', async (c) => {
     return c.json({ error: `삭제할 수 없는 상태입니다 (status=${dep.status})` }, 409);
   }
 
+  // 1.5) 하부(추천 하위 조직) 존재 검사 — 이 회원 아래에 누군가 있으면 삭제 불가.
+  //   "하부"는 두 관점 모두를 뜻한다:
+  //     • referrals.referrer_id = 이 회원  → 추천 조직상 직대/하위가 존재
+  //     • users.binary_parent_id = 이 회원  → 바이너리 트리상 하위가 존재
+  //   둘 중 하나라도 있으면(=조직이 이미 형성됨) 진입금액 회수가 다른 회원에게
+  //   영향을 줄 수 있으므로 삭제를 거부한다. (당일 여부와 무관)
+  try {
+    const downline = await db.prepare(
+      `SELECT (
+         (SELECT COUNT(*) FROM referrals WHERE referrer_id = ?1) +
+         (SELECT COUNT(*) FROM users     WHERE binary_parent_id = ?1)
+       ) AS cnt`
+    ).bind(dep.user_id).first<any>();
+    const downlineCount = Number(downline?.cnt || 0);
+    if (downlineCount > 0) {
+      return c.json({
+        error: `하부(추천 하위)가 ${downlineCount}명 있어 삭제할 수 없습니다. 하부가 아무도 없을 때만 수동입금 삭제가 가능합니다.`,
+        downline_count: downlineCount,
+      }, 409);
+    }
+  } catch (err: any) {
+    // 검사 자체가 실패하면 안전하게 삭제를 막는다(=fail-closed).
+    console.warn('[admin/deposits/manual DELETE] downline check failed:', err?.message || err);
+    return c.json({ error: '하부 존재 여부를 확인하지 못해 삭제를 중단했습니다. 잠시 후 다시 시도하세요.' }, 500);
+  }
+
   const amt = Number(dep.amount) || 0;
   if (!(amt > 0)) {
     // 금액이 0 이하면 지갑을 건드리지 않고 행만 정리.

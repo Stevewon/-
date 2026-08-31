@@ -1128,7 +1128,7 @@ function DepositsTab({ t, onUpdate }: any) {
   // Delete (reverse) a MANUAL deposit → debits the credited balance back.
   const deleteManual = async (d: any) => {
     if (!window.confirm(
-      `${d.email || d.nickname || d.user_id}\n${d.coin_symbol} +${formatPrice(d.amount)} 수동입금을 삭제하시겠습니까?\n\n삭제 시 해당 금액이 회원 지갑에서 차감(회수)됩니다.\n※ 이미 사용(스테이킹/출금/거래)된 잔액이면 삭제할 수 없습니다.`
+      `${d.email || d.nickname || d.user_id}\n${d.coin_symbol} +${formatPrice(d.amount)} 수동입금을 삭제하시겠습니까?\n\n삭제 시 해당 금액이 회원 지갑에서 차감(회수)됩니다.\n※ 하부(추천 하위)가 아무도 없을 때만 삭제 가능합니다.\n※ 이미 사용(스테이킹/출금/거래)된 잔액이면 삭제할 수 없습니다.`
     )) return;
     setBusyId(d.id);
     try {
