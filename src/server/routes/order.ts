@@ -1121,4 +1121,227 @@ app.post('/qta-autobuy-tick', async (c) => {
   });
 });
 
+// ============================================================================
+// POST /qta-mm-tick  — QTA MARKET-MAKING + member-sell absorption (one tick)
+// ----------------------------------------------------------------------------
+// Owner request: "손님 올 때까지 자체 거래를 돌려라" — the QTA/USDT market must
+// look ALIVE (a two-sided order book + a fresh candle every tick) AND a member
+// who sells must always get bought. Two internal maker bots do BOTH:
+//
+//   • mm-bot-a  → maintains a resting ASK (sell) just ABOVE the managed price
+//   • mm-bot-b  → maintains a resting BID (buy) just BELOW the managed price
+//
+// So the order book always shows BOTH sides (no more "No sell orders"), and the
+// spread straddles the managed mid. Each tick:
+//   1. FIRST buy any member sells: bot-b sends a small taker BUY at the mid. It
+//      sweeps the cheapest resting asks — i.e. members selling at/under the mid
+//      get filled. (A member selling ABOVE the mid just rests as a normal ask.)
+//      This is capped by the daily KST budget (51,000 KRW ≈ $36.43) measured as
+//      how much the bots BOUGHT FROM MEMBERS today; once hit, no more member
+//      buying, but cosmetic self-trading continues.
+//   2. Print ONE small candle: bot-b crosses a tiny amount against bot-a's own
+//      resting ask at the mid (STP allows it — different accounts). The trade
+//      price == the managed mid, so the candle sits ON the price line and never
+//      spikes.
+//   3. Re-arm the book: cancel the bots' stale quotes and repost a fresh
+//      ASK (bot-a) and BID (bot-b) around the new mid.
+//
+// All bot quotes are tagged with stop_price = MM_MARKER so they are found and
+// refreshed without touching real member/company orders. Guarded by the shared
+// x-twap-secret.
+// ============================================================================
+const MM_BOT_A = 'mm-bot-a';
+const MM_BOT_B = 'mm-bot-b';
+const MM_MARKER = -2;                 // stop_price tag for MM bot quotes
+const MM_MEMBER_BUY_BUDGET_USDT = 51000 / 1400;  // daily KST budget (~$36.43)
+
+app.post('/qta-mm-tick', async (c) => {
+  const secret = c.req.header('x-twap-secret') || '';
+  const expected = (c.env as any).TWAP_CRON_SECRET || '';
+  if (!expected || secret !== expected) {
+    return c.json({ error: 'unauthorized' }, 401);
+  }
+
+  const DB = c.env.DB;
+
+  const market = await DB.prepare(
+    "SELECT * FROM markets WHERE base_coin = 'QTA' AND quote_coin = 'USDT' AND is_active = 1"
+  ).first<any>();
+  if (!market) return c.json({ error: 'QTA/USDT market not found' }, 500);
+
+  const bots = await DB.prepare(
+    "SELECT id FROM users WHERE id IN (?, ?)"
+  ).bind(MM_BOT_A, MM_BOT_B).all<any>();
+  if ((bots.results || []).length < 2) {
+    return c.json({ ok: true, action: 'bots_missing' });
+  }
+
+  const pdec = market.price_decimals;
+  const adec = market.amount_decimals;
+  const minTotal = Math.max(1, Number(market.min_order_total) || 1);
+  const minAmt = Number(market.min_order_amount) || 0.0001;
+
+  // ---- Managed mid price (already band-clamped by the index tick loop) --
+  const qtaCoin = await DB.prepare(
+    'SELECT price_usd, price_mode, price_center, price_band_pct FROM coins WHERE symbol = ?'
+  ).bind('QTA').first<any>();
+  let mid = Number(qtaCoin?.price_usd) || 0.00357142857;
+  const noise = Math.sin(Date.now() * 0.0007) * 43758.5453;
+  const frac = noise - Math.floor(noise);              // 0..1
+  mid = mid * (1 + (frac - 0.5) * 0.004);              // ±0.2% wobble
+  if (qtaCoin?.price_mode === 'managed' && Number(qtaCoin.price_center) > 0) {
+    const band = Math.max(0, Number(qtaCoin.price_band_pct) || 0) / 100;
+    const hi = Number(qtaCoin.price_center) * (1 + band);
+    const lo = Number(qtaCoin.price_center) * (1 - band);
+    if (mid > hi) mid = hi;
+    if (mid < lo) mid = lo;
+  }
+  mid = floorToDecimals(mid, pdec);
+  if (!(mid > 0)) return c.json({ error: 'invalid mm mid' }, 500);
+
+  // A tight spread around the mid (±0.4%), clamped to the price grid so both
+  // quotes are distinct from the mid.
+  const tick = 1 / Math.pow(10, pdec);
+  let ask = floorToDecimals(mid * 1.004, pdec);
+  let bid = floorToDecimals(mid * 0.996, pdec);
+  if (ask <= mid) ask = floorToDecimals(mid + tick, pdec);
+  if (bid >= mid) bid = floorToDecimals(mid - tick, pdec);
+  if (bid <= 0) bid = mid;
+
+  // ---- Helper: cancel + refund all resting MM bot quotes ----------------
+  async function clearBotQuotes(): Promise<number> {
+    const q = await DB.prepare(
+      `SELECT id, user_id, side, remaining, price FROM orders
+         WHERE market_id = ? AND user_id IN (?, ?) AND status IN ('open','partial')`
+    ).bind(market.id, MM_BOT_A, MM_BOT_B).all<any>();
+    let n = 0;
+    for (const o of (q.results || [])) {
+      await DB.prepare(
+        "UPDATE orders SET status='cancelled', updated_at=datetime('now') WHERE id=?"
+      ).bind(o.id).run();
+      if (o.side === 'sell') {
+        await DB.prepare(
+          "UPDATE wallets SET available = available + ?, locked = MAX(0, locked - ?) WHERE user_id=? AND coin_symbol='QTA'"
+        ).bind(Number(o.remaining), Number(o.remaining), o.user_id).run();
+      } else {
+        const refund = Number(o.remaining) * Number(o.price);
+        await DB.prepare(
+          "UPDATE wallets SET available = available + ?, locked = MAX(0, locked - ?) WHERE user_id=? AND coin_symbol='USDT'"
+        ).bind(refund, refund, o.user_id).run();
+      }
+      n += 1;
+    }
+    return n;
+  }
+
+  // Clear last tick's stale quotes first (so sizes/prices track the new mid).
+  const cleared = await clearBotQuotes();
+
+  const tierA = await getUserFeeTier(DB, MM_BOT_A, { maker_fee: market.maker_fee, taker_fee: market.taker_fee });
+  const tierB = await getUserFeeTier(DB, MM_BOT_B, { maker_fee: market.maker_fee, taker_fee: market.taker_fee });
+
+  async function placeOrder(
+    userId: string, side: 'buy' | 'sell', price: number, amount: number,
+    tier: { maker_fee: number; taker_fee: number },
+  ): Promise<string | null> {
+    const total = floorToDecimals(amount * price, 8);
+    if (amount < minAmt || total < minTotal) return null;
+    // Lock funds atomically.
+    if (side === 'sell') {
+      const lk = await DB.prepare(
+        "UPDATE wallets SET available=available-?, locked=locked+? WHERE user_id=? AND coin_symbol='QTA' AND available>=?"
+      ).bind(amount, amount, userId, amount).run();
+      if (!lk.meta || lk.meta.changes === 0) return null;
+    } else {
+      const lk = await DB.prepare(
+        "UPDATE wallets SET available=available-?, locked=locked+? WHERE user_id=? AND coin_symbol='USDT' AND available>=?"
+      ).bind(total, total, userId, total).run();
+      if (!lk.meta || lk.meta.changes === 0) return null;
+    }
+    const id = uuid();
+    await DB.prepare(
+      `INSERT INTO orders
+         (id, user_id, market_id, side, type, price, amount, remaining, total,
+          time_in_force, taker_fee_locked, maker_fee_locked, stop_price, status)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    ).bind(
+      id, userId, market.id, side, 'limit', price,
+      amount, amount, total, 'GTC', tier.taker_fee, tier.maker_fee, MM_MARKER, 'open',
+    ).run();
+    return id;
+  }
+
+  // KST day start for the daily member-buy budget.
+  const nowKst = new Date(Date.now() + 9 * 3600 * 1000);
+  const kstMidnightUtcMs = Date.UTC(nowKst.getUTCFullYear(), nowKst.getUTCMonth(), nowKst.getUTCDate()) - 9 * 3600 * 1000;
+  const dayStartUtc = new Date(kstMidnightUtcMs).toISOString().slice(0, 19).replace('T', ' ');
+
+  // How much the bots already BOUGHT FROM MEMBERS today (buyer=bot, seller≠bot).
+  const memRow = await DB.prepare(
+    `SELECT COALESCE(SUM(t.total),0) spent FROM trades t
+      WHERE t.market_id = ? AND t.buyer_id IN (?, ?)
+        AND t.seller_id NOT IN (?, ?)
+        AND t.created_at >= ?`
+  ).bind(market.id, MM_BOT_A, MM_BOT_B, MM_BOT_A, MM_BOT_B, dayStartUtc).first<{ spent: number }>().catch(() => null);
+  const memberSpentToday = Number(memRow?.spent || 0);
+  const memberBudgetLeft = Math.max(0, MM_MEMBER_BUY_BUDGET_USDT - memberSpentToday);
+
+  let memberTrades = 0;
+  // ---- Step 1: absorb member sells at/under the mid (if budget remains) --
+  if (memberBudgetLeft >= minTotal) {
+    // Are there member asks at/under our mid? (exclude the bots themselves)
+    const memAsk = await DB.prepare(
+      `SELECT COALESCE(SUM(remaining),0) qty FROM orders
+         WHERE market_id=? AND side='sell' AND status IN ('open','partial')
+           AND user_id NOT IN (?, ?) AND price <= ?`
+    ).bind(market.id, MM_BOT_A, MM_BOT_B, mid).first<{ qty: number }>().catch(() => null);
+    const memAskQty = Number(memAsk?.qty || 0);
+    if (memAskQty > 0) {
+      // Buy up to the smaller of (member ask qty) and (budget-left worth at mid).
+      const budgetQty = memberBudgetLeft / mid;
+      const buyQty = floorToDecimals(Math.min(memAskQty, budgetQty), adec);
+      const buyId = await placeOrder(MM_BOT_B, 'buy', mid, buyQty, tierB);
+      if (buyId) {
+        const m = await matchOrder(DB, buyId, market, {
+          lockAmount: floorToDecimals(buyQty * mid, 8), lockSymbol: 'USDT', tif: 'IOC',
+        });
+        memberTrades = (m.trades || []).length;
+      }
+    }
+  }
+
+  // ---- Step 2: print one cosmetic candle at the mid ---------------------
+  // bot-a rests a small ask at the mid; bot-b crosses it with a tiny taker buy.
+  const candleQty = floorToDecimals(Math.max(minAmt, (minTotal * 1.2) / mid), adec);
+  let candleTrades = 0;
+  const aSell = await placeOrder(MM_BOT_A, 'sell', mid, candleQty, tierA);
+  if (aSell) {
+    await matchOrder(DB, aSell, market, { lockAmount: candleQty, lockSymbol: 'QTA', tif: 'GTC' });
+    const bBuy = await placeOrder(MM_BOT_B, 'buy', mid, candleQty, tierB);
+    if (bBuy) {
+      const m = await matchOrder(DB, bBuy, market, {
+        lockAmount: floorToDecimals(candleQty * mid, 8), lockSymbol: 'USDT', tif: 'IOC',
+      });
+      candleTrades = (m.trades || []).length;
+    }
+  }
+
+  // ---- Step 3: re-arm a clean two-sided book ---------------------------
+  // Cancel whatever leftover from steps 1-2, then post fresh resting quotes.
+  await clearBotQuotes();
+  // Depth per side: enough QTA/USDT to look like a real book (~$8-$15 each).
+  const askQty = floorToDecimals((minTotal * 8) / ask, adec);
+  const bidQty = floorToDecimals((minTotal * 8) / bid, adec);
+  const restAsk = await placeOrder(MM_BOT_A, 'sell', ask, askQty, tierA);
+  const restBid = await placeOrder(MM_BOT_B, 'buy', bid, bidQty, tierB);
+
+  return c.json({
+    ok: true, action: 'mm_ok',
+    mid, ask, bid,
+    member_trades: memberTrades, candle_trades: candleTrades,
+    member_spent_today_usdt: memberSpentToday, member_budget_left_usdt: memberBudgetLeft,
+    cleared, rest_ask: !!restAsk, rest_bid: !!restBid,
+  });
+});
+
 export default app;

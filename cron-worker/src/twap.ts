@@ -102,3 +102,39 @@ export async function qtaAutobuyTick(env: TwapEnv): Promise<void> {
     console.warn('[autobuy] tick failed:', String(e?.message || e).slice(0, 200));
   }
 }
+
+// ============================================================================
+// QTA market-making — cron driver. Pokes /api/orders/qta-mm-tick so the two
+// internal maker bots print a small real trade around the managed price every
+// tick (keeps the chart alive), while member sells still get bought (auto-buy
+// wall + the bots sweep cheap asks first). Guarded by TWAP_CRON_SECRET.
+// ============================================================================
+export async function qtaMmTick(env: TwapEnv): Promise<void> {
+  const secret = env.TWAP_CRON_SECRET;
+  if (!secret) {
+    console.log('[mm] TWAP_CRON_SECRET not set; skipping tick');
+    return;
+  }
+
+  const base = (env.APP_URL || 'https://quantaex.io').replace(/\/+$/, '');
+  const url = `${base}/api/orders/qta-mm-tick`;
+
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-twap-secret': secret },
+      body: '{}',
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      console.warn(`[mm] tick HTTP ${res.status}: ${body.slice(0, 200)}`);
+      return;
+    }
+    const data: any = await res.json().catch(() => ({}));
+    console.log(
+      `[mm] tick ok — action=${data?.action ?? '?'} price=${data?.mm_price ?? '?'} trades=${data?.trades ?? 0}`,
+    );
+  } catch (e: any) {
+    console.warn('[mm] tick failed:', String(e?.message || e).slice(0, 200));
+  }
+}
