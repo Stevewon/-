@@ -1181,29 +1181,49 @@ app.post('/qta-mm-tick', async (c) => {
   const minTotal = Math.max(1, Number(market.min_order_total) || 1);
   const minAmt = Number(market.min_order_amount) || 0.0001;
 
-  // ---- Managed mid price (already band-clamped by the index tick loop) --
+  // ---- Managed mid price: a smooth random walk, NOT a saw-tooth ----------
+  // The previous version clamped the mid to bandHi*(1-3%) every tick while the
+  // coin's stored price sat ON the band ceiling, so each tick bounced the price
+  // 0.004998 <-> 0.004848 and painted an endless red down-candle. Instead we:
+  //   • take the LAST traded price as the anchor (real continuity),
+  //   • nudge it by a tiny random step (±~0.15%) with a gentle upward bias so
+  //     the chart drifts up like a healthy market instead of flat-lining,
+  //   • keep it comfortably INSIDE the band (leave room for both walls) using a
+  //     soft mean-reversion toward the band centre rather than a hard clamp.
   const qtaCoin = await DB.prepare(
     'SELECT price_usd, price_mode, price_center, price_band_pct FROM coins WHERE symbol = ?'
   ).bind('QTA').first<any>();
-  let mid = Number(qtaCoin?.price_usd) || 0.00357142857;
-  const noise = Math.sin(Date.now() * 0.0007) * 43758.5453;
-  const frac = noise - Math.floor(noise);              // 0..1
-  mid = mid * (1 + (frac - 0.5) * 0.004);              // ±0.2% wobble
-  // Band bounds (also reused by the wall builder in Step 3).
-  let bandLo = 0, bandHi = Number.MAX_VALUE;
+
+  // Anchor on the most recent real trade price (falls back to the coin price).
+  const lastTradeRow = await DB.prepare(
+    "SELECT price FROM trades WHERE market_id = ? ORDER BY created_at DESC LIMIT 1"
+  ).bind(market.id).first<{ price: number }>().catch(() => null);
+  let mid = Number(lastTradeRow?.price) || Number(qtaCoin?.price_usd) || 0.00410714;
+
+  // Band bounds (reused by the wall builder in Step 3).
+  let bandLo = 0, bandHi = Number.MAX_VALUE, center = mid;
   if (qtaCoin?.price_mode === 'managed' && Number(qtaCoin.price_center) > 0) {
     const band = Math.max(0, Number(qtaCoin.price_band_pct) || 0) / 100;
-    bandHi = Number(qtaCoin.price_center) * (1 + band);
-    bandLo = Number(qtaCoin.price_center) * (1 - band);
-    // IMPORTANT: keep the mid OFF the band ceiling so the ASK wall has room to
-    // stack ABOVE it (otherwise every ask rung clamps to bandHi and collapses
-    // into a single row — the "only 1 sell" bug). Reserve ~3% headroom up and
-    // down so both walls always have space inside the band.
-    const HEADROOM = 0.03;
-    const midHi = bandHi * (1 - HEADROOM);
-    const midLo = bandLo * (1 + HEADROOM);
-    if (mid > midHi) mid = midHi;
-    if (mid < midLo) mid = midLo;
+    center = Number(qtaCoin.price_center);
+    bandHi = center * (1 + band);
+    bandLo = center * (1 - band);
+  }
+
+  // Tiny per-tick step with a gentle upward bias.
+  const rnd = Math.random();                 // 0..1, fresh each tick
+  const step = (rnd - 0.42) * 0.003;         // ~ -0.126% .. +0.174%  (slight up bias)
+  mid = mid * (1 + step);
+  // Soft mean-reversion: if we drift into the outer ~15% of the band, pull back
+  // toward the centre a little so we never pin to an edge (which killed one wall
+  // side and produced the saw-tooth). This keeps ~15% headroom for both walls.
+  if (bandHi < Number.MAX_VALUE) {
+    const innerHi = center + (bandHi - center) * 0.85;
+    const innerLo = center - (center - bandLo) * 0.85;
+    if (mid > innerHi) mid = mid + (innerHi - mid) * 0.5;
+    if (mid < innerLo) mid = mid + (innerLo - mid) * 0.5;
+    // Hard safety clamp strictly inside the band.
+    if (mid > bandHi) mid = bandHi;
+    if (mid < bandLo) mid = bandLo;
   }
   mid = floorToDecimals(mid, pdec);
   if (!(mid > 0)) return c.json({ error: 'invalid mm mid' }, 500);
@@ -1346,7 +1366,7 @@ app.post('/qta-mm-tick', async (c) => {
   // depth so the far side of the book looks like real liquidity.
   await clearBotQuotes();
 
-  const LEVELS = 8;                 // rungs per side -> book shows ~8 asks + 8 bids
+  const LEVELS = 14;                // rungs per side -> book shows ~14 asks + 14 bids
   // Step between rungs: small enough that all LEVELS ask rungs fit in the
   // headroom between the mid and the band ceiling (so the sell wall doesn't
   // collapse into one row), but at least one price tick.
@@ -1365,8 +1385,9 @@ app.post('/qta-mm-tick', async (c) => {
     if (ap <= mid) ap = floorToDecimals(mid + tick, pdec);
     if (ap > 0 && !seenAsk.has(ap)) {
       seenAsk.add(ap);
-      // Depth per rung: ~$6 near touch, growing with distance.
-      const aQty = floorToDecimals((minTotal * (6 + i * 2)) / ap, adec);
+      // Depth per rung: ~$4 near touch, growing gently with distance so 14
+      // rungs stay affordable while the far book still looks deep.
+      const aQty = floorToDecimals((minTotal * (4 + i * 1.5)) / ap, adec);
       if (await placeOrder(MM_BOT_A, 'sell', ap, aQty, tierA)) asksPlaced++;
     }
     // BID rung i: bid, bid-STEP, bid-2*STEP, ...  (clamped to band lo & >0)
@@ -1375,7 +1396,7 @@ app.post('/qta-mm-tick', async (c) => {
     if (bp >= mid) bp = floorToDecimals(mid - tick, pdec);
     if (bp > 0 && !seenBid.has(bp)) {
       seenBid.add(bp);
-      const bQty = floorToDecimals((minTotal * (6 + i * 2)) / bp, adec);
+      const bQty = floorToDecimals((minTotal * (4 + i * 1.5)) / bp, adec);
       if (await placeOrder(MM_BOT_B, 'buy', bp, bQty, tierB)) bidsPlaced++;
     }
   }
