@@ -99,6 +99,45 @@ function accruedUsd(p: {
   return isFinite(usd) ? usd : 0;
 }
 
+// Whole Korean calendar days accrued for a position (D+1 = first payout),
+// clamped to [0, term_days]. Same KST-midnight rule as accruedUsd.
+function accruedDays(p: { term_days: number; created_at: string | null }, nowMs: number): number {
+  const start = p.created_at ? Date.parse(p.created_at) : nowMs;
+  const startMs = isNaN(start) ? nowMs : start;
+  const dayDiff = kstDayIndex(nowMs) - kstDayIndex(startMs);
+  const completedDays = Math.max(0, dayDiff);
+  return Math.min(completedDays, p.term_days || 0);
+}
+
+// ★ OWNER RULE (2026-09-01): the dividend is paid in a FIXED QTA QUANTITY,
+//   NOT a USD value converted at the live price. The daily dividend is a
+//   percentage of the STAKED QTA PRINCIPAL QUANTITY, so the member always
+//   receives the same QTA amount per day regardless of how the QTA price
+//   moves.  dividend_qta = principal_qta × daily_rate × KST-days.
+//   (principal_qta = the QTA quantity actually locked when staking.)
+function accruedQta(p: {
+  principal_qta?: number;
+  principal?: number;
+  principal_usd?: number;
+  qta_price_at_stake?: number;
+  daily_rate: number;
+  term_days: number;
+  created_at: string | null;
+}, nowMs: number): number {
+  const days = accruedDays(p, nowMs);
+  // principal_qta is the canonical staked-quantity column; fall back to the
+  // legacy `principal` column, then to (usd / stake-price) for very old rows.
+  const principalQta = Number(
+    p.principal_qta
+    || p.principal
+    || ((p.qta_price_at_stake && p.qta_price_at_stake > 0)
+      ? (p.principal_usd || 0) / p.qta_price_at_stake
+      : 0)
+  );
+  const qta = principalQta * (p.daily_rate || 0) * days;
+  return isFinite(qta) ? qta : 0;
+}
+
 // Credit a QTA amount to a user as company-issued (internal, non-withdrawable
 // beyond the staking-dividend withdrawal path). Creates wallet row if missing.
 async function creditQta(c: any, userId: string, qta: number) {
@@ -269,6 +308,10 @@ app.get('/positions', authMiddleware, async (c) => {
 
   const positions = ((results || []) as any[]).map((p) => {
     const divUsd = accruedUsd(p, now);
+    // ★ QTA dividend is a FIXED fraction of the STAKED QTA quantity — NOT the
+    //   USD value re-converted at the live price. This guarantees the member
+    //   receives the same QTA amount per day no matter how the price moves.
+    const divQta = accruedQta(p, now);
     const termEnd = p.term_end_at ? Date.parse(p.term_end_at) : now;
     const matured = now >= termEnd;          // this position's own term reached
     const principalQta = p.principal_qta
@@ -278,7 +321,7 @@ app.get('/positions', authMiddleware, async (c) => {
       ...p,
       principal_qta: principalQta,
       accrued_dividend_usd: divUsd,
-      accrued_dividend_qta: divUsd / price,
+      accrued_dividend_qta: divQta,
       // Normal (penalty-free) redeem is allowed only once THIS position's own
       // term (180/360d from its own start date) has been reached. Before that
       // it is an early exit. Each position has its own term_end_at.
@@ -530,22 +573,28 @@ app.post('/claim', authMiddleware, async (c) => {
 
   const now = Date.now();
   const price = await qtaPrice(c);
+  // ★ OWNER RULE (2026-09-01): pay a FIXED QTA QUANTITY (principal QTA × rate ×
+  //   KST-days), NOT a USD value re-divided by the live price. paid_dividend_qta
+  //   is the running total of QTA already paid, so the claimable QTA is simply
+  //   (accrued QTA so far − already paid QTA).
+  const totalQta = accruedQta(pos, now);
+  const alreadyPaidQta = Number(pos.paid_dividend_qta || 0);
+  const qta = Math.max(0, totalQta - alreadyPaidQta);
+  if (qta <= 0) return c.json({ ok: true, credited_qta: 0, note: 'nothing to claim' });
+
+  // USD value of this claim (for the ledger + referral match), valued at the
+  // current price purely for reporting — the QTA amount itself is price-independent.
   const totalUsd = accruedUsd(pos, now);
-  // accrued_dividend_usd holds the USD value already credited so far.
-  const alreadyPaidUsd = pos.accrued_dividend_usd || 0;
-  const payableUsd = Math.max(0, totalUsd - alreadyPaidUsd);
-  if (payableUsd <= 0) return c.json({ ok: true, credited_qta: 0, note: 'nothing to claim' });
+  const payableUsd = qta * price;
 
-  const qta = payableUsd / price;
-
-  // Claim-first: bump the paid snapshot atomically so concurrent claims can't
-  // double-pay.
+  // Claim-first: bump the paid QTA snapshot atomically (CAS on paid_dividend_qta)
+  // so concurrent claims can't double-pay.
   const claim = await c.env.DB.prepare(
     `UPDATE staking_positions
-        SET accrued_dividend_usd = ?, paid_dividend_qta = COALESCE(paid_dividend_qta,0) + ?,
+        SET accrued_dividend_usd = ?, paid_dividend_qta = ?,
             last_accrued_at = ?
-      WHERE id = ? AND status = 'active' AND accrued_dividend_usd = ?`
-  ).bind(totalUsd, qta, new Date(now).toISOString(), positionId, alreadyPaidUsd).run();
+      WHERE id = ? AND status = 'active' AND COALESCE(paid_dividend_qta,0) = ?`
+  ).bind(totalUsd, totalQta, new Date(now).toISOString(), positionId, alreadyPaidQta).run();
   if (!claim.meta || claim.meta.changes === 0) {
     return c.json({ error: 'Claim already in progress, retry' }, 409);
   }
@@ -585,21 +634,25 @@ app.post('/claim-all', authMiddleware, async (c) => {
   let totalQta = 0;
   let claimedCount = 0;
   for (const pos of rows) {
-    const totalUsd = accruedUsd(pos, now);
-    const alreadyPaidUsd = pos.accrued_dividend_usd || 0;
-    const payableUsd = Math.max(0, totalUsd - alreadyPaidUsd);
-    if (payableUsd <= 0) continue;
+    // ★ OWNER RULE (2026-09-01): fixed QTA quantity (principal QTA × rate ×
+    //   KST-days) minus what was already paid — price-independent.
+    const posTotalQta = accruedQta(pos, now);
+    const alreadyPaidQta = Number(pos.paid_dividend_qta || 0);
+    const qta = Math.max(0, posTotalQta - alreadyPaidQta);
+    if (qta <= 0) continue;
 
-    const qta = payableUsd / price;
+    const totalUsd = accruedUsd(pos, now);      // reporting only
+    const payableUsd = qta * price;             // reporting / referral basis
 
-    // Claim-first CAS: only credit if the paid snapshot is still what we read,
-    // so a concurrent /claim on the same position can't double-pay.
+    // Claim-first CAS on paid_dividend_qta: only credit if the paid snapshot is
+    // still what we read, so a concurrent /claim on the same position can't
+    // double-pay.
     const claim = await c.env.DB.prepare(
       `UPDATE staking_positions
-          SET accrued_dividend_usd = ?, paid_dividend_qta = COALESCE(paid_dividend_qta,0) + ?,
+          SET accrued_dividend_usd = ?, paid_dividend_qta = ?,
               last_accrued_at = ?
-        WHERE id = ? AND status = 'active' AND accrued_dividend_usd = ?`
-    ).bind(totalUsd, qta, new Date(now).toISOString(), pos.id, alreadyPaidUsd).run();
+        WHERE id = ? AND status = 'active' AND COALESCE(paid_dividend_qta,0) = ?`
+    ).bind(totalUsd, posTotalQta, new Date(now).toISOString(), pos.id, alreadyPaidQta).run();
     if (!claim.meta || claim.meta.changes === 0) continue; // lost the race; skip
 
     await creditQta(c, user.id, qta);
@@ -700,10 +753,12 @@ app.post('/redeem', authMiddleware, async (c) => {
     // the 30% penalty applies to the WHOLE INFLATED base (2,000 principal +
     // accrued dividend), and only 70% of that is returned. So the base uses
     // realPrincipalQta for legacy, but the FULL inflated principal for grants.
-    const totalDivUsd = accruedUsd(pos, now);                 // total interest so far (USD)
-    const alreadyPaidUsd = pos.accrued_dividend_usd || 0;      // dividend already taken (USD)
-    const remainingDivUsd = Math.max(0, totalDivUsd - alreadyPaidUsd);
-    const remainingDivQta = price > 0 ? remainingDivUsd / price : 0;
+    // ★ OWNER RULE (2026-09-01): dividend accrues as a FIXED QTA quantity, so
+    // the remaining (unpaid) dividend is (total accrued QTA − already-paid QTA)
+    // — price-independent — rather than a USD value re-divided by today's price.
+    const totalDivQta = accruedQta(pos, now);                  // total dividend so far (QTA)
+    const alreadyPaidQta = Number(pos.paid_dividend_qta || 0); // dividend already taken (QTA)
+    const remainingDivQta = Math.max(0, totalDivQta - alreadyPaidQta);
 
     // Principal portion of the penalty base:
     //   • granted → the FULL inflated principal_usd (2,000) as QTA
@@ -717,16 +772,21 @@ app.post('/redeem', authMiddleware, async (c) => {
     returnedQta = Math.max(0, baseQta - penaltyQta);         // remaining 70%, paid as QTA
   } else {
     // Matured: return the REAL principal (granted → real only, legacy → full)
-    // + pay remaining unpaid dividend (valued in USD, paid as QTA at today's
-    // price). The BONUS principal is NOT returned.
-    const totalUsd = accruedUsd(pos, now);
-    const paidUsd = pos.accrued_dividend_usd || 0;
-    const payableUsd = Math.max(0, totalUsd - paidUsd);
-    dividendQta = payableUsd / price;
+    // + pay remaining unpaid dividend. ★ OWNER RULE (2026-09-01): the dividend
+    // is a FIXED QTA quantity (principal QTA × rate × KST-days), NOT a USD value
+    // re-divided by the live price — so the remaining dividend is simply
+    // (total accrued QTA − already-paid QTA).
+    const totalQta = accruedQta(pos, now);
+    const paidQta = Number(pos.paid_dividend_qta || 0);
+    dividendQta = Math.max(0, totalQta - paidQta);
+    const payableUsd = dividendQta * price;      // reporting / referral basis
     returnedQta = realPrincipalQta;
 
     if (dividendQta > 0) {
       await creditQta(c, user.id, dividendQta);
+      await c.env.DB.prepare(
+        `UPDATE staking_positions SET paid_dividend_qta = ? WHERE id = ?`
+      ).bind(totalQta, positionId).run();
       await c.env.DB.prepare(
         `INSERT INTO staking_dividends (id, position_id, user_id, kind, usd_amount, qta_amount, qta_price)
          VALUES (?,?,?, 'dividend', ?,?,?)`
