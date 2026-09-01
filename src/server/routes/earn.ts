@@ -40,6 +40,26 @@ const MATCH_L1 = 0.10;               // 1st-level referral match
 const MATCH_L2 = 0.05;               // 2nd-level referral match
 const STAKE_UNIT_USD = 100;          // $100 increments
 
+// ★ OWNER RULE (2026-09-01): FIXED 6-WON ENTRY-PRICE WINDOW ─────────────────
+//   For 2026-09-01 through 2026-09-10 (KST, 10 days) the QTA "entry price"
+//   used to derive the STAKED QUANTITY (dividend basis) and to convert the
+//   DIVIDEND WITHDRAWAL is FIXED at 6원, with USDT pegged at 1,450원/USD.
+//     6원 ÷ 1,450원/USD = $0.00413793 per QTA.
+//   This ONLY affects staking (entry/dividend/withdraw conversion). It does
+//   NOT touch the live exchange trading price. Outside the window we fall back
+//   to the managed band center (price-independent) as before.
+const FIXED_USDT_KRW = 1450;                       // 테더 고정 환율 (1 USD = 1,450원)
+const FIXED_QTA_KRW = 6;                            // QTA 고정 진입가 (개당 6원)
+const FIXED_QTA_USD = FIXED_QTA_KRW / FIXED_USDT_KRW; // = $0.00413793.../QTA
+// Window in KST day-index terms (kstDayIndex). 2026-09-01 KST 00:00 .. 2026-09-10 KST 23:59.
+const FIXED_WINDOW_START_MS = Date.parse('2026-09-01T00:00:00+09:00');
+const FIXED_WINDOW_END_MS   = Date.parse('2026-09-11T00:00:00+09:00'); // exclusive (through 09-10 KST)
+
+// True if `nowMs` falls inside the fixed 6-won staking window (KST).
+function inFixedWindow(nowMs: number): boolean {
+  return nowMs >= FIXED_WINDOW_START_MS && nowMs < FIXED_WINDOW_END_MS;
+}
+
 async function qtaPrice(c: any): Promise<number> {
   const row = await c.env.DB.prepare(
     `SELECT price_usd FROM coins WHERE symbol = 'QTA'`
@@ -60,6 +80,8 @@ async function qtaPrice(c: any): Promise<number> {
 //   daily dividend — is completely price-independent. Falls back to the live
 //   QTA price only if no center is configured.
 async function qtaStakeBasisPrice(c: any): Promise<number> {
+  // ★ 2026-09-01 ~ 09-10 (KST): fixed 6원 entry price (USDT pegged 1,450원).
+  if (inFixedWindow(Date.now())) return FIXED_QTA_USD;
   const row = await c.env.DB.prepare(
     `SELECT price_usd, price_mode, price_center FROM coins WHERE symbol = 'QTA'`
   ).first<any>();
@@ -67,6 +89,14 @@ async function qtaStakeBasisPrice(c: any): Promise<number> {
   if (row?.price_mode === 'managed' && center > 0) return center;
   const live = Number(row?.price_usd || 0);
   return live > 0 ? live : 0.01;
+}
+
+// The QTA price (USD) used to CONVERT a staking-dividend WITHDRAWAL amount.
+// During the fixed window this is the 6원 peg ($0.00413793); otherwise it is
+// the live QTA price. (Part "C" of the owner rule: withdraw at 6원 / 1,450원.)
+async function qtaWithdrawPrice(c: any): Promise<number> {
+  if (inFixedWindow(Date.now())) return FIXED_QTA_USD;
+  return qtaPrice(c);
 }
 
 // Live USDT price (USD). Normally 1.00, but read from coins so a peg change
@@ -902,12 +932,17 @@ app.post('/withdraw-dividend', authMiddleware, async (c) => {
     return c.json({ error: 'Valid destination (0x...) address required' }, 400);
   }
 
-  // Live prices at THIS moment.
-  const qPrice = await qtaPrice(c);          // QTA price in USD
-  const uPrice = await usdtPrice(c);         // USDT price in USD (≈1)
+  // Prices used to VALUE / CONVERT this withdrawal.
+  //   ★ 2026-09-01 ~ 09-10 (KST): QTA is valued at the FIXED 6원 entry price
+  //     ($0.00413793) and USDT is pegged at 1,450원 = exactly $1 — so the
+  //     withdrawal converts at 6원 / 1,450원, NOT the live market price.
+  //   Outside the window: live prices.
+  const fixedWin = inFixedWindow(Date.now());
+  const qPrice = fixedWin ? FIXED_QTA_USD : await qtaPrice(c);   // QTA price in USD
+  const uPrice = fixedWin ? 1.0 : await usdtPrice(c);            // USDT price in USD (≈1)
 
   // ★★★★★★★ Boss's minimum-withdrawal rule (2026-08-26): $50 USD equivalent,
-  //   valued at the QTA live price. Below $50 is hard-blocked server-side.
+  //   valued at the QTA price (fixed 6원 during the window). Below $50 blocked.
   const MIN_WITHDRAW_USD = 50;
   const requestUsd = amountQta * qPrice;
   if (qPrice > 0 && requestUsd < MIN_WITHDRAW_USD) {
