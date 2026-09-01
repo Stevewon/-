@@ -149,6 +149,30 @@ app.post('/', authMiddleware, rlPlaceOrder, async (c) => {
     ).bind(user.id, dayStartUtc).first<{ filled: number }>().catch(() => null);
     const filledTodayUsdt = Number(filledRow?.filled || 0);
 
+    // 🛡️ CAP-BYPASS FIX (취약점#2): the seller could previously stack many
+    // *resting* (unfilled) QTA sell orders — each one passed the check on its
+    // own (only filled trades were summed), then all filled later in a single
+    // MM tick, blowing past the daily cap. We now also count the notional
+    // still LOCKED in the seller's own open/partial QTA sell orders placed
+    // TODAY (valued at their limit price), so pending exposure counts against
+    // the cap up-front. `remaining * price` is the max USDT each resting order
+    // can still realise. (created_at is a KST-day filter to match the cap.)
+    const restingRow = await c.env.DB.prepare(
+      `SELECT COALESCE(SUM(o.remaining * o.price), 0) AS resting
+         FROM orders o
+         JOIN markets m ON m.id = o.market_id
+        WHERE o.user_id = ?
+          AND m.base_coin = 'QTA'
+          AND o.side = 'sell'
+          AND o.status IN ('open','partial','pending')
+          AND o.price IS NOT NULL
+          AND o.created_at >= ?`
+    ).bind(user.id, dayStartUtc).first<{ resting: number }>().catch(() => null);
+    const restingTodayUsdt = Number(restingRow?.resting || 0);
+
+    // Total exposure already committed today = filled + still-resting.
+    const committedTodayUsdt = filledTodayUsdt + restingTodayUsdt;
+
     // Estimated notional of THIS order (worst case → best-bid / limit price).
     let newNotionalUsdt = 0;
     if (isPricedOrder) {
@@ -169,15 +193,17 @@ app.post('/', authMiddleware, rlPlaceOrder, async (c) => {
       newNotionalUsdt = estPrice * amount;
     }
 
-    if (filledTodayUsdt + newNotionalUsdt > QTA_DAILY_SELL_CAP_USDT + 1e-9) {
-      const remaining = Math.max(0, QTA_DAILY_SELL_CAP_USDT - filledTodayUsdt);
+    if (committedTodayUsdt + newNotionalUsdt > QTA_DAILY_SELL_CAP_USDT + 1e-9) {
+      const remaining = Math.max(0, QTA_DAILY_SELL_CAP_USDT - committedTodayUsdt);
       return c.json(
         {
           error: 'QTA_DAILY_SELL_LIMIT',
-          message: 'Daily QTA sell limit reached. You can sell QTA worth up to 50,000 KRW (~$35.71 in USDT) per day. This limit is temporary.',
+          message: 'Daily QTA sell limit reached. You can sell QTA worth up to 50,000 KRW (~$35.71 in USDT) per day (including orders still resting on the book). This limit is temporary.',
           cap_usdt: QTA_DAILY_SELL_CAP_USDT,
           cap_krw: 50000,
           filled_today_usdt: filledTodayUsdt,
+          resting_today_usdt: restingTodayUsdt,
+          committed_today_usdt: committedTodayUsdt,
           remaining_usdt: remaining,
         },
         400,
@@ -658,7 +684,26 @@ async function matchOrder(
     const lastPrice = trades[trades.length - 1].price;
     await updateCandles(DB, market.id, trades);
     if (market.quote_coin === 'USDT') {
-      await DB.prepare('UPDATE coins SET price_usd = ? WHERE symbol = ?').bind(lastPrice, market.base_coin).run();
+      // 🛡️ REF-PRICE GUARD (취약점#1): never let a single (possibly colluding)
+      // trade push the coin's reference price outside its managed band. For a
+      // `managed` coin we clamp the new reference price to [center*(1-band),
+      // center*(1+band)]; for a normal (market-driven) coin we leave lastPrice
+      // untouched. STP only blocks same-account wash trades — two cooperating
+      // accounts could still cross at a band-edge price and drag the oracle,
+      // so we clamp here at the write boundary.
+      let refPrice = lastPrice;
+      const coinRow = await DB.prepare(
+        'SELECT price_mode, price_center, price_band_pct FROM coins WHERE symbol = ?'
+      ).bind(market.base_coin).first<any>().catch(() => null);
+      if (coinRow?.price_mode === 'managed' && Number(coinRow.price_center) > 0) {
+        const band = Math.max(0, Number(coinRow.price_band_pct) || 0) / 100;
+        const center = Number(coinRow.price_center);
+        const lo = center * (1 - band);
+        const hi = center * (1 + band);
+        if (refPrice < lo) refPrice = lo;
+        if (refPrice > hi) refPrice = hi;
+      }
+      await DB.prepare('UPDATE coins SET price_usd = ? WHERE symbol = ?').bind(refPrice, market.base_coin).run();
     }
   }
 
