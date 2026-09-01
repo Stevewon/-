@@ -28,6 +28,13 @@ export function formatAmount(amount: number): string {
   return a.toFixed(6);
 }
 
+// Whole-number amount for low-priced coins (e.g. QTA at a few KRW): showing
+// "1,741.57" or "891.9409" units of a sub-cent coin looks wrong. Round to a
+// clean integer with thousand separators (e.g. 1,742 / 892).
+export function formatAmountWhole(amount: number): string {
+  return Math.round(num(amount)).toLocaleString('en-US');
+}
+
 export function formatPercent(pct: number): string {
   const p = num(pct);
   const sign = p >= 0 ? '+' : '';

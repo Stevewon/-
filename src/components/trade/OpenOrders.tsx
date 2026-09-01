@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import useStore from '../../store/useStore';
 import { useI18n } from '../../i18n';
-import { formatPrice, formatAmount, timeAgo } from '../../utils/format';
+import { formatPrice, formatAmount, formatAmountWhole, timeAgo } from '../../utils/format';
 import { X } from 'lucide-react';
 import api from '../../utils/api';
 
@@ -72,7 +72,7 @@ export default function OpenOrders({ symbol }: Props) {
                 <span className="text-exchange-yellow">@{formatPrice(order.stop_price)}</span>
               ) : order.price ? formatPrice(order.price) : t('trade.market')}
             </span>
-            <span className="w-[15%] text-right tabular-nums">{formatAmount(order.amount)}</span>
+            <span className="w-[15%] text-right tabular-nums">{order.base_coin === 'QTA' ? formatAmountWhole(order.amount) : formatAmount(order.amount)}</span>
             <span className="w-[15%] text-right text-exchange-text-secondary tabular-nums">
               {((order.filled / order.amount) * 100).toFixed(1)}%
             </span>

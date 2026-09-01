@@ -1,10 +1,14 @@
 import { useRef, useEffect, useState } from 'react';
 import useStore from '../../store/useStore';
 import { useI18n } from '../../i18n';
-import { formatPrice, formatAmount } from '../../utils/format';
+import { formatPrice, formatAmount, formatAmountWhole } from '../../utils/format';
 
 export default function RecentTrades() {
-  const { recentTrades } = useStore();
+  const { recentTrades, currentMarket } = useStore();
+  // Low-priced coins (e.g. QTA) should show whole-number quantities, not decimals.
+  const base = (currentMarket || '').split('-')[0];
+  const wholeAmount = base === 'QTA';
+  const fmtAmount = (a: number) => (wholeAmount ? formatAmountWhole(a) : formatAmount(a));
   const { t } = useI18n();
   const [newTradeIds, setNewTradeIds] = useState<Set<string>>(new Set());
   const prevIdsRef = useRef<Set<string>>(new Set());
@@ -56,7 +60,7 @@ export default function RecentTrades() {
                 <span className={`w-[35%] tabular-nums ${trade.side === 'buy' ? 'text-exchange-buy' : 'text-exchange-sell'}`}>
                   {formatPrice(trade.price)}
                 </span>
-                <span className="w-[30%] text-right text-exchange-text tabular-nums">{formatAmount(trade.amount)}</span>
+                <span className="w-[30%] text-right text-exchange-text tabular-nums">{fmtAmount(trade.amount)}</span>
                 <span className="w-[35%] text-right text-exchange-text-third">
                   {trade.time ? new Date(trade.time).toLocaleTimeString('en', { hour12: false }) :
                    trade.created_at ? new Date(trade.created_at).toLocaleTimeString('en', { hour12: false }) : ''}

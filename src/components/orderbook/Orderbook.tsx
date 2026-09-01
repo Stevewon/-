@@ -1,7 +1,7 @@
 import { useMemo, useRef, useEffect, useState } from 'react';
 import useStore from '../../store/useStore';
 import { useI18n } from '../../i18n';
-import { formatPrice, formatAmount } from '../../utils/format';
+import { formatPrice, formatAmountWhole } from '../../utils/format';
 
 interface Props {
   onPriceClick?: (price: number) => void;
@@ -143,8 +143,8 @@ export default function Orderbook({ onPriceClick, mobile }: Props) {
                   style={{ width: `${Math.min(pct, 100)}%` }}
                 />
                 <span className="w-[35%] text-exchange-sell relative z-10 tabular-nums">{formatPrice(ask.price)}</span>
-                <span className="w-[30%] text-right relative z-10 tabular-nums transition-all duration-500">{formatAmount(amt)}</span>
-                <span className="w-[35%] text-right text-exchange-text-secondary relative z-10 tabular-nums transition-all duration-500">{formatAmount(askRunning)}</span>
+                <span className="w-[30%] text-right relative z-10 tabular-nums transition-all duration-500">{formatAmountWhole(amt)}</span>
+                <span className="w-[35%] text-right text-exchange-text-secondary relative z-10 tabular-nums transition-all duration-500">{formatAmountWhole(askRunning)}</span>
               </div>
             );
           })
@@ -182,8 +182,8 @@ export default function Orderbook({ onPriceClick, mobile }: Props) {
                   style={{ width: `${Math.min(pct, 100)}%` }}
                 />
                 <span className="w-[35%] text-exchange-buy relative z-10 tabular-nums">{formatPrice(bid.price)}</span>
-                <span className="w-[30%] text-right relative z-10 tabular-nums transition-all duration-500">{formatAmount(amt)}</span>
-                <span className="w-[35%] text-right text-exchange-text-secondary relative z-10 tabular-nums transition-all duration-500">{formatAmount(bidRunning)}</span>
+                <span className="w-[30%] text-right relative z-10 tabular-nums transition-all duration-500">{formatAmountWhole(amt)}</span>
+                <span className="w-[35%] text-right text-exchange-text-secondary relative z-10 tabular-nums transition-all duration-500">{formatAmountWhole(bidRunning)}</span>
               </div>
             );
           })
