@@ -41,7 +41,7 @@ const MATCH_L2 = 0.05;               // 2nd-level referral match
 const STAKE_UNIT_USD = 100;          // $100 increments
 
 // ★ OWNER RULE (2026-09-01): FIXED 6-WON ENTRY-PRICE WINDOW ─────────────────
-//   For 2026-09-01 through 2026-09-10 (KST, 10 days) the QTA "entry price"
+//   For 2026-09-01 through 2026-09-11 (KST, 11 days — extended +1 day) the QTA "entry price"
 //   used to derive the STAKED QUANTITY (dividend basis) and to convert the
 //   DIVIDEND WITHDRAWAL is FIXED at 6원, with USDT pegged at 1,450원/USD.
 //     6원 ÷ 1,450원/USD = $0.00413793 per QTA.
@@ -51,9 +51,9 @@ const STAKE_UNIT_USD = 100;          // $100 increments
 const FIXED_USDT_KRW = 1450;                       // 테더 고정 환율 (1 USD = 1,450원)
 const FIXED_QTA_KRW = 6;                            // QTA 고정 진입가 (개당 6원)
 const FIXED_QTA_USD = FIXED_QTA_KRW / FIXED_USDT_KRW; // = $0.00413793.../QTA
-// Window in KST day-index terms (kstDayIndex). 2026-09-01 KST 00:00 .. 2026-09-10 KST 23:59.
+// Window in KST day-index terms (kstDayIndex). 2026-09-01 KST 00:00 .. 2026-09-11 KST 23:59.
 const FIXED_WINDOW_START_MS = Date.parse('2026-09-01T00:00:00+09:00');
-const FIXED_WINDOW_END_MS   = Date.parse('2026-09-11T00:00:00+09:00'); // exclusive (through 09-10 KST)
+const FIXED_WINDOW_END_MS   = Date.parse('2026-09-12T00:00:00+09:00'); // exclusive (through 09-11 KST — extended +1 day)
 
 // True if `nowMs` falls inside the fixed 6-won staking window (KST).
 function inFixedWindow(nowMs: number): boolean {
@@ -656,9 +656,10 @@ app.post('/claim', authMiddleware, async (c) => {
   if (qta <= 0) return c.json({ ok: true, credited_qta: 0, note: 'nothing to claim' });
 
   // USD value of this claim (for the ledger + referral match), valued at the
-  // current price purely for reporting — the QTA amount itself is price-independent.
+  // stake BASIS (6원 peg in window) so usd_amount / qta_price stay consistent
+  // with the fixed-quantity QTA that is actually paid.
   const totalUsd = accruedUsd(pos, now);
-  const payableUsd = qta * price;
+  const payableUsd = qta * basis;
 
   // Claim-first: bump the paid QTA snapshot atomically (CAS on paid_dividend_qta)
   // so concurrent claims can't double-pay.
@@ -676,11 +677,11 @@ app.post('/claim', authMiddleware, async (c) => {
   await c.env.DB.prepare(
     `INSERT INTO staking_dividends (id, position_id, user_id, kind, usd_amount, qta_amount, qta_price)
      VALUES (?,?,?, 'dividend', ?,?,?)`
-  ).bind(uuid(), positionId, user.id, payableUsd, qta, price).run();
+  ).bind(uuid(), positionId, user.id, payableUsd, qta, basis).run();
 
-  await payReferralMatch(c, user.id, payableUsd, price, positionId);
+  await payReferralMatch(c, user.id, payableUsd, basis, positionId);
 
-  return c.json({ ok: true, credited_qta: qta, qta_price: price });
+  return c.json({ ok: true, credited_qta: qta, qta_price: basis });
 });
 
 // --------------------------------------------------------------------------
@@ -716,7 +717,7 @@ app.post('/claim-all', authMiddleware, async (c) => {
     if (qta <= 0) continue;
 
     const totalUsd = accruedUsd(pos, now);      // reporting only
-    const payableUsd = qta * price;             // reporting / referral basis
+    const payableUsd = qta * basis;             // reporting basis (6원 peg in window)
 
     // Claim-first CAS on paid_dividend_qta: only credit if the paid snapshot is
     // still what we read, so a concurrent /claim on the same position can't
@@ -733,15 +734,15 @@ app.post('/claim-all', authMiddleware, async (c) => {
     await c.env.DB.prepare(
       `INSERT INTO staking_dividends (id, position_id, user_id, kind, usd_amount, qta_amount, qta_price)
        VALUES (?,?,?, 'dividend', ?,?,?)`
-    ).bind(uuid(), pos.id, user.id, payableUsd, qta, price).run();
+    ).bind(uuid(), pos.id, user.id, payableUsd, qta, basis).run();
 
-    await payReferralMatch(c, user.id, payableUsd, price, pos.id);
+    await payReferralMatch(c, user.id, payableUsd, basis, pos.id);
 
     totalQta += qta;
     claimedCount += 1;
   }
 
-  return c.json({ ok: true, credited_qta: totalQta, positions_claimed: claimedCount, qta_price: price });
+  return c.json({ ok: true, credited_qta: totalQta, positions_claimed: claimedCount, qta_price: basis });
 });
 
 // --------------------------------------------------------------------------
@@ -794,8 +795,12 @@ app.post('/redeem', authMiddleware, async (c) => {
   // The REAL principal to return, expressed in QTA:
   //   • granted → real_principal_usd converted at TODAY's price
   //   • legacy  → the QTA that was locked
+  // ★ 2026-09-01~ (fixed window): granted-position principal is returned in QTA
+  //   valued at the SAME basis the stake used (6원 peg in window), NOT the live
+  //   price — otherwise the returned QTA quantity would be inconsistent with the
+  //   6원 entry rule. Outside the window, basis == live price.
   const realPrincipalQta = isGranted
-    ? (price > 0 ? realPrincipalUsd / price : 0)
+    ? (basis > 0 ? realPrincipalUsd / basis : 0)
     : principalQta;
   // Early == before this position's own maturity date (per-position).
   const isEarly = pos.term_end_at ? Date.parse(pos.term_end_at) > now : false;
@@ -838,8 +843,10 @@ app.post('/redeem', authMiddleware, async (c) => {
     // Principal portion of the penalty base:
     //   • granted → the FULL inflated principal_usd (2,000) as QTA
     //   • legacy  → the locked principalQta
+    // ★ granted-position penalty base principal valued at the stake basis
+    //   (6원 peg in window), consistent with the entry rule.
     const penaltyPrincipalQta = isGranted
-      ? (price > 0 ? principalUsd / price : 0)
+      ? (basis > 0 ? principalUsd / basis : 0)
       : principalQta;
 
     const baseQta = penaltyPrincipalQta + remainingDivQta;   // 원금(부풀린) + 적립이자 (QTA)
@@ -854,7 +861,9 @@ app.post('/redeem', authMiddleware, async (c) => {
     const totalQta = accruedQta(pos, now, basis);
     const paidQta = Number(pos.paid_dividend_qta || 0);
     dividendQta = Math.max(0, totalQta - paidQta);
-    const payableUsd = dividendQta * price;      // reporting / referral basis
+    // ★ Report the dividend USD at the SAME basis the QTA quantity was derived
+    //   from (6원 peg in window), so usd_amount / qta_price stay consistent.
+    const payableUsd = dividendQta * basis;      // reporting basis (6원 peg in window)
     returnedQta = realPrincipalQta;
 
     if (dividendQta > 0) {
@@ -865,8 +874,8 @@ app.post('/redeem', authMiddleware, async (c) => {
       await c.env.DB.prepare(
         `INSERT INTO staking_dividends (id, position_id, user_id, kind, usd_amount, qta_amount, qta_price)
          VALUES (?,?,?, 'dividend', ?,?,?)`
-      ).bind(uuid(), positionId, user.id, payableUsd, dividendQta, price).run();
-      await payReferralMatch(c, user.id, payableUsd, price, positionId);
+      ).bind(uuid(), positionId, user.id, payableUsd, dividendQta, basis).run();
+      await payReferralMatch(c, user.id, payableUsd, basis, positionId);
     }
   }
 

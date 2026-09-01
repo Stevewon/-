@@ -10,7 +10,7 @@ import { showToast } from '../components/common/Toast';
 import { formatAmount } from '../utils/format';
 import { X, Lock, Loader2, Star, Crown, ShieldCheck, Gift, TrendingUp, Wallet, AlertTriangle, Scale, HelpCircle, Users } from 'lucide-react';
 
-// ★ OWNER RULE (2026-09-01): during 2026-09-01 ~ 09-10 (KST) staking uses a
+// ★ OWNER RULE (2026-09-01, extended +1 day): during 2026-09-01 ~ 09-11 (KST) staking uses a
 //   FIXED entry price of 6원 with USDT pegged at 1,450원/USD, i.e.
 //   6 ÷ 1,450 = $0.00413793 per QTA. Withdrawal conversion MUST match the
 //   server (which values/converts at this fixed peg during the window), so the
@@ -18,7 +18,7 @@ import { X, Lock, Loader2, Star, Crown, ShieldCheck, Gift, TrendingUp, Wallet, A
 //   window we fall back to the live price passed in from the page.
 const FIXED_QTA_USD = 6 / 1450;                                  // = $0.00413793.../QTA
 const FIXED_WIN_START = Date.parse('2026-09-01T00:00:00+09:00');
-const FIXED_WIN_END   = Date.parse('2026-09-11T00:00:00+09:00'); // exclusive (through 09-10 KST)
+const FIXED_WIN_END   = Date.parse('2026-09-12T00:00:00+09:00'); // exclusive (through 09-11 KST — extended +1 day)
 function inFixedWindow(nowMs: number): boolean {
   return nowMs >= FIXED_WIN_START && nowMs < FIXED_WIN_END;
 }

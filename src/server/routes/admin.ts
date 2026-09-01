@@ -16,13 +16,13 @@ import {
   templateBasic,
 } from '../utils/mailer';
 
-// ★ 2026-09-01 ~ 09-10 (KST) fixed peg: 1 QTA = 6원, 1 USDT = 1,450원.
+// ★ 2026-09-01 ~ 09-11 (KST, extended +1 day) fixed peg: 1 QTA = 6원, 1 USDT = 1,450원.
 //   Binary MATCH BONUS QTA payouts (via recomputeBinaryFromStaking /
 //   rollStakeUpBinary) must convert bonus USD → QTA at this fixed price, exactly
 //   like staking dividends. Outside the window, fall back to the live price.
 const ADMIN_FIXED_QTA_USD = 6 / 1450; // $0.00413793
 const ADMIN_FIXED_WIN_START_MS = Date.parse('2026-09-01T00:00:00+09:00');
-const ADMIN_FIXED_WIN_END_MS = Date.parse('2026-09-11T00:00:00+09:00'); // exclusive
+const ADMIN_FIXED_WIN_END_MS = Date.parse('2026-09-12T00:00:00+09:00'); // exclusive (through 09-11 KST)
 function adminInFixedWindow(nowMs: number): boolean {
   return nowMs >= ADMIN_FIXED_WIN_START_MS && nowMs < ADMIN_FIXED_WIN_END_MS;
 }

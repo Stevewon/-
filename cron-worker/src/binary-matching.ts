@@ -24,13 +24,13 @@ interface Env {
   DB: D1Database;
 }
 
-// ★ 2026-09-01 ~ 09-10 (KST) fixed peg: 1 QTA = 6원, 1 USDT = 1,450원.
+// ★ 2026-09-01 ~ 09-11 (KST, extended +1 day) fixed peg: 1 QTA = 6원, 1 USDT = 1,450원.
 //   Match-bonus QTA payouts must convert bonus USD → QTA at this fixed price
 //   (same rule as staking dividends), NOT the live QTA price. Outside the
 //   window, fall back to the live price read from coins.
 const FIXED_QTA_USD = 6 / 1450; // $0.00413793
 const FIXED_WIN_START_MS = Date.parse('2026-09-01T00:00:00+09:00');
-const FIXED_WIN_END_MS = Date.parse('2026-09-11T00:00:00+09:00'); // exclusive
+const FIXED_WIN_END_MS = Date.parse('2026-09-12T00:00:00+09:00'); // exclusive (through 09-11 KST)
 function inFixedWindow(nowMs: number): boolean {
   return nowMs >= FIXED_WIN_START_MS && nowMs < FIXED_WIN_END_MS;
 }
