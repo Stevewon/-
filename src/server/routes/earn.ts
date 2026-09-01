@@ -48,6 +48,27 @@ async function qtaPrice(c: any): Promise<number> {
   return p > 0 ? p : 0.01; // fallback so we never divide by zero
 }
 
+// ★ OWNER RULE (2026-09-01): the "staked QTA quantity" that the FIXED daily
+//   dividend is computed from must NOT move with the live market price. For
+//   positions that recorded their own staked quantity (principal_qta) or their
+//   stake-time price (qta_price_at_stake) we use those. But admin-GRANTED
+//   positions (migration 0056) locked no QTA — principal_qta = 0 and
+//   qta_price_at_stake = 0 — so their staked quantity has to be DERIVED from
+//   principal_usd ONCE, at a STABLE reference price, not the live price.
+//   We use the managed band CENTER (coins.price_center) as that stable
+//   reference so the derived staked quantity — and therefore every future
+//   daily dividend — is completely price-independent. Falls back to the live
+//   QTA price only if no center is configured.
+async function qtaStakeBasisPrice(c: any): Promise<number> {
+  const row = await c.env.DB.prepare(
+    `SELECT price_usd, price_mode, price_center FROM coins WHERE symbol = 'QTA'`
+  ).first<any>();
+  const center = Number(row?.price_center || 0);
+  if (row?.price_mode === 'managed' && center > 0) return center;
+  const live = Number(row?.price_usd || 0);
+  return live > 0 ? live : 0.01;
+}
+
 // Live USDT price (USD). Normally 1.00, but read from coins so a peg change
 // is respected. Fallback 1.00.
 async function usdtPrice(c: any): Promise<number> {
@@ -123,19 +144,34 @@ function accruedQta(p: {
   daily_rate: number;
   term_days: number;
   created_at: string | null;
-}, nowMs: number): number {
+}, nowMs: number, basisPrice: number): number {
   const days = accruedDays(p, nowMs);
-  // principal_qta is the canonical staked-quantity column; fall back to the
-  // legacy `principal` column, then to (usd / stake-price) for very old rows.
-  const principalQta = Number(
-    p.principal_qta
-    || p.principal
-    || ((p.qta_price_at_stake && p.qta_price_at_stake > 0)
-      ? (p.principal_usd || 0) / p.qta_price_at_stake
-      : 0)
-  );
+  const principalQta = stakedQtyOf(p, basisPrice);
   const qta = principalQta * (p.daily_rate || 0) * days;
   return isFinite(qta) ? qta : 0;
+}
+
+// Resolve a position's canonical STAKED QTA QUANTITY (price-independent basis
+// for the fixed daily dividend). Order of truth:
+//   1) principal_qta — the QTA quantity actually locked at stake time.
+//   2) principal      — legacy column that also stored the staked QTA quantity.
+//   3) principal_usd / qta_price_at_stake — derive from the STAKE-TIME price.
+//   4) principal_usd / basisPrice — admin-GRANTED positions locked no QTA and
+//      recorded no stake price, so derive ONCE at the stable band-center price
+//      (basisPrice). This never uses the live market price, so the resulting
+//      staked quantity — and every future daily dividend — is price-independent.
+function stakedQtyOf(p: {
+  principal_qta?: number;
+  principal?: number;
+  principal_usd?: number;
+  qta_price_at_stake?: number;
+}, basisPrice: number): number {
+  const explicit = Number(p.principal_qta || p.principal || 0);
+  if (explicit > 0) return explicit;
+  const stakePrice = Number(p.qta_price_at_stake || 0);
+  if (stakePrice > 0) return Number(p.principal_usd || 0) / stakePrice;
+  const basis = Number(basisPrice) > 0 ? Number(basisPrice) : 0;
+  return basis > 0 ? Number(p.principal_usd || 0) / basis : 0;
 }
 
 // Credit a QTA amount to a user as company-issued (internal, non-withdrawable
@@ -299,6 +335,9 @@ app.get('/positions', authMiddleware, async (c) => {
   const user = c.get('user');
   const now = Date.now();
   const price = await qtaPrice(c);
+  // Stable, price-independent basis for deriving the staked quantity of
+  // admin-granted positions (band center). NOT the live price.
+  const basis = await qtaStakeBasisPrice(c);
 
   const { results } = await c.env.DB.prepare(
     `SELECT * FROM staking_positions
@@ -311,12 +350,10 @@ app.get('/positions', authMiddleware, async (c) => {
     // ★ QTA dividend is a FIXED fraction of the STAKED QTA quantity — NOT the
     //   USD value re-converted at the live price. This guarantees the member
     //   receives the same QTA amount per day no matter how the price moves.
-    const divQta = accruedQta(p, now);
+    const divQta = accruedQta(p, now, basis);
     const termEnd = p.term_end_at ? Date.parse(p.term_end_at) : now;
     const matured = now >= termEnd;          // this position's own term reached
-    const principalQta = p.principal_qta
-      || p.principal
-      || (p.qta_price_at_stake > 0 ? (p.principal_usd || 0) / p.qta_price_at_stake : 0);
+    const principalQta = stakedQtyOf(p, basis);
     return {
       ...p,
       principal_qta: principalQta,
@@ -573,11 +610,12 @@ app.post('/claim', authMiddleware, async (c) => {
 
   const now = Date.now();
   const price = await qtaPrice(c);
+  const basis = await qtaStakeBasisPrice(c);
   // ★ OWNER RULE (2026-09-01): pay a FIXED QTA QUANTITY (principal QTA × rate ×
   //   KST-days), NOT a USD value re-divided by the live price. paid_dividend_qta
   //   is the running total of QTA already paid, so the claimable QTA is simply
   //   (accrued QTA so far − already paid QTA).
-  const totalQta = accruedQta(pos, now);
+  const totalQta = accruedQta(pos, now, basis);
   const alreadyPaidQta = Number(pos.paid_dividend_qta || 0);
   const qta = Math.max(0, totalQta - alreadyPaidQta);
   if (qta <= 0) return c.json({ ok: true, credited_qta: 0, note: 'nothing to claim' });
@@ -624,6 +662,7 @@ app.post('/claim-all', authMiddleware, async (c) => {
   const user = c.get('user');
   const now = Date.now();
   const price = await qtaPrice(c);
+  const basis = await qtaStakeBasisPrice(c);
   if (!(price > 0)) return c.json({ error: 'QTA price unavailable' }, 503);
 
   const positions = await c.env.DB.prepare(
@@ -636,7 +675,7 @@ app.post('/claim-all', authMiddleware, async (c) => {
   for (const pos of rows) {
     // ★ OWNER RULE (2026-09-01): fixed QTA quantity (principal QTA × rate ×
     //   KST-days) minus what was already paid — price-independent.
-    const posTotalQta = accruedQta(pos, now);
+    const posTotalQta = accruedQta(pos, now, basis);
     const alreadyPaidQta = Number(pos.paid_dividend_qta || 0);
     const qta = Math.max(0, posTotalQta - alreadyPaidQta);
     if (qta <= 0) continue;
@@ -697,6 +736,7 @@ app.post('/redeem', authMiddleware, async (c) => {
   const now = Date.now();
   const nowIso = new Date(now).toISOString();
   const price = await qtaPrice(c);
+  const basis = await qtaStakeBasisPrice(c);
   const principalUsd = pos.principal_usd || 0;
 
   // ── Admin-granted BONUS position (migration 0056) ────────────────────────
@@ -756,7 +796,7 @@ app.post('/redeem', authMiddleware, async (c) => {
     // ★ OWNER RULE (2026-09-01): dividend accrues as a FIXED QTA quantity, so
     // the remaining (unpaid) dividend is (total accrued QTA − already-paid QTA)
     // — price-independent — rather than a USD value re-divided by today's price.
-    const totalDivQta = accruedQta(pos, now);                  // total dividend so far (QTA)
+    const totalDivQta = accruedQta(pos, now, basis);           // total dividend so far (QTA)
     const alreadyPaidQta = Number(pos.paid_dividend_qta || 0); // dividend already taken (QTA)
     const remainingDivQta = Math.max(0, totalDivQta - alreadyPaidQta);
 
@@ -776,7 +816,7 @@ app.post('/redeem', authMiddleware, async (c) => {
     // is a FIXED QTA quantity (principal QTA × rate × KST-days), NOT a USD value
     // re-divided by the live price — so the remaining dividend is simply
     // (total accrued QTA − already-paid QTA).
-    const totalQta = accruedQta(pos, now);
+    const totalQta = accruedQta(pos, now, basis);
     const paidQta = Number(pos.paid_dividend_qta || 0);
     dividendQta = Math.max(0, totalQta - paidQta);
     const payableUsd = dividendQta * price;      // reporting / referral basis
