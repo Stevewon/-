@@ -187,6 +187,25 @@ export default function CandleChart({ symbol }: Props) {
         color: c.close >= c.open ? 'rgba(14,203,129,0.3)' : 'rgba(246,70,93,0.3)',
       }));
 
+      // Pick a price precision that actually shows sub-cent coins (e.g. QTA at
+      // ~0.004998). Without this the candlestick series defaults to 2 decimals
+      // / minMove 0.01, so the axis + crosshair tooltip render every value as
+      // "0.00". Derive decimals from the smallest non-zero close in the set.
+      const prices = res.data
+        .map((c: any) => Math.abs(Number(c.close)))
+        .filter((v: number) => v > 0);
+      const minPrice = prices.length ? Math.min(...prices) : 1;
+      let precision = 2;
+      if (minPrice < 1) {
+        // number of leading zeros after the decimal point + 4 significant digits
+        const leadingZeros = Math.floor(-Math.log10(minPrice));
+        precision = Math.min(8, Math.max(2, leadingZeros + 4));
+      }
+      const minMove = Math.pow(10, -precision);
+      candleSeriesRef.current?.applyOptions({
+        priceFormat: { type: 'price', precision, minMove },
+      });
+
       candleSeriesRef.current?.setData(candles);
       volumeSeriesRef.current?.setData(volumes);
       chartInstance.current?.timeScale().fitContent();
