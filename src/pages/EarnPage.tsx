@@ -10,6 +10,19 @@ import { showToast } from '../components/common/Toast';
 import { formatAmount } from '../utils/format';
 import { X, Lock, Loader2, Star, Crown, ShieldCheck, Gift, TrendingUp, Wallet, AlertTriangle, Scale, HelpCircle, Users } from 'lucide-react';
 
+// ★ OWNER RULE (2026-09-01): during 2026-09-01 ~ 09-10 (KST) staking uses a
+//   FIXED entry price of 6원 with USDT pegged at 1,450원/USD, i.e.
+//   6 ÷ 1,450 = $0.00413793 per QTA. Withdrawal conversion MUST match the
+//   server (which values/converts at this fixed peg during the window), so the
+//   UI never shows a different number than what actually settles. Outside the
+//   window we fall back to the live price passed in from the page.
+const FIXED_QTA_USD = 6 / 1450;                                  // = $0.00413793.../QTA
+const FIXED_WIN_START = Date.parse('2026-09-01T00:00:00+09:00');
+const FIXED_WIN_END   = Date.parse('2026-09-11T00:00:00+09:00'); // exclusive (through 09-10 KST)
+function inFixedWindow(nowMs: number): boolean {
+  return nowMs >= FIXED_WIN_START && nowMs < FIXED_WIN_END;
+}
+
 // ---------------------------------------------------------------------------
 // QTA ADVANCED EARN — STAKE. EARN. GROW.
 //
@@ -1153,21 +1166,28 @@ function WithdrawDividendModal({ qtaBalance, qtaPrice, usdtPrice, onClose, onDon
   }, [onClose]);
 
   // ★ Boss's minimum-withdrawal rule (2026-08-26): $50 USD equivalent, valued
-  //   at the QTA live price. Below $50 -> blocked with a warning popup.
+  //   at the QTA price. Below $50 -> blocked with a warning popup.
+  //
+  // ★ 2026-09-01 ~ 09-10 (KST): value/convert at the FIXED 6원 peg
+  //   ($0.00413793, USDT = 1.0) so the displayed "You Receive" EXACTLY matches
+  //   what the server settles. Outside the window use the live prices.
+  const fixedWin = inFixedWindow(Date.now());
+  const effQtaPrice = fixedWin ? FIXED_QTA_USD : qtaPrice;   // QTA price used for conversion
+  const effUsdtPrice = fixedWin ? 1 : (usdtPrice > 0 ? usdtPrice : 1);
+
   const MIN_WITHDRAW_USD = 50;
   const num = parseFloat(amount) || 0;
   const in100 = num % 100 === 0 && num > 0;
   const enough = num <= qtaBalance;
   const addrOk = /^0x[0-9a-fA-F]{40}$/.test(address);
-  const requestUsd = num * qtaPrice;
-  const belowMinUsd = num > 0 && qtaPrice > 0 && requestUsd < MIN_WITHDRAW_USD;
+  const requestUsd = num * effQtaPrice;
+  const belowMinUsd = num > 0 && effQtaPrice > 0 && requestUsd < MIN_WITHDRAW_USD;
   const feeQta = num * 0.05;
   const netQta = num - feeQta;
   const valid = in100 && enough && addrOk && ack && !belowMinUsd;
 
-  // Live conversion of the net QTA into the chosen payout coin.
-  const uPrice = usdtPrice > 0 ? usdtPrice : 1;
-  const netUsdt = (netQta * qtaPrice) / uPrice;
+  // Conversion of the net QTA into the chosen payout coin (fixed peg in-window).
+  const netUsdt = (netQta * effQtaPrice) / effUsdtPrice;
   const receiveAmount = payoutCoin === 'USDT' ? netUsdt : netQta;
 
   const submit = async () => {
@@ -1246,7 +1266,7 @@ function WithdrawDividendModal({ qtaBalance, qtaPrice, usdtPrice, onClose, onDon
             </div>
             <p className="text-[11px] text-exchange-text-third mt-1.5">
               {payoutCoin === 'USDT'
-                ? `${t('earn.payoutUsdtNote')} · 1 QTA ≈ $${qtaPrice.toFixed(5)}`
+                ? `${t('earn.payoutUsdtNote')} · 1 QTA = $${effQtaPrice.toFixed(5)}${fixedWin ? ' (고정 6원 / 1,450원)' : ''}`
                 : t('earn.payoutQtaNote')}
             </p>
           </div>
