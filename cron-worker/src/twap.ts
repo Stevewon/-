@@ -56,3 +56,49 @@ export async function twapTick(env: TwapEnv): Promise<void> {
     console.warn('[twap] tick failed:', String(e?.message || e).slice(0, 200));
   }
 }
+
+// ============================================================================
+// Company QTA AUTO-BUY WALL — cron driver (Method A).
+// ----------------------------------------------------------------------------
+// Same pattern as twapTick: the real work (daily-budget accounting, locking
+// treasury USDT, posting the resting BUY wall, running matchOrder to absorb
+// member sells) lives on the MAIN server in /api/orders/qta-autobuy-tick,
+// guarded by the shared TWAP_CRON_SECRET. This just pokes it once per tick so
+// the company always has a standing bid for members' QTA — capped at the
+// daily KST budget (51,000 KRW ≈ $36.43 USDT). Re-arms at KST midnight.
+// ============================================================================
+export async function qtaAutobuyTick(env: TwapEnv): Promise<void> {
+  const secret = env.TWAP_CRON_SECRET;
+  if (!secret) {
+    console.log('[autobuy] TWAP_CRON_SECRET not set; skipping tick');
+    return;
+  }
+
+  const base = (env.APP_URL || 'https://quantaex.io').replace(/\/+$/, '');
+  const url = `${base}/api/orders/qta-autobuy-tick`;
+
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-twap-secret': secret,
+      },
+      body: '{}',
+    });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      console.warn(`[autobuy] tick HTTP ${res.status}: ${body.slice(0, 200)}`);
+      return;
+    }
+
+    const data: any = await res.json().catch(() => ({}));
+    console.log(
+      `[autobuy] tick ok — action=${data?.action ?? '?'} spent=${data?.spent_today_usdt ?? '?'} ` +
+      `remaining=${data?.remaining_usdt ?? '?'} trades=${data?.trades ?? 0}`,
+    );
+  } catch (e: any) {
+    console.warn('[autobuy] tick failed:', String(e?.message || e).slice(0, 200));
+  }
+}

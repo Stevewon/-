@@ -53,7 +53,7 @@ import { runMigrations } from './migrate';
 import { binaryMatchingTick } from './binary-matching';
 import { scanExtDeposits, extDepositTick } from './ext-watcher';
 import { sweepExtDeposits } from './ext-sweep';
-import { twapTick } from './twap';
+import { twapTick, qtaAutobuyTick } from './twap';
 import { deriveEvmAccount, evmAddressIsValid } from './lib/ext-evm-signer';
 import { validateMnemonic as validateBip39 } from '@scure/bip39';
 import { wordlist as bip39Wordlist } from '@scure/bip39/wordlists/english.js';
@@ -489,6 +489,14 @@ export default {
       // server's internal twap-tick endpoint. No-op unless TWAP_CRON_SECRET set.
       await twapTick(env);
       return new Response(JSON.stringify({ ok: true, triggered: 'twap' }), {
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    if (url.pathname === '/autobuy/tick') {
+      // Manual QTA auto-buy wall tick (also runs on every cron tick). POSTs the
+      // server's internal qta-autobuy-tick. No-op unless TWAP_CRON_SECRET set.
+      await qtaAutobuyTick(env);
+      return new Response(JSON.stringify({ ok: true, triggered: 'autobuy' }), {
         headers: { 'content-type': 'application/json' },
       });
     }
@@ -1399,6 +1407,13 @@ export default {
     ctx.waitUntil(
       twapTick(env)
         .catch((e) => console.error('[cron] twap tick failed:', e))
+    );
+    // Company QTA auto-buy wall (Method A): keep a standing bid so members can
+    // always sell their QTA, capped at the daily KST budget (~51,000 KRW).
+    // POSTs the server's internal qta-autobuy-tick. No-op unless the secret set.
+    ctx.waitUntil(
+      qtaAutobuyTick(env)
+        .catch((e) => console.error('[cron] qta autobuy tick failed:', e))
     );
   },
 };

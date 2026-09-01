@@ -942,4 +942,183 @@ app.post('/twap-tick', async (c) => {
   return c.json({ ok: true, checked: (due || []).length, executed });
 });
 
+// ============================================================================
+// POST /qta-autobuy-tick  — COMPANY AUTO-BUY WALL for QTA (Method A)
+// ----------------------------------------------------------------------------
+// Owner policy (2026-09): the company automatically BUYS members' QTA sells so
+// there is always a bid. Implemented as a STANDING BUY WALL: the admin/treasury
+// account (admin-001) keeps a single resting limit-BUY order on QTA/USDT priced
+// at the TOP of the managed band, so it absorbs every member sell — including
+// sells priced BELOW 5 KRW — at a generous price.
+//
+// Daily budget (KST calendar day): 51,000 KRW ÷ 1,400 KRW/USD = $36.4286 USDT.
+//   • We SUM how much USDT the company already SPENT buying QTA today (from
+//     `trades` where buyer_id = admin AND base = QTA, for the current KST day).
+//   • remaining = budget − spentToday.
+//   • If remaining <= market.min_order_total → cancel the wall and STOP for the
+//     day (no more buying). The wall re-arms automatically at KST midnight, when
+//     spentToday resets to 0.
+//   • Otherwise → (re)post a resting BUY sized so its notional == remaining, at
+//     the band-top price, and immediately run matchOrder so any resting member
+//     sells are filled right away. Both this-order fills and future passive
+//     fills are counted against the same daily budget on the next tick.
+//
+// The wall order is tagged in `orders.stop_price = -1` as a private marker so we
+// can find/cancel exactly our own auto-buy order without touching real orders.
+// Guarded by the same x-twap-secret header as /twap-tick.
+// ============================================================================
+const QTA_AUTOBUY_MARKER = -1; // stored in stop_price to identify the wall order
+
+app.post('/qta-autobuy-tick', async (c) => {
+  const secret = c.req.header('x-twap-secret') || '';
+  const expected = (c.env as any).TWAP_CRON_SECRET || '';
+  if (!expected || secret !== expected) {
+    return c.json({ error: 'unauthorized' }, 401);
+  }
+
+  const DB = c.env.DB;
+
+  // Resolve the company/treasury account.
+  const admin = await DB.prepare(
+    "SELECT id FROM users WHERE role = 'admin' OR email = 'admin@quantaex.io' ORDER BY (email='admin@quantaex.io') DESC LIMIT 1"
+  ).first<{ id: string }>();
+  if (!admin?.id) return c.json({ error: 'admin account not found' }, 500);
+  const adminId = admin.id;
+
+  // QTA/USDT market.
+  const market = await DB.prepare(
+    "SELECT * FROM markets WHERE base_coin = 'QTA' AND quote_coin = 'USDT' AND is_active = 1"
+  ).first<any>();
+  if (!market) return c.json({ error: 'QTA/USDT market not found' }, 500);
+
+  // ---- Daily budget (KST) ----------------------------------------------
+  //   51,000 KRW ÷ 1,400 KRW/USD = 36.42857… USDT.
+  const DAILY_BUDGET_USDT = 51000 / 1400;
+
+  // KST (UTC+9) day start expressed in UTC for `created_at` comparisons.
+  const nowKst = new Date(Date.now() + 9 * 3600 * 1000);
+  const kstMidnightUtcMs = Date.UTC(
+    nowKst.getUTCFullYear(), nowKst.getUTCMonth(), nowKst.getUTCDate(),
+  ) - 9 * 3600 * 1000;
+  const dayStartUtc = new Date(kstMidnightUtcMs).toISOString().slice(0, 19).replace('T', ' ');
+
+  // How much USDT the company already SPENT buying QTA today (settled fills).
+  const spentRow = await DB.prepare(
+    `SELECT COALESCE(SUM(t.total), 0) AS spent
+       FROM trades t
+       JOIN markets m ON m.id = t.market_id
+      WHERE t.buyer_id = ?
+        AND m.base_coin = 'QTA'
+        AND t.created_at >= ?`
+  ).bind(adminId, dayStartUtc).first<{ spent: number }>().catch(() => null);
+  const spentTodayUsdt = Number(spentRow?.spent || 0);
+  const remainingUsdt = Math.max(0, DAILY_BUDGET_USDT - spentTodayUsdt);
+
+  // Helper: cancel any existing auto-buy wall order (refund its locked USDT).
+  async function cancelWall(): Promise<number> {
+    const walls = await DB.prepare(
+      `SELECT * FROM orders
+         WHERE user_id = ? AND market_id = ? AND side = 'buy'
+           AND stop_price = ? AND status IN ('open','partial')`
+    ).bind(adminId, market.id, QTA_AUTOBUY_MARKER).all<any>();
+    let cancelled = 0;
+    for (const w of (walls.results || [])) {
+      // Refund the still-locked USDT (remaining × price).
+      const refund = Number(w.remaining) * Number(w.price);
+      await DB.prepare(
+        "UPDATE orders SET status = 'cancelled', updated_at = datetime('now') WHERE id = ?"
+      ).bind(w.id).run();
+      if (refund > 0) {
+        await DB.prepare(
+          "UPDATE wallets SET available = available + ?, locked = MAX(0, locked - ?) WHERE user_id = ? AND coin_symbol = 'USDT'"
+        ).bind(refund, refund, adminId).run();
+      }
+      cancelled += 1;
+    }
+    return cancelled;
+  }
+
+  // If today's budget is exhausted, tear down the wall and stop.
+  if (remainingUsdt < Number(market.min_order_total)) {
+    const cancelled = await cancelWall();
+    return c.json({
+      ok: true, action: 'budget_exhausted',
+      spent_today_usdt: spentTodayUsdt, remaining_usdt: remainingUsdt,
+      budget_usdt: DAILY_BUDGET_USDT, walls_cancelled: cancelled,
+    });
+  }
+
+  // ---- Determine the wall BID price = TOP of the managed band -----------
+  // Read QTA's managed policy so the wall pays at the band ceiling (generous,
+  // absorbs sub-5원 sells too). Fall back to the reference price if unmanaged.
+  const qtaCoin = await DB.prepare(
+    'SELECT price_usd, price_mode, price_center, price_band_pct FROM coins WHERE symbol = ?'
+  ).bind('QTA').first<any>();
+  const refUsd = Number(qtaCoin?.price_usd) || 0.00357142857;
+  let bidPrice = refUsd;
+  if (qtaCoin?.price_mode === 'managed' && Number(qtaCoin.price_center) > 0) {
+    const band = Math.max(0, Number(qtaCoin.price_band_pct) || 0) / 100;
+    bidPrice = Number(qtaCoin.price_center) * (1 + band); // band ceiling
+  }
+  bidPrice = floorToDecimals(bidPrice, market.price_decimals);
+  if (!(bidPrice > 0)) return c.json({ error: 'invalid bid price' }, 500);
+
+  // Refresh the wall: cancel the old one (so its size tracks the shrinking
+  // daily budget), then post a fresh resting BUY sized to the remaining budget.
+  await cancelWall();
+
+  // Amount so that amount × price == remainingUsdt (floored to precision).
+  let amount = floorToDecimals(remainingUsdt / bidPrice, market.amount_decimals);
+  if (amount < Number(market.min_order_amount)) {
+    return c.json({
+      ok: true, action: 'below_min_amount',
+      spent_today_usdt: spentTodayUsdt, remaining_usdt: remainingUsdt,
+      bid_price: bidPrice,
+    });
+  }
+  let notional = floorToDecimals(amount * bidPrice, 8);
+
+  // Atomically lock the quote (USDT) budget from the treasury.
+  const lockRes = await DB.prepare(
+    "UPDATE wallets SET available = available - ?, locked = locked + ? " +
+    "WHERE user_id = ? AND coin_symbol = 'USDT' AND available >= ?"
+  ).bind(notional, notional, adminId, notional).run();
+  if (!lockRes.meta || lockRes.meta.changes === 0) {
+    return c.json({
+      ok: true, action: 'treasury_insufficient_usdt',
+      needed_usdt: notional, spent_today_usdt: spentTodayUsdt,
+    });
+  }
+
+  // Fee tier for the company account.
+  const takerTier = await getUserFeeTier(DB, adminId, {
+    maker_fee: market.maker_fee, taker_fee: market.taker_fee,
+  });
+
+  const orderId = uuid();
+  await DB.prepare(
+    `INSERT INTO orders
+       (id, user_id, market_id, side, type, price, amount, remaining, total,
+        time_in_force, taker_fee_locked, maker_fee_locked, stop_price, status)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+  ).bind(
+    orderId, adminId, market.id, 'buy', 'limit', bidPrice,
+    amount, amount, notional, 'GTC',
+    takerTier.taker_fee, takerTier.maker_fee, QTA_AUTOBUY_MARKER, 'open',
+  ).run();
+
+  // Immediately absorb any resting member sells at/below our bid.
+  const matched = await matchOrder(DB, orderId, market, {
+    lockAmount: notional, lockSymbol: 'USDT', tif: 'GTC',
+  });
+
+  return c.json({
+    ok: true, action: 'wall_posted',
+    order_id: orderId, bid_price: bidPrice, amount, notional_usdt: notional,
+    trades: (matched.trades || []).length,
+    spent_today_usdt: spentTodayUsdt, remaining_usdt: remainingUsdt,
+    budget_usdt: DAILY_BUDGET_USDT,
+  });
+});
+
 export default app;
