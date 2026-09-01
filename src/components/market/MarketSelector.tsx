@@ -42,13 +42,18 @@ export default function MarketSelector({ currentSymbol, onClose }: Props) {
     <div className="flex flex-col h-full">
       <div className="p-2">
         <div className="relative">
-          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-exchange-text-third" />
+          <Search
+            size={14}
+            className="text-exchange-text-third"
+            style={{ position: 'absolute', left: '0.625rem', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}
+          />
           <input
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder={t('market.searchPlaceholder')}
-            className="input-field pl-8 text-xs"
+            className="input-field text-xs"
+            style={{ paddingLeft: '2rem' }}
           />
         </div>
       </div>
