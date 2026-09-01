@@ -696,9 +696,27 @@ async function updateCandles(DB: D1Database, marketId: string, trades: any[]) {
       await DB.prepare('UPDATE candles SET high = MAX(high, ?), low = MIN(low, ?), close = ?, volume = volume + ? WHERE id = ?')
         .bind(highPrice, lowPrice, lastPrice, totalVolume, existing.id).run();
     } else {
-      const prevCandle = await DB.prepare('SELECT close FROM candles WHERE market_id = ? AND interval = ? AND open_time < ? ORDER BY open_time DESC LIMIT 1')
+      const prevCandle = await DB.prepare('SELECT open_time, close FROM candles WHERE market_id = ? AND interval = ? AND open_time < ? ORDER BY open_time DESC LIMIT 1')
         .bind(marketId, interval, openTime).first() as any;
       const openPrice = prevCandle ? prevCandle.close : trades[0].price;
+
+      // GAP-FILL (like Binance/Bybit): if some buckets had no trades, real
+      // exchanges still emit flat "doji" candles at the prior close so the
+      // series has NO missing bars. Backfill every empty bucket between the
+      // previous candle and this one with O=H=L=C=prevClose, volume 0.
+      if (prevCandle && Number(prevCandle.open_time) > 0) {
+        const flat = Number(prevCandle.close);
+        const fillStmts: D1PreparedStatement[] = [];
+        for (let t = Number(prevCandle.open_time) + seconds; t < openTime; t += seconds) {
+          fillStmts.push(
+            DB.prepare('INSERT OR IGNORE INTO candles (market_id, interval, open_time, open, high, low, close, volume) VALUES (?,?,?,?,?,?,?,0)')
+              .bind(marketId, interval, t, flat, flat, flat, flat)
+          );
+          if (fillStmts.length >= 50) break; // safety cap per tick
+        }
+        if (fillStmts.length) await DB.batch(fillStmts);
+      }
+
       await DB.prepare('INSERT INTO candles (market_id, interval, open_time, open, high, low, close, volume) VALUES (?,?,?,?,?,?,?,?)')
         .bind(marketId, interval, openTime, openPrice, highPrice, lowPrice, lastPrice, totalVolume).run();
     }
