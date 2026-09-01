@@ -80,6 +80,8 @@ const zh = {
   'earn.accruing': '（累积中）',
   'earn.qtaBalance': 'QTA 余额',
   'earn.withdrawDividend': '提取分红',
+  'earn.accruingHint': '这是仍在实时累积的预估金额。点击提取会先自动领取到您的QTA余额，然后再提取。',
+  'earn.walletBalanceLabel': '钱包余额',
   'earn.mo': '月',
   'earn.day': '天',
   'earn.accruedDividend': '累计分红',

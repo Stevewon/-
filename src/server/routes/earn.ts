@@ -562,6 +562,62 @@ app.post('/claim', authMiddleware, async (c) => {
 });
 
 // --------------------------------------------------------------------------
+// POST /claim-all
+// Claims the unclaimed accrued dividend of EVERY active position for the user
+// in one call, crediting the total to the QTA wallet. This backs the Withdraw
+// flow's "auto-claim before withdraw" (Option A): the Earn page shows a live
+// "accruing" dividend that only becomes a real, withdrawable wallet balance
+// once claimed — so pressing Withdraw first sweeps all pending dividends here.
+// Idempotent-ish: positions with nothing to claim are skipped; concurrent
+// claims are guarded per-position by the accrued_dividend_usd snapshot CAS.
+// --------------------------------------------------------------------------
+app.post('/claim-all', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const now = Date.now();
+  const price = await qtaPrice(c);
+  if (!(price > 0)) return c.json({ error: 'QTA price unavailable' }, 503);
+
+  const positions = await c.env.DB.prepare(
+    `SELECT * FROM staking_positions WHERE user_id = ? AND status = 'active'`
+  ).bind(user.id).all<any>();
+  const rows = positions.results || [];
+
+  let totalQta = 0;
+  let claimedCount = 0;
+  for (const pos of rows) {
+    const totalUsd = accruedUsd(pos, now);
+    const alreadyPaidUsd = pos.accrued_dividend_usd || 0;
+    const payableUsd = Math.max(0, totalUsd - alreadyPaidUsd);
+    if (payableUsd <= 0) continue;
+
+    const qta = payableUsd / price;
+
+    // Claim-first CAS: only credit if the paid snapshot is still what we read,
+    // so a concurrent /claim on the same position can't double-pay.
+    const claim = await c.env.DB.prepare(
+      `UPDATE staking_positions
+          SET accrued_dividend_usd = ?, paid_dividend_qta = COALESCE(paid_dividend_qta,0) + ?,
+              last_accrued_at = ?
+        WHERE id = ? AND status = 'active' AND accrued_dividend_usd = ?`
+    ).bind(totalUsd, qta, new Date(now).toISOString(), pos.id, alreadyPaidUsd).run();
+    if (!claim.meta || claim.meta.changes === 0) continue; // lost the race; skip
+
+    await creditQta(c, user.id, qta);
+    await c.env.DB.prepare(
+      `INSERT INTO staking_dividends (id, position_id, user_id, kind, usd_amount, qta_amount, qta_price)
+       VALUES (?,?,?, 'dividend', ?,?,?)`
+    ).bind(uuid(), pos.id, user.id, payableUsd, qta, price).run();
+
+    await payReferralMatch(c, user.id, payableUsd, price, pos.id);
+
+    totalQta += qta;
+    claimedCount += 1;
+  }
+
+  return c.json({ ok: true, credited_qta: totalQta, positions_claimed: claimedCount, qta_price: price });
+});
+
+// --------------------------------------------------------------------------
 // POST /redeem { position_id }
 // Closes a position. "Early" is measured against THIS position's own maturity
 // date (term_end_at = its own start + the product term, 180/360d) — there is

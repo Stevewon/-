@@ -86,6 +86,8 @@ const ja = {
   'earn.accruing': '（発生中）',
   'earn.qtaBalance': 'QTA残高',
   'earn.withdrawDividend': '配当を出金',
+  'earn.accruingHint': 'これはリアルタイムで積み立て中の概算です。出金を押すと、まず自動的にQTA残高に受け取ってから出金します。',
+  'earn.walletBalanceLabel': 'ウォレット残高',
   'earn.mo': 'ヶ月',
   'earn.day': '日',
   'earn.accruedDividend': '累積配当',

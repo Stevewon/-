@@ -86,6 +86,8 @@ const ko = {
   'earn.accruing': '(적립 중)',
   'earn.qtaBalance': 'QTA 잔액',
   'earn.withdrawDividend': '배당 출금',
+  'earn.accruingHint': '실시간으로 적립 중인 예상 금액입니다. 출금을 누르면 먼저 자동으로 QTA 잔액으로 수령한 뒤 출금됩니다.',
+  'earn.walletBalanceLabel': '지갑 잔액',
   'earn.mo': '개월',
   'earn.day': '일',
   'earn.accruedDividend': '적립 배당',

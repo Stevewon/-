@@ -86,6 +86,8 @@ const en = {
   'earn.accruing': '(accruing)',
   'earn.qtaBalance': 'QTA Balance',
   'earn.withdrawDividend': 'Withdraw Dividend',
+  'earn.accruingHint': 'This is a live estimate that is still accruing. Pressing Withdraw automatically claims it into your QTA balance first.',
+  'earn.walletBalanceLabel': 'Wallet balance',
   'earn.mo': 'mo',
   'earn.day': 'day',
   'earn.accruedDividend': 'Accrued Dividend',

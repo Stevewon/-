@@ -222,6 +222,31 @@ export default function EarnPage() {
 
   const totalDividendQta = positions.reduce((s, p) => s + (p.accrued_dividend_qta || 0), 0);
 
+  // Option A: pressing "Withdraw Dividend" first auto-claims every position's
+  // pending (accruing) dividend into the QTA wallet, then opens the modal with
+  // the freshly-funded balance. The big "accruing" number is a live estimate,
+  // not a wallet balance — so without this a member would see "no withdrawable
+  // amount" even though the page shows a large claimable figure.
+  const handleWithdrawClick = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      // Only bother claiming if there's something accruing that isn't yet in
+      // the wallet; otherwise just open the modal against the current balance.
+      if (totalDividendQta > 0) {
+        const res = await api.post('/earn/claim-all', {});
+        const credited = Number(res.data?.credited_qta || 0);
+        if (credited > 0) {
+          showToast('success', t('earn.claimed'), `+${formatAmount(credited)} QTA`);
+        }
+        await refreshAll();
+      }
+      setWithdrawOpen(true);
+    } catch (err: any) {
+      showToast('error', t('earn.claimFailed'), err.response?.data?.error || '');
+    } finally { setBusy(false); }
+  };
+
   return (
     <DesktopPageLayout>
       {/* ADVANCED EARN hero (matches owner card design) */}
@@ -276,15 +301,24 @@ export default function EarnPage() {
               <div className="text-[22px] font-bold text-exchange-buy tabular-nums">
                 {formatAmount(totalDividendQta)} <span className="text-[13px] text-exchange-text-third">QTA {t('earn.accruing')}</span>
               </div>
+              <div className="text-[11px] text-exchange-text-third mt-1 tabular-nums">
+                {t('earn.walletBalanceLabel')}: {formatAmount(qtaBalance)} QTA
+              </div>
             </div>
             <button
-              onClick={() => setWithdrawOpen(true)}
-              className="rounded-full bg-exchange-yellow text-black text-[13px] font-bold hover:bg-exchange-yellow/90 transition-colors flex items-center gap-1.5"
+              onClick={handleWithdrawClick}
+              disabled={busy}
+              className="rounded-full bg-exchange-yellow text-black text-[13px] font-bold hover:bg-exchange-yellow/90 transition-colors flex items-center gap-1.5 disabled:opacity-50"
               style={{ padding: '10px 16px' }}
             >
-              <Wallet size={15} /> {t('earn.withdrawDividend')}
+              {busy ? <Loader2 size={15} className="animate-spin" /> : <Wallet size={15} />} {t('earn.withdrawDividend')}
             </button>
           </div>
+          {totalDividendQta > 0 && (
+            <p className="text-[11px] text-exchange-text-third mt-2 leading-relaxed">
+              {t('earn.accruingHint')}
+            </p>
+          )}
         </div>
       )}
 
