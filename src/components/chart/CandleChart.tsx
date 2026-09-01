@@ -154,19 +154,27 @@ export default function CandleChart({ symbol }: Props) {
     try {
       const res = await api.get(`/market/candles/${symbol}?interval=${interval}&limit=2`);
       if (res.data && res.data.length > 0) {
-        const latest = res.data[0];
-        candleSeriesRef.current?.update({
-          time: latest.time,
-          open: latest.open,
-          high: latest.high,
-          low: latest.low,
-          close: latest.close,
-        });
-        volumeSeriesRef.current?.update({
-          time: latest.time,
-          value: latest.volume,
-          color: latest.close >= latest.open ? 'rgba(14,203,129,0.3)' : 'rgba(246,70,93,0.3)',
-        });
+        const toSec = (t: any) => {
+          const n = Number(t);
+          return n > 1e12 ? Math.floor(n / 1000) : Math.floor(n);
+        };
+        // The API returns candles oldest -> newest, so the latest is the LAST row.
+        const latest = res.data[res.data.length - 1];
+        const time = toSec(latest.time);
+        if (Number.isFinite(time) && time > 0) {
+          candleSeriesRef.current?.update({
+            time,
+            open: Number(latest.open),
+            high: Number(latest.high),
+            low: Number(latest.low),
+            close: Number(latest.close),
+          });
+          volumeSeriesRef.current?.update({
+            time,
+            value: Number(latest.volume),
+            color: latest.close >= latest.open ? 'rgba(14,203,129,0.3)' : 'rgba(246,70,93,0.3)',
+          });
+        }
       }
     } catch {}
   }, [symbol, interval]);
@@ -174,16 +182,32 @@ export default function CandleChart({ symbol }: Props) {
   const loadCandles = async () => {
     try {
       const res = await api.get(`/market/candles/${symbol}?interval=${interval}&limit=300`);
-      const candles = res.data.map((c: any) => ({
+      // Normalize timestamps to Unix SECONDS. lightweight-charts expects seconds;
+      // if any row ever arrives in milliseconds (13-digit) it would be read as a
+      // year ~58000, so coerce ms -> s. De-dupe by time and sort ascending so a
+      // stray duplicate/out-of-order row can't corrupt the axis.
+      const toSec = (t: any) => {
+        const n = Number(t);
+        return n > 1e12 ? Math.floor(n / 1000) : Math.floor(n);
+      };
+      const byTime = new Map<number, any>();
+      for (const c of res.data) {
+        const time = toSec(c.time);
+        if (!Number.isFinite(time) || time <= 0) continue;
+        byTime.set(time, { ...c, time });
+      }
+      const rows = Array.from(byTime.values()).sort((a, b) => a.time - b.time);
+
+      const candles = rows.map((c: any) => ({
         time: c.time,
-        open: c.open,
-        high: c.high,
-        low: c.low,
-        close: c.close,
+        open: Number(c.open),
+        high: Number(c.high),
+        low: Number(c.low),
+        close: Number(c.close),
       }));
-      const volumes = res.data.map((c: any) => ({
+      const volumes = rows.map((c: any) => ({
         time: c.time,
-        value: c.volume,
+        value: Number(c.volume),
         color: c.close >= c.open ? 'rgba(14,203,129,0.3)' : 'rgba(246,70,93,0.3)',
       }));
 
@@ -191,7 +215,7 @@ export default function CandleChart({ symbol }: Props) {
       // ~0.004998). Without this the candlestick series defaults to 2 decimals
       // / minMove 0.01, so the axis + crosshair tooltip render every value as
       // "0.00". Derive decimals from the smallest non-zero close in the set.
-      const prices = res.data
+      const prices = rows
         .map((c: any) => Math.abs(Number(c.close)))
         .filter((v: number) => v > 0);
       const minPrice = prices.length ? Math.min(...prices) : 1;
