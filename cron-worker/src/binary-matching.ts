@@ -24,6 +24,17 @@ interface Env {
   DB: D1Database;
 }
 
+// ★ 2026-09-01 ~ 09-10 (KST) fixed peg: 1 QTA = 6원, 1 USDT = 1,450원.
+//   Match-bonus QTA payouts must convert bonus USD → QTA at this fixed price
+//   (same rule as staking dividends), NOT the live QTA price. Outside the
+//   window, fall back to the live price read from coins.
+const FIXED_QTA_USD = 6 / 1450; // $0.00413793
+const FIXED_WIN_START_MS = Date.parse('2026-09-01T00:00:00+09:00');
+const FIXED_WIN_END_MS = Date.parse('2026-09-11T00:00:00+09:00'); // exclusive
+function inFixedWindow(nowMs: number): boolean {
+  return nowMs >= FIXED_WIN_START_MS && nowMs < FIXED_WIN_END_MS;
+}
+
 // ⚑ OWNER RULE (2026-08-29, FINAL — REACH-BASED, ONCE PER TIER): the Left/Right
 //   matching bonus is paid when the 소실적(weaker leg = min(left,right)) REACHES
 //   a tier TARGET (도달점). Reaching a target pays TARGET × that tier's rate,
@@ -259,7 +270,8 @@ async function rollUp(env: Env, memberId: string, usdValue: number, qtaPrice: nu
 // --------------------------------------------------------------------------
 export async function binaryMatchingTick(env: Env): Promise<{ ok: boolean; processed: number; reason?: string }> {
   let processed = 0;
-  const qtaPrice = await priceOf(env, 'QTA');
+  // ★ 6원 fixed peg during the window; live price otherwise.
+  const qtaPrice = inFixedWindow(Date.now()) ? FIXED_QTA_USD : await priceOf(env, 'QTA');
 
   // Staking subscriptions not yet rolled into binary volume. We use the exact
   // QTA amount deducted at subscribe (principal_qta) × the QTA price snapshot at

@@ -598,8 +598,13 @@ app.post('/subscribe', authMiddleware, async (c) => {
   //   stake takes effect immediately, then stamp binary_counted_at so the cron
   //   safety-net sweeper never double-counts this position.
   const stakedUsd = qtaQty * price; // exact deducted QTA valued at stake price
+  // ★ 2026-09-01~09-10 (KST): binary MATCH BONUS QTA payout must convert at the
+  //   6원 fixed peg ($0.00413793), same rule as staking dividends — NOT the live
+  //   QTA price. Volume (stakedUsd) stays live-valued; only the bonus→QTA price
+  //   is pegged. Outside the window, matchPrice == live price.
+  const matchPrice = await qtaStakeBasisPrice(c);
   try {
-    await rollStakeUpBinary(c.env.DB, user.id, stakedUsd, price);
+    await rollStakeUpBinary(c.env.DB, user.id, stakedUsd, matchPrice);
     await c.env.DB.prepare(
       `UPDATE staking_positions SET binary_counted_at = datetime('now')
         WHERE id = ? AND binary_counted_at IS NULL`
@@ -1141,7 +1146,8 @@ app.post('/binary/assign-leg', authMiddleware, async (c) => {
       ).bind(res.member_id).first<any>();
       const memberUsd = Number(memberVol?.self_usd || 0);
       if (memberUsd > 0) {
-        const price = await qtaPrice(c);
+        // ★ match-bonus QTA payout uses the 6원 fixed peg during the window.
+        const price = await qtaStakeBasisPrice(c);
         await rollStakeUpBinary(c.env.DB, res.member_id, memberUsd, price, { skipSelf: true });
       }
     } catch (e) {
