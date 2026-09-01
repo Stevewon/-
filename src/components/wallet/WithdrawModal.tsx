@@ -135,22 +135,29 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
   const isQta = useMemo(() => isQuantariumAsset(coin), [coin]);
   const QTA_ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
 
-  // ★ A payout is settled as a Quantarium-native asset (→ forced main wallet)
-  //   whenever the user receives QTA, or withdraws a Quantarium coin in-kind.
-  const isQtaPayout = useMemo(
-    () => payoutCoin === 'QTA' || (isQta && payoutCoin === coin),
-    [payoutCoin, isQta, coin],
+  // ★ FIX (2026-09-01, owner): a user withdrawing their OWN QTA (bought /
+  //   staked) must be able to send it to their OWN external Quantarium wallet.
+  //   The forced company-wallet destination is now ONLY used when the user
+  //   asks to be PAID OUT in QTA while withdrawing a DIFFERENT coin (i.e. we
+  //   mint/convert QTA on their behalf — that conversion is settled via the
+  //   company treasury wallet). Withdrawing QTA/QX/QKEY in-kind lets the user
+  //   type their own Quantarium address.
+  const isConvertedQtaPayout = useMemo(
+    () => payoutCoin === 'QTA' && coin !== 'QTA',
+    [payoutCoin, coin],
   );
+  // Kept name for the (few) template branches that render the forced-dest box.
+  const isQtaPayout = isConvertedQtaPayout;
 
-  // When the destination is forced, keep `address` pinned to the main wallet
-  // so the confirm screen and (belt-and-braces) request body carry it too.
+  // When the destination is forced (converted-QTA only), pin `address` to the
+  // main wallet so the confirm screen and request body carry it too.
   useEffect(() => {
-    if (isQtaPayout && mainWallet) setAddress(mainWallet);
-  }, [isQtaPayout, mainWallet]);
+    if (isConvertedQtaPayout && mainWallet) setAddress(mainWallet);
+  }, [isConvertedQtaPayout, mainWallet]);
 
   const addressValid = useMemo(() => {
-    // Forced-destination payouts are always valid once the main wallet is known.
-    if (isQtaPayout) return mainWallet ? true : null;
+    // Forced-destination (converted QTA) payouts are valid once we know it.
+    if (isConvertedQtaPayout) return mainWallet ? true : null;
     if (!address) return null;
     if (isQta) {
       // Strict: Quantarium Network address only (0x + 40 hex).
@@ -158,7 +165,7 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
     }
     if (!network) return null;
     return network.addressRegex.test(address);
-  }, [address, network, isQta, isQtaPayout, mainWallet]);
+  }, [address, network, isQta, isConvertedQtaPayout, mainWallet]);
 
   const amountValid = useMemo(() => {
     if (!numAmount) return null;

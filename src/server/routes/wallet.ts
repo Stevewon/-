@@ -319,13 +319,18 @@ app.post('/withdraw', authMiddleware, rlWithdraw, requireKyc('approved'), async 
   const routeQuantarium = isQuantariumAsset(coin_symbol);
   const driver = String((c.env as any).QTA_CHAIN_DRIVER || 'mock').toLowerCase();
 
-  // ★★★ OWNER RULE (2026-08-28): the payout is settled as a Quantarium-native
-  // asset (QTA / QX / QKEY) whenever the user receives QTA, or withdraws a
-  // Quantarium coin and takes it in-kind. In that case the destination is
-  // FORCED to the company's main Quantarium wallet — the user's own `address`
-  // input is IGNORED for these payouts (and the whitelist/2FA-address checks
-  // below are skipped, since there is only ever one fixed destination).
-  const settleAsQtaEarly = payoutCoin === 'QTA' || (payoutCoin === coin_symbol && routeQuantarium);
+  // ★★★ FIX (2026-09-01, owner): a user withdrawing their OWN QTA (bought or
+  // earned via staking) MUST be able to send it to their OWN external
+  // Quantarium wallet. The forced company-wallet destination is therefore now
+  // used ONLY for CONVERTED payouts — i.e. the user withdraws a DIFFERENT coin
+  // but asks to be paid out in QTA, so we mint/convert QTA on their behalf and
+  // settle that conversion via the company treasury wallet.
+  //
+  // Withdrawing a Quantarium-native asset IN-KIND (coin === payout === QTA/QX/
+  // QKEY) no longer forces the company wallet: the user supplies their own
+  // Quantarium address (validated to 0x + 40 hex below).
+  const isConvertedQtaPayout = payoutCoin === 'QTA' && coin_symbol !== 'QTA';
+  const settleAsQtaEarly = isConvertedQtaPayout;
   const forcedMainWallet = settleAsQtaEarly ? mainPayoutWallet(c.env as any) : '';
   if (settleAsQtaEarly) {
     if (!forcedMainWallet) {
@@ -337,8 +342,19 @@ app.post('/withdraw', authMiddleware, rlWithdraw, requireKyc('approved'), async 
     // FORCE the destination — ignore whatever the client sent.
     address = forcedMainWallet;
   } else if (!address) {
-    // Non-Quantarium payouts still require a user-supplied destination address.
+    // All user-destination payouts (incl. in-kind QTA) require an address.
     return c.json({ error: 'Invalid request' }, 400);
+  } else if (routeQuantarium) {
+    // In-kind Quantarium withdrawal → validate the user-supplied destination is
+    // a well-formed Quantarium Network address (0x + 40 hex). Wrong-format /
+    // wrong-network sends are unrecoverable, so reject up-front.
+    if (!/^0x[0-9a-fA-F]{40}$/.test(String(address).trim())) {
+      return c.json({
+        error: 'INVALID_QUANTARIUM_ADDRESS',
+        message: `${coin_symbol} can only be withdrawn to a valid Quantarium Network (chain_id 60000) address (0x + 40 hex).`,
+      }, 400);
+    }
+    address = String(address).trim();
   }
 
   // Quantarium on-chain withdrawal requires the real chain adapter (RPC + HD
@@ -388,10 +404,16 @@ app.post('/withdraw', authMiddleware, rlWithdraw, requireKyc('approved'), async 
     if (!ok) return c.json({ error: 'Invalid 2FA code' }, 401);
   }
 
-  // Whitelist check — SKIPPED for Quantarium-native payouts: their destination
-  // is FORCED to the company main wallet (owner rule 2026-08-28), so there is
-  // no user-chosen address to whitelist. All other coins keep the whitelist.
-  if (!settleAsQtaEarly) {
+  // Whitelist check — SKIPPED for Quantarium-native withdrawals:
+  //   • CONVERTED QTA payouts go to the fixed company wallet (nothing to
+  //     whitelist), and
+  //   • IN-KIND QTA/QX/QKEY sends go to the user's own Quantarium address,
+  //     which we already strict-format-validate above and which the user must
+  //     explicitly acknowledge as irreversible in the UI. QTA has no
+  //     whitelist-management UI, so requiring one would hard-block the very
+  //     withdrawal the owner wants enabled.
+  // Every non-Quantarium coin (BTC/ETH/USDT/…) still requires a whitelist.
+  if (!settleAsQtaEarly && !routeQuantarium) {
     const wl = await c.env.DB.prepare(
       `SELECT id, cooldown_until, is_active FROM withdraw_whitelist
        WHERE user_id = ? AND coin_symbol = ? AND address = ?
