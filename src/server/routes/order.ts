@@ -1386,8 +1386,10 @@ app.post('/qta-mm-tick', async (c) => {
     if (ap > 0 && !seenAsk.has(ap)) {
       seenAsk.add(ap);
       // Depth per rung: ~$4 near touch, growing gently with distance so 14
-      // rungs stay affordable while the far book still looks deep.
-      const aQty = floorToDecimals((minTotal * (4 + i * 1.5)) / ap, adec);
+      // rungs stay affordable while the far book still looks deep. A per-rung
+      // random jitter (±35%) makes each re-arm look alive instead of frozen.
+      const aJit = 0.65 + Math.random() * 0.7;                 // 0.65 .. 1.35
+      const aQty = floorToDecimals((minTotal * (4 + i * 1.5) * aJit) / ap, adec);
       if (await placeOrder(MM_BOT_A, 'sell', ap, aQty, tierA)) asksPlaced++;
     }
     // BID rung i: bid, bid-STEP, bid-2*STEP, ...  (clamped to band lo & >0)
@@ -1396,7 +1398,8 @@ app.post('/qta-mm-tick', async (c) => {
     if (bp >= mid) bp = floorToDecimals(mid - tick, pdec);
     if (bp > 0 && !seenBid.has(bp)) {
       seenBid.add(bp);
-      const bQty = floorToDecimals((minTotal * (4 + i * 1.5)) / bp, adec);
+      const bJit = 0.65 + Math.random() * 0.7;                 // 0.65 .. 1.35
+      const bQty = floorToDecimals((minTotal * (4 + i * 1.5) * bJit) / bp, adec);
       if (await placeOrder(MM_BOT_B, 'buy', bp, bQty, tierB)) bidsPlaced++;
     }
   }
