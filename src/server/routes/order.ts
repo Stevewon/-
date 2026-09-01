@@ -1189,12 +1189,21 @@ app.post('/qta-mm-tick', async (c) => {
   const noise = Math.sin(Date.now() * 0.0007) * 43758.5453;
   const frac = noise - Math.floor(noise);              // 0..1
   mid = mid * (1 + (frac - 0.5) * 0.004);              // ±0.2% wobble
+  // Band bounds (also reused by the wall builder in Step 3).
+  let bandLo = 0, bandHi = Number.MAX_VALUE;
   if (qtaCoin?.price_mode === 'managed' && Number(qtaCoin.price_center) > 0) {
     const band = Math.max(0, Number(qtaCoin.price_band_pct) || 0) / 100;
-    const hi = Number(qtaCoin.price_center) * (1 + band);
-    const lo = Number(qtaCoin.price_center) * (1 - band);
-    if (mid > hi) mid = hi;
-    if (mid < lo) mid = lo;
+    bandHi = Number(qtaCoin.price_center) * (1 + band);
+    bandLo = Number(qtaCoin.price_center) * (1 - band);
+    // IMPORTANT: keep the mid OFF the band ceiling so the ASK wall has room to
+    // stack ABOVE it (otherwise every ask rung clamps to bandHi and collapses
+    // into a single row — the "only 1 sell" bug). Reserve ~3% headroom up and
+    // down so both walls always have space inside the band.
+    const HEADROOM = 0.03;
+    const midHi = bandHi * (1 - HEADROOM);
+    const midLo = bandLo * (1 + HEADROOM);
+    if (mid > midHi) mid = midHi;
+    if (mid < midLo) mid = midLo;
   }
   mid = floorToDecimals(mid, pdec);
   if (!(mid > 0)) return c.json({ error: 'invalid mm mid' }, 500);
@@ -1326,21 +1335,57 @@ app.post('/qta-mm-tick', async (c) => {
     }
   }
 
-  // ---- Step 3: re-arm a clean two-sided book ---------------------------
-  // Cancel whatever leftover from steps 1-2, then post fresh resting quotes.
+  // ---- Step 3: re-arm a DEEP multi-level two-sided book ----------------
+  // Cancel whatever leftover from steps 1-2, then stack a full wall on BOTH
+  // sides so the order book looks packed (owner: "칸을 다 채워라"):
+  //   • mm-bot-a stacks LEVELS ask rungs stepping UP from `ask`
+  //   • mm-bot-b stacks LEVELS bid rungs stepping DOWN from `bid`
+  // Each rung is clamped to the managed band so no rung ever prints outside
+  // 0.003216..0.004998 (no more crash-looking outliers), and the price grid
+  // guarantees every rung is a distinct row. Rung size grows a little with
+  // depth so the far side of the book looks like real liquidity.
   await clearBotQuotes();
-  // Depth per side: enough QTA/USDT to look like a real book (~$8-$15 each).
-  const askQty = floorToDecimals((minTotal * 8) / ask, adec);
-  const bidQty = floorToDecimals((minTotal * 8) / bid, adec);
-  const restAsk = await placeOrder(MM_BOT_A, 'sell', ask, askQty, tierA);
-  const restBid = await placeOrder(MM_BOT_B, 'buy', bid, bidQty, tierB);
+
+  const LEVELS = 8;                 // rungs per side -> book shows ~8 asks + 8 bids
+  // Step between rungs: small enough that all LEVELS ask rungs fit in the
+  // headroom between the mid and the band ceiling (so the sell wall doesn't
+  // collapse into one row), but at least one price tick.
+  const askRoom = Math.max(tick, bandHi === Number.MAX_VALUE ? mid * 0.03 : (bandHi - ask));
+  const STEP = Math.max(tick, floorToDecimals(askRoom / (LEVELS + 1), pdec));
+  // bandLo / bandHi were computed with the mid above (Number.MAX_VALUE / 0 when
+  // the coin is not in managed mode, so the clamps below are no-ops then).
+
+  let asksPlaced = 0, bidsPlaced = 0;
+  const seenAsk = new Set<number>();
+  const seenBid = new Set<number>();
+  for (let i = 0; i < LEVELS; i++) {
+    // ASK rung i: ask, ask+STEP, ask+2*STEP, ...  (clamped to band hi)
+    let ap = floorToDecimals(ask + i * STEP, pdec);
+    if (ap > bandHi) ap = floorToDecimals(bandHi, pdec);
+    if (ap <= mid) ap = floorToDecimals(mid + tick, pdec);
+    if (ap > 0 && !seenAsk.has(ap)) {
+      seenAsk.add(ap);
+      // Depth per rung: ~$6 near touch, growing with distance.
+      const aQty = floorToDecimals((minTotal * (6 + i * 2)) / ap, adec);
+      if (await placeOrder(MM_BOT_A, 'sell', ap, aQty, tierA)) asksPlaced++;
+    }
+    // BID rung i: bid, bid-STEP, bid-2*STEP, ...  (clamped to band lo & >0)
+    let bp = floorToDecimals(bid - i * STEP, pdec);
+    if (bp < bandLo) bp = floorToDecimals(bandLo, pdec);
+    if (bp >= mid) bp = floorToDecimals(mid - tick, pdec);
+    if (bp > 0 && !seenBid.has(bp)) {
+      seenBid.add(bp);
+      const bQty = floorToDecimals((minTotal * (6 + i * 2)) / bp, adec);
+      if (await placeOrder(MM_BOT_B, 'buy', bp, bQty, tierB)) bidsPlaced++;
+    }
+  }
 
   return c.json({
     ok: true, action: 'mm_ok',
     mid, ask, bid,
     member_trades: memberTrades, candle_trades: candleTrades,
     member_spent_today_usdt: memberSpentToday, member_budget_left_usdt: memberBudgetLeft,
-    cleared, rest_ask: !!restAsk, rest_bid: !!restBid,
+    cleared, asks_placed: asksPlaced, bids_placed: bidsPlaced,
   });
 });
 
