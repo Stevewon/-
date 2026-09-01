@@ -61,8 +61,8 @@ export default function Orderbook({ onPriceClick, mobile }: Props) {
   const prevPrice = recentTrades[1]?.price || lastPrice;
   const priceUp = lastPrice >= prevPrice;
 
-  const asks = [...orderbook.asks].reverse().slice(-12);
-  const bids = orderbook.bids.slice(0, 12);
+  const asks = [...orderbook.asks].reverse().slice(-14);
+  const bids = orderbook.bids.slice(0, 14);
 
   let askRunning = 0;
   let bidRunning = 0;
