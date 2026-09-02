@@ -186,6 +186,8 @@ const en = {
   'earn.minWarnTitle': 'Below the minimum',
   'earn.minWarnBody': 'Withdrawals must be at least ${usd} (valued at the current live QTA price). Please increase the amount.',
   'earn.unit100qta': 'Must be in 100-QTA increments',
+  'earn.unit100WarnTitle': 'Check 100-QTA increment',
+  'earn.unit100WarnBody': 'The withdrawal amount must be in 100-QTA increments. e.g. 365,000 or 365,100. Please adjust the amount to a multiple of 100.',
   'earn.requested': 'Requested',
   'earn.fee5': 'Fee (5%)',
   'earn.youReceive': 'You Receive',

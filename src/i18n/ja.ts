@@ -186,6 +186,8 @@ const ja = {
   'earn.minWarnTitle': '最低額未満',
   'earn.minWarnBody': '出金は最低${usd}以上（現在のリアルタイムQTA価格で換算）必要です。金額を増やしてください。',
   'earn.unit100qta': '100 QTA単位で入力してください',
+  'earn.unit100WarnTitle': '100 QTA単位の確認',
+  'earn.unit100WarnBody': '出金額は100 QTA単位でのみ申請できます。例：365,000 または 365,100。金額を100の倍数に調整してください。',
   'earn.requested': '申請額',
   'earn.fee5': '手数料（5%）',
   'earn.youReceive': '受取額',

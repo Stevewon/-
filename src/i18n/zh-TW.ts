@@ -180,6 +180,8 @@ const zhTW = {
   'earn.minWarnTitle': '低於最低限額',
   'earn.minWarnBody': '提現金額至少需達到 ${usd}（按目前即時 QTA 價格折算）。請提高金額。',
   'earn.unit100qta': '必須以 100 QTA 為增量',
+  'earn.unit100WarnTitle': '請確認 100 QTA 增量',
+  'earn.unit100WarnBody': '提現金額只能以 100 QTA 為增量申請。例如：365,000 或 365,100。請將金額調整為 100 的倍數。',
   'earn.requested': '申請金額',
   'earn.fee5': '手續費（5%）',
   'earn.youReceive': '實際到賬',

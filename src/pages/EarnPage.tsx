@@ -1184,6 +1184,9 @@ function WithdrawDividendModal({ qtaBalance, qtaPrice, usdtPrice, onClose, onDon
   const belowMinUsd = num > 0 && effQtaPrice > 0 && requestUsd < MIN_WITHDRAW_USD;
   const feeQta = num * 0.05;
   const netQta = num - feeQta;
+  // ★ 100-QTA 단위는 더 이상 버튼을 "무조건 비활성화"하지 않는다. 버튼은 눌리게 두고,
+  //   단위 위반이면 submit()에서 안내 팝업(토스트)을 띄운다 (owner request 2026-09-01).
+  //   valid(=실제 제출 가능 여부)에는 여전히 in100이 포함되어 서버로는 정상 값만 전송된다.
   const valid = in100 && enough && addrOk && ack && !belowMinUsd;
 
   // Conversion of the net QTA into the chosen payout coin (fixed peg in-window).
@@ -1191,6 +1194,11 @@ function WithdrawDividendModal({ qtaBalance, qtaPrice, usdtPrice, onClose, onDon
   const receiveAmount = payoutCoin === 'USDT' ? netUsdt : netQta;
 
   const submit = async () => {
+    // ★ 100-QTA 단위 위반 → 무조건 막지 말고 안내 팝업으로 알려준다 (owner request).
+    if (num > 0 && !in100) {
+      showToast('error', t('earn.unit100WarnTitle'), t('earn.unit100WarnBody'));
+      return;
+    }
     // ★ Hard warning popup for sub-$50 attempts (boss rule).
     if (belowMinUsd) {
       showToast('error', t('earn.minWarnTitle'), t('earn.minWarnBody', { usd: MIN_WITHDRAW_USD }));
@@ -1320,12 +1328,14 @@ function WithdrawDividendModal({ qtaBalance, qtaPrice, usdtPrice, onClose, onDon
 
           <button
             onClick={submit}
-            disabled={(!valid && !belowMinUsd) || busy}
+            /* 100-QTA 단위 위반(!in100)과 최소금액 미만(belowMinUsd)은 버튼을 눌러
+               안내 팝업을 받을 수 있게 disabled에서 제외한다. 나머지 조건만 실제 차단. */
+            disabled={busy || (num > 0 && in100 && !belowMinUsd && (!enough || !addrOk || !ack))}
             className="w-full py-3.5 rounded-full bg-exchange-yellow text-black font-bold text-[15px] hover:bg-exchange-yellow/90 transition-colors disabled:opacity-40"
           >
             {busy ? <Loader2 size={16} className="animate-spin inline" />
-              : !in100 ? t('earn.unit100qta')
-              : belowMinUsd ? t('earn.belowMinUsd', { usd: MIN_WITHDRAW_USD })
+              : !in100 ? t('earn.confirmWithdraw')
+              : belowMinUsd ? t('earn.confirmWithdraw')
               : !enough ? t('earn.insufficient')
               : !addrOk ? t('earn.enterQtaAddr')
               : !ack ? t('earn.mustAck')

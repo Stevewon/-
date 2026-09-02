@@ -186,6 +186,8 @@ const ko = {
   'earn.minWarnTitle': '최소 출금 금액 미만',
   'earn.minWarnBody': '출금은 최소 ${usd} 이상이어야 합니다 (현재 QTA 실시간 시세 기준). 금액을 늘려주세요.',
   'earn.unit100qta': '100 QTA 단위로 입력하세요',
+  'earn.unit100WarnTitle': '100 QTA 단위 확인',
+  'earn.unit100WarnBody': '출금 금액은 100 QTA 단위로만 신청할 수 있습니다. 예: 365,000 또는 365,100. 금액을 100 단위로 조정해 주세요.',
   'earn.requested': '신청 금액',
   'earn.fee5': '수수료 (5%)',
   'earn.youReceive': '실 지급액',

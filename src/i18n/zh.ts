@@ -180,6 +180,8 @@ const zh = {
   'earn.minWarnTitle': '低于最低限额',
   'earn.minWarnBody': '提现金额至少需达到 ${usd}（按当前实时 QTA 价格折算）。请提高金额。',
   'earn.unit100qta': '必须以 100 QTA 为增量',
+  'earn.unit100WarnTitle': '请确认 100 QTA 增量',
+  'earn.unit100WarnBody': '提现金额只能以 100 QTA 为增量申请。例如：365,000 或 365,100。请将金额调整为 100 的倍数。',
   'earn.requested': '申请金额',
   'earn.fee5': '手续费（5%）',
   'earn.youReceive': '实际到账',
