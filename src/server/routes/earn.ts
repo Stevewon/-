@@ -204,20 +204,29 @@ function stakedQtyOf(p: {
   return basis > 0 ? Number(p.principal_usd || 0) / basis : 0;
 }
 
-// Credit a QTA amount to a user as company-issued (internal, non-withdrawable
-// beyond the staking-dividend withdrawal path). Creates wallet row if missing.
-async function creditQta(c: any, userId: string, qta: number) {
+// Credit a QTA amount to a user's wallet. Creates the wallet row if missing.
+//
+// ★ OWNER RULE (2026-09-03): STAKING DIVIDENDS and MATCH BONUSES are the user's
+//   EARNINGS and must be WITHDRAWABLE. Only the staking PRINCIPAL (returned at
+//   maturity) is locked. So dividend/bonus credits pass withdrawable=true, which
+//   bumps `available` WITHOUT bumping `available_initial` (the company-issued /
+//   non-withdrawable bucket). Non-earning credits keep the old behaviour
+//   (available_initial bumped => not externally withdrawable).
+async function creditQta(c: any, userId: string, qta: number, withdrawable = false) {
   if (qta <= 0) return;
+  // Withdrawable credit: only `available` grows (initial stays put).
+  // Non-withdrawable credit: both grow together (company-issued).
+  const initialDelta = withdrawable ? 0 : qta;
   const upd = await c.env.DB.prepare(
     `UPDATE wallets SET available = available + ?,
             available_initial = COALESCE(available_initial,0) + ?
       WHERE user_id = ? AND coin_symbol = 'QTA'`
-  ).bind(qta, qta, userId).run();
+  ).bind(qta, initialDelta, userId).run();
   if (!upd.meta || upd.meta.changes === 0) {
     await c.env.DB.prepare(
       `INSERT INTO wallets (id, user_id, coin_symbol, available, available_initial)
        VALUES (?,?, 'QTA', ?, ?)`
-    ).bind(uuid(), userId, qta, qta).run();
+    ).bind(uuid(), userId, qta, initialDelta).run();
   }
 }
 
@@ -673,7 +682,7 @@ app.post('/claim', authMiddleware, async (c) => {
     return c.json({ error: 'Claim already in progress, retry' }, 409);
   }
 
-  await creditQta(c, user.id, qta);
+  await creditQta(c, user.id, qta, true); // dividend = withdrawable earnings
   await c.env.DB.prepare(
     `INSERT INTO staking_dividends (id, position_id, user_id, kind, usd_amount, qta_amount, qta_price)
      VALUES (?,?,?, 'dividend', ?,?,?)`
@@ -730,7 +739,7 @@ app.post('/claim-all', authMiddleware, async (c) => {
     ).bind(totalUsd, posTotalQta, new Date(now).toISOString(), pos.id, alreadyPaidQta).run();
     if (!claim.meta || claim.meta.changes === 0) continue; // lost the race; skip
 
-    await creditQta(c, user.id, qta);
+    await creditQta(c, user.id, qta, true); // dividend = withdrawable earnings
     await c.env.DB.prepare(
       `INSERT INTO staking_dividends (id, position_id, user_id, kind, usd_amount, qta_amount, qta_price)
        VALUES (?,?,?, 'dividend', ?,?,?)`
@@ -867,7 +876,7 @@ app.post('/redeem', authMiddleware, async (c) => {
     returnedQta = realPrincipalQta;
 
     if (dividendQta > 0) {
-      await creditQta(c, user.id, dividendQta);
+      await creditQta(c, user.id, dividendQta, true); // dividend = withdrawable earnings
       await c.env.DB.prepare(
         `UPDATE staking_positions SET paid_dividend_qta = ? WHERE id = ?`
       ).bind(totalQta, positionId).run();
