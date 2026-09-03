@@ -91,6 +91,22 @@ interface PositionsSummary {
   totalPrincipalLiveUsd?: number;
   totalDividendUsd: number;
   totalDividendQta: number;
+  // ★ 미청구 매칭수당(청구 대기) — Claimable 표시에 배당과 합산.
+  unclaimedMatchQta?: number;
+}
+
+interface MatchHistoryRow {
+  id: string;
+  matched_usd: number;
+  rate: number;
+  bonus_usd: number;
+  bonus_qta: number;
+  qta_price: number;
+  left_total: number;
+  right_total: number;
+  matched_total: number;
+  claimed: number;
+  created_at: string;
 }
 
 interface BinaryMember { id: string; nickname: string; joined_at: string; staked_usd?: number; assigned_at?: string | null; }
@@ -160,6 +176,10 @@ export default function EarnPage() {
   const [binary, setBinary] = useState<BinaryTree | null>(null);
   const [assignBusy, setAssignBusy] = useState<string | null>(null);
 
+  // ★ OWNER RULE (2026-09-03): each member can SEE their match-bonus history.
+  const [matchHistory, setMatchHistory] = useState<MatchHistoryRow[]>([]);
+  const [matchHistoryOpen, setMatchHistoryOpen] = useState(false);
+
   const qtaBalance = wallets.find((w) => w.coin_symbol === 'QTA')?.available || 0;
 
   const loadBinary = useCallback(async () => {
@@ -178,6 +198,14 @@ export default function EarnPage() {
     } catch { /* public */ }
     finally { setLoading(false); }
   }, []);
+
+  const loadMatchHistory = useCallback(async () => {
+    if (!user) { setMatchHistory([]); return; }
+    try {
+      const res = await api.get('/earn/match-history');
+      setMatchHistory(res.data.history || []);
+    } catch { /* not logged in */ }
+  }, [user]);
 
   // Live USDT price (usually $1.00) — read from the public market coins list
   // so QTA→USDT withdrawal conversion uses the moment's real peg.
@@ -203,10 +231,10 @@ export default function EarnPage() {
   }, [user]);
 
   useEffect(() => { loadProducts(); loadUsdtPrice(); }, [loadProducts, loadUsdtPrice]);
-  useEffect(() => { loadPositions(); loadBinary(); if (user) fetchWallets(); }, [user, loadPositions, loadBinary]);
+  useEffect(() => { loadPositions(); loadBinary(); loadMatchHistory(); if (user) fetchWallets(); }, [user, loadPositions, loadBinary, loadMatchHistory]);
 
   const refreshAll = async () => {
-    await Promise.all([loadPositions(), fetchWallets(), loadProducts(), loadUsdtPrice(), loadBinary()]);
+    await Promise.all([loadPositions(), fetchWallets(), loadProducts(), loadUsdtPrice(), loadBinary(), loadMatchHistory()]);
   };
 
   // Sponsor assigns an unplaced downline member to their Left/Right leg (ONCE).
@@ -261,6 +289,11 @@ export default function EarnPage() {
   };
 
   const totalDividendQta = positions.reduce((s, p) => s + (p.accrued_dividend_qta || 0), 0);
+  // ★ OWNER RULE (2026-09-03): binary MATCH BONUS now accrues as CLAIMABLE and
+  //   is released together with the dividend on the Friday claim. Show it as
+  //   part of the Claimable balance.
+  const unclaimedMatchQta = Number(summary?.unclaimedMatchQta || 0);
+  const totalClaimableQta = totalDividendQta + unclaimedMatchQta;
 
   // Option A: pressing "Withdraw Dividend" first auto-claims every position's
   // pending (accruing) dividend into the QTA wallet, then opens the modal with
@@ -273,7 +306,7 @@ export default function EarnPage() {
     try {
       // Only bother claiming if there's something accruing that isn't yet in
       // the wallet; otherwise just open the modal against the current balance.
-      if (totalDividendQta > 0) {
+      if (totalClaimableQta > 0) {
         const res = await api.post('/earn/claim-all', {});
         const credited = Number(res.data?.credited_qta || 0);
         if (credited > 0) {
@@ -343,8 +376,13 @@ export default function EarnPage() {
             <div>
               <div className="text-[12px] text-exchange-text-third">{t('earn.claimableDividend')}</div>
               <div className="text-[22px] font-bold text-exchange-buy tabular-nums">
-                {formatAmount(totalDividendQta)} <span className="text-[13px] text-exchange-text-third">QTA {t('earn.accruing')}</span>
+                {formatAmount(totalClaimableQta)} <span className="text-[13px] text-exchange-text-third">QTA {t('earn.accruing')}</span>
               </div>
+              {unclaimedMatchQta > 0 && (
+                <div className="text-[11px] text-exchange-text-third mt-1 tabular-nums">
+                  {t('earn.dividendLabel')}: {formatAmount(totalDividendQta)} QTA · {t('earn.matchBonusLabel')}: {formatAmount(unclaimedMatchQta)} QTA
+                </div>
+              )}
               <div className="text-[11px] text-exchange-text-third mt-1 tabular-nums">
                 {t('earn.walletBalanceLabel')}: {formatAmount(qtaBalance)} QTA
               </div>
@@ -362,6 +400,50 @@ export default function EarnPage() {
             <p className="text-[11px] text-exchange-text-third mt-2 leading-relaxed">
               {t('earn.accruingHint')}
             </p>
+          )}
+
+          {/* ★ Match-bonus history — each member can see their own matching log */}
+          {matchHistory.length > 0 && (
+            <div className="mt-3 pt-3 border-t border-exchange-border">
+              <button
+                onClick={() => setMatchHistoryOpen((v) => !v)}
+                className="flex items-center justify-between w-full text-[12px] font-semibold text-exchange-text"
+              >
+                <span>{t('earn.matchHistoryTitle')}</span>
+                <span className="text-exchange-text-third">
+                  {matchHistoryOpen ? '▲' : '▼'} {matchHistory.length}
+                </span>
+              </button>
+              {matchHistoryOpen && (
+                <div className="mt-2 space-y-1.5 max-h-64 overflow-y-auto">
+                  {matchHistory.map((m) => (
+                    <div
+                      key={m.id}
+                      className="flex items-center justify-between text-[11px] bg-exchange-bg rounded-lg px-3 py-2"
+                    >
+                      <div className="min-w-0">
+                        <div className="text-exchange-text tabular-nums font-medium">
+                          +{formatAmount(m.bonus_qta)} QTA
+                        </div>
+                        <div className="text-exchange-text-third tabular-nums mt-0.5">
+                          {fmtUsd(m.bonus_usd)} · {new Date(m.created_at + 'Z').toLocaleDateString()}
+                        </div>
+                      </div>
+                      <span
+                        className={
+                          'text-[10px] font-semibold px-2 py-0.5 rounded-full ' +
+                          (m.claimed
+                            ? 'text-exchange-buy bg-exchange-buy/10'
+                            : 'text-exchange-yellow bg-exchange-yellow/10')
+                        }
+                      >
+                        {m.claimed ? t('earn.matchClaimed') : t('earn.matchPending')}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           )}
         </div>
       )}

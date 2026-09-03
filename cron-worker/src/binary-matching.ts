@@ -139,24 +139,18 @@ async function runMatchForUser(env: Env, userId: string, qtaPrice: number): Prom
   ).bind(reachedTarget, userId, paidTarget).run();
   if (!upd?.meta || upd.meta.changes === 0) return;
 
-  try {
-    await env.DB.prepare(
-      `INSERT INTO wallets (id, user_id, coin_symbol, available, locked)
-       VALUES (?, ?, 'QTA', 0, 0)
-       ON CONFLICT(user_id, coin_symbol) DO NOTHING`
-    ).bind(uuid(), userId).run();
-  } catch { /* ignore */ }
-  await env.DB.prepare(
-    `UPDATE wallets SET available = available + ? WHERE user_id = ? AND coin_symbol = 'QTA'`
-  ).bind(bonusQta, userId).run();
-
+  // ★ OWNER RULE (2026-09-03): match bonus is NO LONGER credited to the wallet
+  //   immediately. It accumulates as CLAIMABLE (claimed=0) together with the
+  //   staking dividend, and is paid out only on the Friday claim window via the
+  //   web app's /claim or /claim-all. DO NOT re-add an immediate wallet credit
+  //   here — that would double-pay the same bonus once the member claims it.
   const newSlice = reachedTarget - paidTarget;
   const effRate = newSlice > 0 ? bonusUsd / newSlice : 0;
   await env.DB.prepare(
     `INSERT INTO binary_match_bonuses
        (id, user_id, matched_usd, rate, bonus_usd, bonus_qta, qta_price,
-        left_total, right_total, matched_total, created_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?, datetime('now'))`
+        left_total, right_total, matched_total, claimed, created_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?, 0, datetime('now'))`
   ).bind(
     uuid(), userId, newSlice, effRate, bonusUsd, bonusQta, qtaPrice,
     left, right, reachedTarget,

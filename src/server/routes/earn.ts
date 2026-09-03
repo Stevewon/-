@@ -297,6 +297,46 @@ async function payReferralMatch(c: any, stakerId: string, usdValue: number, pric
 }
 
 // --------------------------------------------------------------------------
+// Pay out the user's UNCLAIMED binary MATCH BONUS (claimed=0) as WITHDRAWABLE
+// QTA, then atomically mark those rows claimed=1.
+//
+// ★ OWNER RULE (2026-09-03): the binary match bonus is NO LONGER credited to
+//   the wallet at match time (see binary-matching.ts). It accrues as CLAIMABLE
+//   together with the staking dividend and is only released when the member
+//   claims during the Friday window. This runs inside /claim and /claim-all.
+//
+//   DOUBLE-CREDIT GUARD: each row is claimed with a CAS
+//   (UPDATE ... WHERE id = ? AND claimed = 0). We only credit the QTA for rows
+//   whose CAS actually flipped 1→ from 0, so two concurrent claims can never
+//   pay the same row twice. bonus_qta is the QTA fixed at match time.
+// --------------------------------------------------------------------------
+async function claimMatchBonuses(c: any, userId: string): Promise<{ qta: number; rows: number }> {
+  const pending = await c.env.DB.prepare(
+    `SELECT id, bonus_qta FROM binary_match_bonuses
+      WHERE user_id = ? AND COALESCE(claimed,0) = 0`
+  ).bind(userId).all<any>();
+  const rows = pending.results || [];
+  let paidQta = 0;
+  let paidRows = 0;
+  for (const r of rows) {
+    const bonusQta = Number(r.bonus_qta || 0);
+    // CAS: flip this row to claimed=1 ONLY if it is still unclaimed. If another
+    // concurrent claim already took it, changes === 0 and we skip crediting.
+    const cas = await c.env.DB.prepare(
+      `UPDATE binary_match_bonuses SET claimed = 1
+        WHERE id = ? AND COALESCE(claimed,0) = 0`
+    ).bind(r.id).run();
+    if (!cas.meta || cas.meta.changes === 0) continue; // lost the race; skip
+    if (bonusQta > 0) {
+      await creditQta(c, userId, bonusQta, true); // match bonus = withdrawable
+      paidQta += bonusQta;
+    }
+    paidRows += 1;
+  }
+  return { qta: paidQta, rows: paidRows };
+}
+
+// --------------------------------------------------------------------------
 // GET /products — active tier catalog (public).
 // --------------------------------------------------------------------------
 app.get('/products', async (c) => {
@@ -453,6 +493,17 @@ app.get('/positions', authMiddleware, async (c) => {
     };
   });
 
+  // ★ OWNER RULE (2026-09-03): the binary MATCH BONUS now accrues as CLAIMABLE
+  //   (claimed=0) alongside the dividend and is only paid on the Friday claim.
+  //   Surface the member's UNCLAIMED match total so the Earn page can show it as
+  //   part of the Claimable balance.
+  const matchAgg = await c.env.DB.prepare(
+    `SELECT COALESCE(SUM(bonus_qta),0) AS qta, COUNT(*) AS n
+       FROM binary_match_bonuses
+      WHERE user_id = ? AND COALESCE(claimed,0) = 0`
+  ).bind(user.id).first<any>().catch(() => null);
+  const unclaimedMatchQta = Number(matchAgg?.qta || 0);
+
   const summary = {
     totalPrincipalUsd: positions.reduce((s, p) => s + (p.principal_usd || 0), 0),
     // ★ 실매출 기준 원금 합계(인정보너스 제외) + 실시간 시세 가치.
@@ -461,8 +512,38 @@ app.get('/positions', authMiddleware, async (c) => {
     totalPrincipalLiveUsd: positions.reduce((s, p) => s + (p.principal_live_usd || 0), 0),
     totalDividendUsd: positions.reduce((s, p) => s + (p.accrued_dividend_usd || 0), 0),
     totalDividendQta: positions.reduce((s, p) => s + (p.accrued_dividend_qta || 0), 0),
+    // ★ 미청구 매칭수당(청구 대기) — Claimable 표시에 배당과 합산.
+    unclaimedMatchQta,
   };
   return c.json({ positions, summary, qta_price: price });
+});
+
+// --------------------------------------------------------------------------
+// GET /match-history — the member's own binary MATCH BONUS ledger, so each
+// member can SEE their matching history (claimed + unclaimed).
+// ★ OWNER RULE (2026-09-03): "내역은 각 회원이 볼수있게 해주고".
+// --------------------------------------------------------------------------
+app.get('/match-history', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const { results } = await c.env.DB.prepare(
+    `SELECT id, matched_usd, rate, bonus_usd, bonus_qta, qta_price,
+            left_total, right_total, matched_total,
+            COALESCE(claimed,0) AS claimed, created_at
+       FROM binary_match_bonuses
+      WHERE user_id = ?
+      ORDER BY created_at DESC`
+  ).bind(user.id).all<any>();
+  const rows = (results || []) as any[];
+  const totalQta = rows.reduce((s, r) => s + Number(r.bonus_qta || 0), 0);
+  const unclaimedQta = rows
+    .filter((r) => Number(r.claimed || 0) === 0)
+    .reduce((s, r) => s + Number(r.bonus_qta || 0), 0);
+  return c.json({
+    history: rows,
+    total_qta: totalQta,
+    unclaimed_qta: unclaimedQta,
+    claimed_qta: totalQta - unclaimedQta,
+  });
 });
 
 // --------------------------------------------------------------------------
@@ -714,7 +795,20 @@ app.post('/claim', authMiddleware, async (c) => {
   const totalQta = accruedQta(pos, now, basis);
   const alreadyPaidQta = Number(pos.paid_dividend_qta || 0);
   const qta = Math.max(0, totalQta - alreadyPaidQta);
-  if (qta <= 0) return c.json({ ok: true, credited_qta: 0, note: 'nothing to claim' });
+
+  // ★ OWNER RULE (2026-09-03): claiming also releases the member's UNCLAIMED
+  //   binary MATCH BONUS (claimed=0 -> paid as withdrawable, marked claimed=1).
+  //   This is user-scoped (not per-position), so we pay it even when this
+  //   particular position has no dividend to claim.
+  const match = await claimMatchBonuses(c, user.id);
+
+  if (qta <= 0) {
+    return c.json({
+      ok: true, credited_qta: 0, dividend_qta: 0,
+      match_qta: match.qta, match_rows: match.rows,
+      note: match.qta > 0 ? 'match bonus claimed' : 'nothing to claim',
+    });
+  }
 
   // USD value of this claim (for the ledger + referral match), valued at the
   // stake BASIS (6원 peg in window) so usd_amount / qta_price stay consistent
@@ -742,7 +836,14 @@ app.post('/claim', authMiddleware, async (c) => {
 
   await payReferralMatch(c, user.id, payableUsd, basis, positionId);
 
-  return c.json({ ok: true, credited_qta: qta, qta_price: basis });
+  return c.json({
+    ok: true,
+    credited_qta: qta + match.qta,
+    dividend_qta: qta,
+    match_qta: match.qta,
+    match_rows: match.rows,
+    qta_price: basis,
+  });
 });
 
 // --------------------------------------------------------------------------
@@ -805,7 +906,19 @@ app.post('/claim-all', authMiddleware, async (c) => {
     claimedCount += 1;
   }
 
-  return c.json({ ok: true, credited_qta: totalQta, positions_claimed: claimedCount, qta_price: basis });
+  // ★ OWNER RULE (2026-09-03): release UNCLAIMED binary MATCH BONUS too (once,
+  //   user-scoped), together with the dividend sweep.
+  const match = await claimMatchBonuses(c, user.id);
+
+  return c.json({
+    ok: true,
+    credited_qta: totalQta + match.qta,
+    dividend_qta: totalQta,
+    match_qta: match.qta,
+    match_rows: match.rows,
+    positions_claimed: claimedCount,
+    qta_price: basis,
+  });
 });
 
 // --------------------------------------------------------------------------
