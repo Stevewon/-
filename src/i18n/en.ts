@@ -191,6 +191,7 @@ const en = {
   'earn.claimWindowTitle': 'Claims are closed right now',
   'earn.claimWindowBody': 'Dividend & matching rewards can only be claimed every Friday, 10:00 AM to 4:00 PM (KST).',
   'earn.claimWindowNote': 'Dividend/matching claims: Fridays 10:00–16:00 KST only (maturity redemption is always available)',
+  'earn.livePrice': 'live price',
   'earn.requested': 'Requested',
   'earn.fee5': 'Fee (5%)',
   'earn.youReceive': 'You Receive',

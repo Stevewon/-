@@ -137,11 +137,13 @@ function claimWindowOpen(nowMs: number): boolean {
     && hour >= CLAIM_WINDOW_START_HR
     && hour < CLAIM_WINDOW_END_HR;
 }
-// Standard 403 payload when the claim window is closed (polite Korean).
+// Standard 403 payload when the claim window is closed.
+// ★ Message is English-only. The client localizes via the error CODE
+//   (CLAIM_WINDOW_CLOSED → earn.claimWindowBody), never by echoing this string.
 function claimWindowClosed(c: any) {
   return c.json({
     error: 'CLAIM_WINDOW_CLOSED',
-    message: '배당·매칭 수당 청구는 매주 금요일 오전 10시부터 오후 4시(한국시간)까지만 가능합니다.',
+    message: 'Dividend & matching rewards can only be claimed every Friday, 10:00 AM to 4:00 PM (KST).',
   }, 403);
 }
 

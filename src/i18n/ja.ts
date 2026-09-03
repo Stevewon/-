@@ -191,6 +191,7 @@ const ja = {
   'earn.claimWindowTitle': '現在は請求できません',
   'earn.claimWindowBody': '配当・マッチング報酬の請求は毎週金曜日の午前10時から午後4時（韓国時間）まで可能です。',
   'earn.claimWindowNote': '配当・マッチング請求：毎週金曜10時〜16時（KST）のみ可能（満期償還は常時可能）',
+  'earn.livePrice': 'リアルタイム価格',
   'earn.requested': '申請額',
   'earn.fee5': '手数料（5%）',
   'earn.youReceive': '受取額',

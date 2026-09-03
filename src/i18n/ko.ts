@@ -191,6 +191,7 @@ const ko = {
   'earn.claimWindowTitle': '청구 가능 시간이 아닙니다',
   'earn.claimWindowBody': '배당·매칭 수당 청구는 매주 금요일 오전 10시부터 오후 4시(한국시간)까지만 가능합니다.',
   'earn.claimWindowNote': '배당·매칭 청구: 매주 금요일 오전 10시~오후 4시(KST)만 가능 (만기 출금은 상시 가능)',
+  'earn.livePrice': '실시간 시세',
   'earn.requested': '신청 금액',
   'earn.fee5': '수수료 (5%)',
   'earn.youReceive': '실 지급액',

@@ -185,6 +185,7 @@ const zhTW = {
   'earn.claimWindowTitle': '目前不在可申請時間',
   'earn.claimWindowBody': '分紅與配對獎勵僅可於每週五上午10點至下午4點（韓國時間）申請。',
   'earn.claimWindowNote': '分紅/配對申請：僅限每週五 10:00–16:00（KST）（到期贖回隨時可用）',
+  'earn.livePrice': '即時價格',
   'earn.requested': '申請金額',
   'earn.fee5': '手續費（5%）',
   'earn.youReceive': '實際到賬',

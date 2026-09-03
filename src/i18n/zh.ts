@@ -185,6 +185,7 @@ const zh = {
   'earn.claimWindowTitle': '当前不在可申请时间',
   'earn.claimWindowBody': '分红与配对奖励仅可在每周五上午10点至下午4点（韩国时间）申请。',
   'earn.claimWindowNote': '分红/配对申请：仅限每周五 10:00–16:00（KST）（到期赎回随时可用）',
+  'earn.livePrice': '实时价格',
   'earn.requested': '申请金额',
   'earn.fee5': '手续费（5%）',
   'earn.youReceive': '实际到账',

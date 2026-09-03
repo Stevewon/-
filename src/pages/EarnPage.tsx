@@ -231,8 +231,12 @@ export default function EarnPage() {
       showToast('success', t('earn.claimed'), `+${formatAmount(res.data.credited_qta)} QTA`);
       await refreshAll();
     } catch (err: any) {
-      // 서버가 사람이 읽을 수 있는 message(예: 청구창 마감)를 주면 우선 표시.
-      showToast('error', t('earn.claimFailed'), err.response?.data?.message || err.response?.data?.error || '');
+      // Localize via the error CODE (never echo the server's raw message string).
+      const code = err.response?.data?.error;
+      const msg = code === 'CLAIM_WINDOW_CLOSED'
+        ? t('earn.claimWindowBody')
+        : (err.response?.data?.message || code || '');
+      showToast('error', t('earn.claimFailed'), msg);
     } finally { setBusy(false); }
   };
 
@@ -279,7 +283,11 @@ export default function EarnPage() {
       }
       setWithdrawOpen(true);
     } catch (err: any) {
-      showToast('error', t('earn.claimFailed'), err.response?.data?.message || err.response?.data?.error || '');
+      const code = err.response?.data?.error;
+      const msg = code === 'CLAIM_WINDOW_CLOSED'
+        ? t('earn.claimWindowBody')
+        : (err.response?.data?.message || code || '');
+      showToast('error', t('earn.claimFailed'), msg);
     } finally { setBusy(false); }
   };
 
@@ -504,7 +512,7 @@ export default function EarnPage() {
                       {formatAmount(totalRealPrincipalQta)} QTA
                     </div>
                     <div className="text-[11px] text-exchange-text-third tabular-nums mt-1">
-                      ≈ ${formatAmount(totalPrincipalLiveUsd)} <span className="opacity-70">(실시간 시세)</span>
+                      ≈ ${formatAmount(totalPrincipalLiveUsd)} <span className="opacity-70">({t('earn.livePrice')})</span>
                     </div>
                   </div>
                   {/* ★ HIDDEN (owner request 2026-09-03): the combined-entry "Accrued
@@ -546,7 +554,7 @@ export default function EarnPage() {
                     {formatAmount(Number(p.real_principal_qta ?? p.principal_qta) || 0)} QTA
                   </span>
                   <span className="text-[10px] text-exchange-text-third tabular-nums">
-                    ≈ ${formatAmount(Number(p.principal_live_usd ?? p.principal_usd) || 0)} <span className="opacity-70">(실시간)</span>
+                    ≈ ${formatAmount(Number(p.principal_live_usd ?? p.principal_usd) || 0)} <span className="opacity-70">({t('earn.livePrice')})</span>
                   </span>
                 </div>
                 {/* Per-position RATE & PERIOD — each separate stake keeps its own rate/term */}
