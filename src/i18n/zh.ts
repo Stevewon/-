@@ -450,6 +450,7 @@ const zh = {
   'wallet.youWillReceive': '您将收到',
   'wallet.payoutCoin': '到账币种',
   'wallet.payoutNote': '按当前实时价格结算',
+  'wallet.payoutNoteFixed': '按活动期间固定价格结算',
   'wallet.convertedFrom': '换算自',
   'wallet.continue': '继续',
   'wallet.confirmWithdraw': '确认提现',

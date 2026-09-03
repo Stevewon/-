@@ -469,6 +469,7 @@ const ko = {
   'wallet.youWillReceive': '\ubc1b\uc744 \uae08\uc561',
   'wallet.payoutCoin': '\ubc1b\uc744 \ucf54\uc778 \uc120\ud0dd',
   'wallet.payoutNote': '\ud604\uc7ac \uc2e4\uc2dc\uac04 \uc2dc\uc138\ub85c \uc815\uc0b0',
+  'wallet.payoutNoteFixed': '행사기간 고정 시세로 정산',
   'wallet.convertedFrom': '\ubcc0\ud658 \uc804',
   'wallet.continue': '\uacc4\uc18d',
   'wallet.confirmWithdraw': '\ucd9c\uae08 \ud655\uc778',

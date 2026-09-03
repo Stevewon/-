@@ -469,6 +469,7 @@ const en = {
   'wallet.youWillReceive': 'You Will Receive',
   'wallet.payoutCoin': 'Receive as',
   'wallet.payoutNote': 'Settled at the current live price',
+  'wallet.payoutNoteFixed': 'Settled at the fixed event peg',
   'wallet.convertedFrom': 'Converted from',
   'wallet.continue': 'Continue',
   'wallet.confirmWithdraw': 'Confirm Withdrawal',

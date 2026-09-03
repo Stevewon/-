@@ -19,6 +19,27 @@ interface Props {
 
 type Step = 'form' | 'confirm' | 'done';
 
+// ★ OWNER RULE (2026-09-03): during 2026-09-01 ~ 09-11 (KST) the general
+//   Wallet-withdraw screen values/converts QTA at the SAME fixed 6원 peg as the
+//   staking screen (6 ÷ 1,450 = $0.00413793/QTA, USDT pegged $1.0). This keeps
+//   the QTA count identical across both screens so users never see two prices.
+//   Outside the window the live coins.price_usd is used. The server
+//   (wallet.ts) applies the identical peg, so the UI matches what settles.
+const WM_FIXED_QTA_USD = 6 / 1450;                                   // $0.00413793
+const WM_FIXED_WIN_START = Date.parse('2026-09-01T00:00:00+09:00');
+const WM_FIXED_WIN_END   = Date.parse('2026-09-12T00:00:00+09:00');  // exclusive (through 09-11 KST)
+function wmInFixedWindow(nowMs: number): boolean {
+  return nowMs >= WM_FIXED_WIN_START && nowMs < WM_FIXED_WIN_END;
+}
+// Effective USD unit price applying the 6원 peg to QTA / $1.0 to USDT in-window.
+function wmEffPriceUsd(symbol: string, liveUsd: number): number {
+  if (!wmInFixedWindow(Date.now())) return liveUsd;
+  const s = String(symbol || '').toUpperCase();
+  if (s === 'QTA') return WM_FIXED_QTA_USD;
+  if (s === 'USDT') return 1;
+  return liveUsd;
+}
+
 export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: Props) {
   const { t } = useI18n();
   const { user, wallets, fetchWallets } = useStore();
@@ -100,7 +121,9 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
   const MIN_WITHDRAW_USD = 50;            // $50 minimum
 
   const numAmount = parseFloat(amount) || 0;
-  const priceUsd = wallet?.price_usd || 0;
+  // ★ 6원 peg during the event window (QTA -> $0.00413793, USDT -> $1.0),
+  //   otherwise the live price. Matches the server (wallet.ts) exactly.
+  const priceUsd = wmEffPriceUsd(coin, wallet?.price_usd || 0);
   const valueUsd = numAmount * priceUsd;
   // 5% fee, expressed in the withdrawn coin.
   const fee = numAmount * WITHDRAW_FEE_RATE;
@@ -119,11 +142,11 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
   //    peg (QTA $0.00357142857, USDT $1.00) if a wallet is missing.
   const [payoutCoin, setPayoutCoin] = useState<'QTA' | 'USDT'>('USDT');
   const qtaPriceUsd = useMemo(
-    () => wallets.find(w => w.coin_symbol === 'QTA')?.price_usd || 0.00357142857,
+    () => wmEffPriceUsd('QTA', wallets.find(w => w.coin_symbol === 'QTA')?.price_usd || 0.00357142857),
     [wallets],
   );
   const usdtPriceUsd = useMemo(
-    () => wallets.find(w => w.coin_symbol === 'USDT')?.price_usd || 1,
+    () => wmEffPriceUsd('USDT', wallets.find(w => w.coin_symbol === 'USDT')?.price_usd || 1),
     [wallets],
   );
   const payoutPriceUsd = payoutCoin === 'QTA' ? qtaPriceUsd : usdtPriceUsd;
@@ -359,9 +382,14 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
               </div>
               <p className="text-[10px] text-exchange-text-third mt-1 flex items-center gap-1">
                 <Info size={11} className="shrink-0" />
-                {payoutCoin === 'QTA'
-                  ? `${t('wallet.payoutNote')} · 1 QTA ≈ $${qtaPriceUsd.toFixed(5)}`
-                  : `${t('wallet.payoutNote')} · 1 USDT ≈ $${usdtPriceUsd.toFixed(4)}`}
+                {(() => {
+                  const fixed = wmInFixedWindow(Date.now());
+                  const note = fixed ? t('wallet.payoutNoteFixed') : t('wallet.payoutNote');
+                  const suffix = fixed ? ' (고정 6원 / 1,450원)' : '';
+                  return payoutCoin === 'QTA'
+                    ? `${note} · 1 QTA ≈ $${qtaPriceUsd.toFixed(5)}${suffix}`
+                    : `${note} · 1 USDT ≈ $${usdtPriceUsd.toFixed(4)}${suffix}`;
+                })()}
               </p>
             </div>
 
@@ -540,7 +568,7 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
                 <div className="flex justify-between text-[10px] text-exchange-text-third">
                   <span>{t('wallet.convertedFrom')}</span>
                   <span className="tabular-nums">
-                    {formatAmount(receiveAmount)} {coin} @ live price
+                    {formatAmount(receiveAmount)} {coin} @ {wmInFixedWindow(Date.now()) ? '고정 6원' : 'live price'}
                   </span>
                 </div>
               )}

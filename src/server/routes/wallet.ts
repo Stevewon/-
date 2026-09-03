@@ -34,6 +34,31 @@ function mainPayoutWallet(env: any): string {
 const DAILY_WITHDRAW_USD_LIMIT = { none: 0, basic: 0, approved: 50_000 } as const;
 const PER_REQUEST_USD_LIMIT    = { none: 0, basic: 0, approved: 10_000 } as const;
 
+// ★★★★★★★ OWNER RULE (2026-09-03) — FIXED 6원 PEG for QTA withdrawals ★★★★★★★
+// During the event window the QTA value is PINNED to the fixed 6-won peg
+// (6원 = $0.00413793, USDT pegged 1,450원/USD = $1.0) for wallet withdrawals
+// too — identical to the staking-dividend withdrawal. This makes the QTA
+// count / USDT conversion consistent across BOTH the Earn (staking) screen
+// and the general Wallet-withdraw screen, so users no longer see two
+// different QTA prices. Outside the window the live coins.price_usd is used.
+const WALLET_FIXED_USDT_KRW = 1450;
+const WALLET_FIXED_QTA_KRW  = 6;
+const WALLET_FIXED_QTA_USD  = WALLET_FIXED_QTA_KRW / WALLET_FIXED_USDT_KRW; // $0.00413793
+const WALLET_FIXED_WIN_START_MS = Date.parse('2026-09-01T00:00:00+09:00');
+const WALLET_FIXED_WIN_END_MS   = Date.parse('2026-09-12T00:00:00+09:00'); // END exclusive (through 09-11 KST)
+function walletInFixedWindow(nowMs: number): boolean {
+  return nowMs >= WALLET_FIXED_WIN_START_MS && nowMs < WALLET_FIXED_WIN_END_MS;
+}
+// Returns the effective USD unit price for a coin, applying the 6원 peg to
+// QTA and $1.0 to USDT during the event window; otherwise the live price.
+function walletEffPriceUsd(symbol: string, livePriceUsd: number, nowMs: number): number {
+  if (!walletInFixedWindow(nowMs)) return livePriceUsd;
+  const s = String(symbol).toUpperCase();
+  if (s === 'QTA') return WALLET_FIXED_QTA_USD;
+  if (s === 'USDT') return 1;
+  return livePriceUsd;
+}
+
 function uuid() {
   return crypto.randomUUID();
 }
@@ -429,7 +454,11 @@ app.post('/withdraw', authMiddleware, rlWithdraw, requireKyc('approved'), async 
 
   // Per-request + daily USD limits (approved tier only — others blocked by requireKyc)
   const tier: keyof typeof DAILY_WITHDRAW_USD_LIMIT = 'approved';
-  const usdPerUnit = Number(coin.price_usd || 0);
+  // ★ 6원 peg during the event window (QTA -> $0.00413793, USDT -> $1.0),
+  //   otherwise the live coins.price_usd. Applies to the min-$50 check, the
+  //   notional/limit checks and the payout conversion below so the QTA count
+  //   matches the Earn (staking) screen exactly.
+  const usdPerUnit = walletEffPriceUsd(coin_symbol, Number(coin.price_usd || 0), Date.now());
   const notional = usdPerUnit * amount;
   // ★★★★★★★ Boss's minimum-withdrawal rule (2026-08-26): $50 USD equivalent,
   //   valued at the coin's live price. Below $50 is hard-blocked server-side.
@@ -509,7 +538,9 @@ app.post('/withdraw', authMiddleware, rlWithdraw, requireKyc('approved'), async 
     const payoutRow = await c.env.DB.prepare(
       'SELECT price_usd FROM coins WHERE symbol = ?'
     ).bind(payoutCoin).first<any>();
-    payoutPriceUsd = Number(payoutRow?.price_usd || 0) || (payoutCoin === 'USDT' ? 1 : 0);
+    const livePayout = Number(payoutRow?.price_usd || 0) || (payoutCoin === 'USDT' ? 1 : 0);
+    // ★ Same 6원 peg for the payout coin during the event window.
+    payoutPriceUsd = walletEffPriceUsd(payoutCoin, livePayout, Date.now());
     if (payoutPriceUsd <= 0) {
       return c.json({ error: `Payout coin ${payoutCoin} price unavailable` }, 400);
     }

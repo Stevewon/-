@@ -469,6 +469,7 @@ const ja = {
   'wallet.youWillReceive': '受取額',
   'wallet.payoutCoin': '受取通貨',
   'wallet.payoutNote': '現在のライブ価格で決済されます',
+  'wallet.payoutNoteFixed': 'イベント期間の固定価格で決済されます',
   'wallet.convertedFrom': '換算元',
   'wallet.continue': '続ける',
   'wallet.confirmWithdraw': '出金の確認',

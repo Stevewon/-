@@ -450,6 +450,7 @@ const zhTW = {
   'wallet.youWillReceive': '您將收到',
   'wallet.payoutCoin': '到賬幣種',
   'wallet.payoutNote': '按目前即時價格結算',
+  'wallet.payoutNoteFixed': '按活動期間固定價格結算',
   'wallet.convertedFrom': '換算自',
   'wallet.continue': '繼續',
   'wallet.confirmWithdraw': '確認提現',
