@@ -485,6 +485,12 @@ export default function EarnPage() {
                       ≈ {formatAmount(totalPrincipalQta)} QTA
                     </div>
                   </div>
+                  {/* ★ HIDDEN (owner request 2026-09-03): the combined-entry "Accrued
+                      Dividend" total was being misread by users as a SEPARATE extra
+                      payout on top of their principal. It is only an accrual display,
+                      so we hide it here to avoid the confusion. The per-position
+                      accrued dividend (Entry card below) still shows it. Restore by
+                      un-commenting this block.
                   <div className="text-right">
                     <div className="text-[11px] text-exchange-text-third">{t('earn.accruedDividend')}</div>
                     <div className="text-[15px] font-bold text-exchange-buy tabular-nums">
@@ -494,6 +500,7 @@ export default function EarnPage() {
                       ≈ ${formatAmount(totalDivUsd)}
                     </div>
                   </div>
+                  */}
                 </div>
               </div>
             );
