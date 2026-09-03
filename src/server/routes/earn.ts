@@ -121,6 +121,30 @@ function kstDayIndex(ms: number): number {
   return Math.floor((ms + KST_OFFSET_MS) / MS_PER_DAY);
 }
 
+// ★ OWNER RULE (2026-09-03): 배당 + 매칭보너스로 쌓인 코인의 "청구(claim)"는
+//   매주 금요일(KST) 오전 10:00 ~ 오후 16:00 사이에만 가능하다. 그 외 시간은
+//   불가. (만기 redeem 은 이 제한을 받지 않는다.)
+//   Workers runtime is UTC — shift to KST, then read the weekday & hour.
+const CLAIM_WINDOW_WEEKDAY = 5;   // 0=Sun … 5=Fri
+const CLAIM_WINDOW_START_HR = 10; // 10:00 KST inclusive
+const CLAIM_WINDOW_END_HR   = 16; // 16:00 KST exclusive (오후 4시)
+function claimWindowOpen(nowMs: number): boolean {
+  const kst = new Date(nowMs + KST_OFFSET_MS);
+  // getUTC* on the KST-shifted instant yields KST calendar fields.
+  const weekday = kst.getUTCDay();
+  const hour = kst.getUTCHours();
+  return weekday === CLAIM_WINDOW_WEEKDAY
+    && hour >= CLAIM_WINDOW_START_HR
+    && hour < CLAIM_WINDOW_END_HR;
+}
+// Standard 403 payload when the claim window is closed (polite Korean).
+function claimWindowClosed(c: any) {
+  return c.json({
+    error: 'CLAIM_WINDOW_CLOSED',
+    message: '배당·매칭 수당 청구는 매주 금요일 오전 10시부터 오후 4시(한국시간)까지만 가능합니다.',
+  }, 403);
+}
+
 // Accrued dividend in USD for a position, capped at the full term.
 //
 // ★ Owner rule (2026-08-31, REVISED — CALENDAR-DAY / KST): dividends accrue by
@@ -393,9 +417,29 @@ app.get('/positions', authMiddleware, async (c) => {
     const termEnd = p.term_end_at ? Date.parse(p.term_end_at) : now;
     const matured = now >= termEnd;          // this position's own term reached
     const principalQta = stakedQtyOf(p, basis);
+    // ★ OWNER RULE (2026-09-03): 원금 표시는 "실매출(실입금) 기준 QTA 수량"을
+    //   다시 노출하고, 그 가치를 실시간 QTA 시세와 연결한다.
+    //   • granted 포지션 → 실원금 real_principal_usd 만 인정(인정보너스 제외)
+    //   • legacy 포지션  → 실제 스테이킹한 QTA 수량(principalQta)
+    //   실매출 원금 QTA = real_principal_usd / 실시간시세(price) (granted),
+    //                   = principalQta (legacy).
+    //   실시간 가치(USD) = 원금 QTA × 실시간시세.
+    const isGranted = p.real_principal_usd != null;
+    const realPrincipalUsd = isGranted
+      ? Number(p.real_principal_usd || 0)
+      : Number(p.principal_usd || 0);
+    const realPrincipalQta = isGranted
+      ? (price > 0 ? realPrincipalUsd / price : 0)
+      : principalQta;
+    const principalLiveUsd = realPrincipalQta * price; // 실시간 시세 기준 가치
     return {
       ...p,
       principal_qta: principalQta,
+      // 실매출 기준 원금 (인정보너스 제외) — 프론트 원금 표시에 사용.
+      real_principal_qta: realPrincipalQta,
+      real_principal_usd: realPrincipalUsd,
+      principal_live_usd: principalLiveUsd,
+      qta_price: price,                 // 실시간 QTA 시세(USD)
       accrued_dividend_usd: divUsd,
       accrued_dividend_qta: divQta,
       // Normal (penalty-free) redeem is allowed only once THIS position's own
@@ -409,6 +453,10 @@ app.get('/positions', authMiddleware, async (c) => {
 
   const summary = {
     totalPrincipalUsd: positions.reduce((s, p) => s + (p.principal_usd || 0), 0),
+    // ★ 실매출 기준 원금 합계(인정보너스 제외) + 실시간 시세 가치.
+    totalRealPrincipalQta: positions.reduce((s, p) => s + (p.real_principal_qta || 0), 0),
+    totalRealPrincipalUsd: positions.reduce((s, p) => s + (p.real_principal_usd || 0), 0),
+    totalPrincipalLiveUsd: positions.reduce((s, p) => s + (p.principal_live_usd || 0), 0),
     totalDividendUsd: positions.reduce((s, p) => s + (p.accrued_dividend_usd || 0), 0),
     totalDividendQta: positions.reduce((s, p) => s + (p.accrued_dividend_qta || 0), 0),
   };
@@ -641,6 +689,8 @@ app.post('/subscribe', authMiddleware, async (c) => {
 // referral match on the credited amount.
 // --------------------------------------------------------------------------
 app.post('/claim', authMiddleware, async (c) => {
+  // ★ OWNER RULE (2026-09-03): 배당 청구는 금요일 10~16시(KST)만 허용.
+  if (!claimWindowOpen(Date.now())) return claimWindowClosed(c);
   const user = c.get('user');
   const body = await c.req.json().catch(() => ({}));
   const positionId = String(body.position_id || '');
@@ -704,6 +754,8 @@ app.post('/claim', authMiddleware, async (c) => {
 // claims are guarded per-position by the accrued_dividend_usd snapshot CAS.
 // --------------------------------------------------------------------------
 app.post('/claim-all', authMiddleware, async (c) => {
+  // ★ OWNER RULE (2026-09-03): 배당 청구는 금요일 10~16시(KST)만 허용.
+  if (!claimWindowOpen(Date.now())) return claimWindowClosed(c);
   const user = c.get('user');
   const now = Date.now();
   const price = await qtaPrice(c);
@@ -802,14 +854,16 @@ app.post('/redeem', authMiddleware, async (c) => {
   // locked nothing.
   const lockedQta = isGranted ? 0 : principalQta;
   // The REAL principal to return, expressed in QTA:
-  //   • granted → real_principal_usd converted at TODAY's price
+  //   • granted → real_principal_usd converted at the LIVE price at MATURITY
   //   • legacy  → the QTA that was locked
-  // ★ 2026-09-01~ (fixed window): granted-position principal is returned in QTA
-  //   valued at the SAME basis the stake used (6원 peg in window), NOT the live
-  //   price — otherwise the returned QTA quantity would be inconsistent with the
-  //   6원 entry rule. Outside the window, basis == live price.
+  // ★ OWNER RULE (2026-09-03, FINAL): 진입 시 QTA 환산 수량은 의미가 없다.
+  //   원금은 "실매출 USDT 가치(real_principal_usd)"로 고정되고, 만기에 그
+  //   몸값을 그 시점의 실시간 QTA 시세로 환산한 개수만큼 지급한다. 코인이
+  //   보관되어 있는 것이 아니므로 6원 고정창이라도 반환 개수는 항상 LIVE 시세
+  //   기준으로 계산한다. 인정보너스(bonus_principal_usd)는 실입금이 없으므로
+  //   지급하지 않는다 (real_principal_usd만 반환).
   const realPrincipalQta = isGranted
-    ? (basis > 0 ? realPrincipalUsd / basis : 0)
+    ? (price > 0 ? realPrincipalUsd / price : 0)
     : principalQta;
   // Early == before this position's own maturity date (per-position).
   const isEarly = pos.term_end_at ? Date.parse(pos.term_end_at) > now : false;
@@ -850,12 +904,13 @@ app.post('/redeem', authMiddleware, async (c) => {
     const remainingDivQta = Math.max(0, totalDivQta - alreadyPaidQta);
 
     // Principal portion of the penalty base:
-    //   • granted → the FULL inflated principal_usd (2,000) as QTA
+    //   • granted → the REAL principal (real_principal_usd) as QTA — the
+    //     인정보너스 has no real deposit behind it, so it never gets returned
+    //     (even as a penalty base). Valued at the LIVE price at redeem time.
     //   • legacy  → the locked principalQta
-    // ★ granted-position penalty base principal valued at the stake basis
-    //   (6원 peg in window), consistent with the entry rule.
+    // ★ OWNER RULE (2026-09-03): 원금은 실매출(USDT) 기준, 반환 개수는 실시간 시세.
     const penaltyPrincipalQta = isGranted
-      ? (basis > 0 ? principalUsd / basis : 0)
+      ? (price > 0 ? realPrincipalUsd / price : 0)
       : principalQta;
 
     const baseQta = penaltyPrincipalQta + remainingDivQta;   // 원금(부풀린) + 적립이자 (QTA)
@@ -938,6 +993,9 @@ app.post('/redeem', authMiddleware, async (c) => {
 // Creates a normal withdrawal request in the chosen asset (operator settles).
 // --------------------------------------------------------------------------
 app.post('/withdraw-dividend', authMiddleware, async (c) => {
+  // ★ OWNER RULE (2026-09-03): 배당·매칭으로 쌓인 코인의 청구(출금)는 매주
+  //   금요일 오전 10시~오후 4시(KST)만 허용. 만기 redeem은 이 제한을 받지 않음.
+  if (!claimWindowOpen(Date.now())) return claimWindowClosed(c);
   const user = c.get('user');
   const body = await c.req.json().catch(() => ({}));
   const amountQta = Number(body.amount_qta);

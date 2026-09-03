@@ -23,6 +23,20 @@ function inFixedWindow(nowMs: number): boolean {
   return nowMs >= FIXED_WIN_START && nowMs < FIXED_WIN_END;
 }
 
+// ★ OWNER RULE (2026-09-03): 배당·매칭으로 쌓인 코인의 청구는 매주 금요일(KST)
+//   오전 10시~오후 4시에만 가능. UI에서 버튼 안내/비활성 표시에 사용한다.
+//   (실제 차단은 서버에서 강제. UI는 안내용.)
+const CLAIM_WIN_WEEKDAY = 5;   // 0=일 … 5=금
+const CLAIM_WIN_START_HR = 10; // 10시(포함)
+const CLAIM_WIN_END_HR   = 16; // 16시(미포함)
+function claimWindowOpen(nowMs: number): boolean {
+  // KST = UTC+9. UTC 시각을 9시간 밀어 KST 달력 요일/시각을 읽는다.
+  const kst = new Date(nowMs + 9 * 60 * 60 * 1000);
+  const weekday = kst.getUTCDay();
+  const hour = kst.getUTCHours();
+  return weekday === CLAIM_WIN_WEEKDAY && hour >= CLAIM_WIN_START_HR && hour < CLAIM_WIN_END_HR;
+}
+
 // ---------------------------------------------------------------------------
 // QTA ADVANCED EARN — STAKE. EARN. GROW.
 //
@@ -54,6 +68,11 @@ interface Position {
   product_id: string;
   principal_usd: number;
   principal_qta: number;
+  // ★ 실매출(실입금) 기준 원금 — 인정보너스 제외. 실시간 시세 연결.
+  real_principal_qta?: number;
+  real_principal_usd?: number;
+  principal_live_usd?: number;
+  qta_price?: number;
   qta_price_at_stake: number;
   daily_rate: number;
   term_days: number;
@@ -67,6 +86,9 @@ interface Position {
 
 interface PositionsSummary {
   totalPrincipalUsd: number;
+  totalRealPrincipalQta?: number;
+  totalRealPrincipalUsd?: number;
+  totalPrincipalLiveUsd?: number;
   totalDividendUsd: number;
   totalDividendQta: number;
 }
@@ -209,7 +231,8 @@ export default function EarnPage() {
       showToast('success', t('earn.claimed'), `+${formatAmount(res.data.credited_qta)} QTA`);
       await refreshAll();
     } catch (err: any) {
-      showToast('error', t('earn.claimFailed'), err.response?.data?.error || '');
+      // 서버가 사람이 읽을 수 있는 message(예: 청구창 마감)를 주면 우선 표시.
+      showToast('error', t('earn.claimFailed'), err.response?.data?.message || err.response?.data?.error || '');
     } finally { setBusy(false); }
   };
 
@@ -256,7 +279,7 @@ export default function EarnPage() {
       }
       setWithdrawOpen(true);
     } catch (err: any) {
-      showToast('error', t('earn.claimFailed'), err.response?.data?.error || '');
+      showToast('error', t('earn.claimFailed'), err.response?.data?.message || err.response?.data?.error || '');
     } finally { setBusy(false); }
   };
 
@@ -458,16 +481,15 @@ export default function EarnPage() {
 
           {/* 총 합산 진입금액 (Total combined entry) — sum of every separate stake on this account */}
           {(() => {
-            const totalPrincipalUsd = summary
-              ? Number(summary.totalPrincipalUsd || 0)
-              : positions.reduce((s, p) => s + (Number(p.principal_usd) || 0), 0);
-            const totalPrincipalQta = positions.reduce((s, p) => s + (Number(p.principal_qta) || 0), 0);
-            const totalDivUsd = summary
-              ? Number(summary.totalDividendUsd || 0)
-              : positions.reduce((s, p) => s + (Number(p.accrued_dividend_usd) || 0), 0);
-            const totalDivQta = summary
-              ? Number(summary.totalDividendQta || 0)
-              : positions.reduce((s, p) => s + (Number(p.accrued_dividend_qta) || 0), 0);
+            // ★ OWNER RULE (2026-09-03): 원금 표시는 "실매출(실입금) 기준 QTA 수량"이
+            //   주(主)이고, 그 USD 가치는 실시간 시세로 환산해 시세 따라 움직인다.
+            //   인정보너스(실입금 없는 회사 인정분)는 원금에서 제외한다.
+            const totalRealPrincipalQta = summary && summary.totalRealPrincipalQta != null
+              ? Number(summary.totalRealPrincipalQta || 0)
+              : positions.reduce((s, p) => s + (Number(p.real_principal_qta ?? p.principal_qta) || 0), 0);
+            const totalPrincipalLiveUsd = summary && summary.totalPrincipalLiveUsd != null
+              ? Number(summary.totalPrincipalLiveUsd || 0)
+              : positions.reduce((s, p) => s + (Number(p.principal_live_usd ?? p.principal_usd) || 0), 0);
             return (
               <div
                 className="rounded-2xl mb-3 p-4"
@@ -479,10 +501,10 @@ export default function EarnPage() {
                 <div className="flex items-end justify-between flex-wrap gap-2">
                   <div>
                     <div className="text-[22px] font-extrabold text-exchange-text tabular-nums leading-none">
-                      ${formatAmount(totalPrincipalUsd)}
+                      {formatAmount(totalRealPrincipalQta)} QTA
                     </div>
                     <div className="text-[11px] text-exchange-text-third tabular-nums mt-1">
-                      ≈ {formatAmount(totalPrincipalQta)} QTA
+                      ≈ ${formatAmount(totalPrincipalLiveUsd)} <span className="opacity-70">(실시간 시세)</span>
                     </div>
                   </div>
                   {/* ★ HIDDEN (owner request 2026-09-03): the combined-entry "Accrued
@@ -519,11 +541,12 @@ export default function EarnPage() {
                 </div>
                 <div className="flex items-center gap-2 mb-3">
                   <CoinIcon symbol="QTA" size={24} />
+                  {/* ★ 원금: 실매출(실입금) 기준 QTA 수량 + 실시간 시세 가치. 인정보너스 제외. */}
                   <span className="text-[14px] font-bold text-exchange-text tabular-nums">
-                    {formatAmount(p.principal_qta)} QTA
+                    {formatAmount(Number(p.real_principal_qta ?? p.principal_qta) || 0)} QTA
                   </span>
                   <span className="text-[10px] text-exchange-text-third tabular-nums">
-                    ≈ ${formatAmount(p.principal_usd)}
+                    ≈ ${formatAmount(Number(p.principal_live_usd ?? p.principal_usd) || 0)} <span className="opacity-70">(실시간)</span>
                   </span>
                 </div>
                 {/* Per-position RATE & PERIOD — each separate stake keeps its own rate/term */}
@@ -558,7 +581,14 @@ export default function EarnPage() {
                 </div>
                 <div className="flex gap-2">
                   <button
-                    onClick={() => handleClaim(p)}
+                    onClick={() => {
+                      // ★ 청구창(금 10~16시 KST)이 닫혀 있으면 서버 호출 전 안내.
+                      if (!claimWindowOpen(Date.now())) {
+                        showToast('error', t('earn.claimWindowTitle'), t('earn.claimWindowBody'));
+                        return;
+                      }
+                      handleClaim(p);
+                    }}
                     disabled={busy || p.accrued_dividend_qta <= 0}
                     className="flex-1 py-2.5 rounded-full border border-exchange-border text-exchange-text text-[13px] font-bold hover:border-exchange-buy/50 hover:text-exchange-buy transition-colors disabled:opacity-40"
                   >
@@ -581,6 +611,10 @@ export default function EarnPage() {
                     <AlertTriangle size={11} /> {t('earn.earlyExitWarn')}
                   </p>
                 )}
+                {/* ★ 청구창 안내: 금요일 10~16시(KST)만 배당·매칭 청구 가능. */}
+                <p className={`text-[10px] mt-2 flex items-center gap-1 ${claimWindowOpen(Date.now()) ? 'text-exchange-buy' : 'text-exchange-text-third'}`}>
+                  <AlertTriangle size={11} /> {t('earn.claimWindowNote')}
+                </p>
               </div>
             ))}
           </div>
