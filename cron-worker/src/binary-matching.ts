@@ -128,16 +128,33 @@ async function runMatchForUser(env: Env, userId: string, qtaPrice: number): Prom
   const reachedTarget = highestReachedTarget(weaker);
   if (reachedTarget <= paidTarget) return;           // no new target reached
 
-  const bonusUsd = reachBonusUsd(paidTarget, weaker);
-  if (!(bonusUsd > 0)) return;
-  const bonusQta = qtaPrice > 0 ? bonusUsd / qtaPrice : 0;
+  const bonusUsdRaw = reachBonusUsd(paidTarget, weaker);
+  if (!(bonusUsdRaw > 0)) return;
+
+  // ★ OWNER RULE (2026-09-04): TOTAL match bonus a member can EVER receive is
+  //   HARD-CAPPED at 2× their own 몸값(self_usd), in USD, regardless of downline
+  //   size / 소실적. e.g. self $1,000 → lifetime match ceiling $2,000 even if a
+  //   $500k 소실적 tier would pay $20,000. DAILY dividend is SEPARATE and NOT
+  //   limited by this cap. Tracked in USD (bonus_usd) since paid in QTA.
+  const matchCapUsd = selfUsd * DOWNLINE_CAP_MULTIPLE;   // 2× 몸값
+  const paidAgg = await env.DB.prepare(
+    `SELECT COALESCE(SUM(bonus_usd),0) AS paid FROM binary_match_bonuses WHERE user_id = ?`
+  ).bind(userId).first<any>();
+  const alreadyPaidUsd = Number(paidAgg?.paid || 0);
+  const remainingCapUsd = Math.max(0, matchCapUsd - alreadyPaidUsd);
+  const bonusUsd = Math.min(bonusUsdRaw, remainingCapUsd);
 
   // Advance matched_usd to the highest reached TARGET (guards against a racing tick).
+  // We advance the pointer even when the cap clamps the payout to 0.
   const upd = await env.DB.prepare(
     `UPDATE binary_volume SET matched_usd = ?, updated_at = datetime('now')
       WHERE user_id = ? AND matched_usd = ?`
   ).bind(reachedTarget, userId, paidTarget).run();
   if (!upd?.meta || upd.meta.changes === 0) return;
+
+  // Nothing left under the 2× cap — advance the tier pointer only, record no row.
+  if (!(bonusUsd > 0)) return;
+  const bonusQta = qtaPrice > 0 ? bonusUsd / qtaPrice : 0;
 
   // ★ OWNER RULE (2026-09-03): match bonus is NO LONGER credited to the wallet
   //   immediately. It accumulates as CLAIMABLE (claimed=0) together with the
@@ -220,35 +237,15 @@ async function rollUp(env: Env, memberId: string, usdValue: number, qtaPrice: nu
        ON CONFLICT(user_id) DO NOTHING`
     ).bind(parentId).run();
 
-    // Enforce the 2× cap as a HARD, PER-LEG ceiling (owner rule 2026-08-28,
-    // revised): EACH leg may hold up to 2 × self_usd INDEPENDENTLY — i.e. a
-    // parent with 몸값 $1,000 can carry $2,000 on the LEFT and $2,000 on the
-    // RIGHT (not $2,000 combined). Volume OVER the incoming leg's own remaining
-    // room is DROPPED (no parking, no later reclaim). The other leg's fill does
-    // NOT reduce this leg's room. Members are warned on the stake-entry UI.
-    const cur = await env.DB.prepare(
-      `SELECT left_usd, right_usd, self_usd FROM binary_volume WHERE user_id = ?`
-    ).bind(parentId).first<any>();
-    const left = Number(cur?.left_usd || 0);
-    const right = Number(cur?.right_usd || 0);
-    const selfUsd = Number(cur?.self_usd || 0);
-    const cap = selfUsd * DOWNLINE_CAP_MULTIPLE;      // per-leg ceiling
-    const legUsed = leg === 'R' ? right : left;        // this leg's current volume
-    const room = Math.max(0, cap - legUsed);           // room on THIS leg only
-    const add = Math.min(usdValue, room);
-    const dropped = usdValue - add; // over-leg-cap remainder -> DROPPED (not parked)
-
+    // ★ OWNER RULE (2026-09-04): leg VOLUME (left_usd / right_usd) is UNLIMITED —
+    //   every downline stake rolls up in FULL, no drop. The 2× self_usd cap is
+    //   NOT a volume ceiling; it is applied ONLY to the total MATCH BONUS a member
+    //   can ever receive (see runMatchForUser). So add the whole usdValue here.
     const liveCol = leg === 'R' ? 'right_usd' : 'left_usd';
-
-    if (add > 0) {
-      await env.DB.prepare(
-        `UPDATE binary_volume SET ${liveCol} = ${liveCol} + ?, updated_at = datetime('now') WHERE user_id = ?`
-      ).bind(add, parentId).run();
-      await runMatchForUser(env, parentId, qtaPrice);
-    }
-    if (dropped > 0) {
-      console.log(`[binary] over-cap DROPPED user=${parentId} leg=${leg} dropped=${dropped} cap=${cap}`);
-    }
+    await env.DB.prepare(
+      `UPDATE binary_volume SET ${liveCol} = ${liveCol} + ?, updated_at = datetime('now') WHERE user_id = ?`
+    ).bind(usdValue, parentId).run();
+    await runMatchForUser(env, parentId, qtaPrice);
     childId = parentId;
   }
 }

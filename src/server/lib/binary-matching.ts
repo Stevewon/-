@@ -40,7 +40,8 @@ export async function placeInBinaryTree(
     return { leg: null, capped: false, self_usd: 0, downline_usd: 0 };
   }
 
-  // Read the sponsor's own deposit total for the PER-LEG 2× cap warning flag.
+  // Read the sponsor's volume + own 몸값. Volume is UNLIMITED now; the 2× cap
+  // applies only to the TOTAL match bonus (owner rule 2026-09-04).
   let selfUsd = 0;
   let downlineUsd = 0;
   let left = 0;
@@ -55,12 +56,20 @@ export async function placeInBinaryTree(
     downlineUsd = left + right;
   } catch { /* volume table might be empty */ }
 
-  // Per-leg cap (owner rule 2026-08-28 revised): each leg ≤ 2 × self_usd.
-  // At signup the leg is not chosen yet, so we only flag "capped" when BOTH
-  // legs are already full — otherwise the sponsor can still place this member
-  // on whichever leg still has room.
-  const cap = selfUsd * DOWNLINE_CAP_MULTIPLE;
-  const capped = selfUsd > 0 && left >= cap && right >= cap;
+  // ★ OWNER RULE (2026-09-04): leg volume is NOT capped, so placement is never
+  //   blocked by volume. "capped" now means the sponsor has already received
+  //   their LIFETIME match ceiling (2× 몸값) — informational only; the sponsor
+  //   can still place downline (their volume keeps growing, they just won't earn
+  //   more match unless they raise their 몸값).
+  const matchCapUsd = selfUsd * DOWNLINE_CAP_MULTIPLE;
+  let paidMatchUsd = 0;
+  try {
+    const agg = await db.prepare(
+      `SELECT COALESCE(SUM(bonus_usd),0) AS paid FROM binary_match_bonuses WHERE user_id = ?`
+    ).bind(sponsorId).first();
+    paidMatchUsd = Number(agg?.paid || 0);
+  } catch { /* no bonuses yet */ }
+  const capped = selfUsd > 0 && paidMatchUsd >= matchCapUsd;
 
   // Attach to the sponsor but DO NOT assign a leg — the sponsor picks it later.
   try {
@@ -225,16 +234,38 @@ async function runMatchForUser(db: any, userId: string, qtaPriceUsd: number): Pr
   const reachedTarget = highestReachedTarget(weaker);
   if (reachedTarget <= paidTarget) return;           // no new target reached
 
-  const bonusUsd = reachBonusUsd(paidTarget, weaker);
-  if (!(bonusUsd > 0)) return;
-  const bonusQta = qtaPriceUsd > 0 ? bonusUsd / qtaPriceUsd : 0;
+  const bonusUsdRaw = reachBonusUsd(paidTarget, weaker);
+  if (!(bonusUsdRaw > 0)) return;
 
-  // Advance matched_usd to the highest reached TARGET (race-guarded).
+  // ★ OWNER RULE (2026-09-04): TOTAL match bonus a member can EVER receive is
+  //   HARD-CAPPED at 2× their own 몸값(self_usd), in USD, no matter how large the
+  //   downline / 소실적 is. e.g. self $1,000 → lifetime match ceiling $2,000, even
+  //   if a $500k 소실적 tier would otherwise pay $20,000. The DAILY dividend is
+  //   SEPARATE and NOT limited by this cap. We track the cap in USD (bonus_usd),
+  //   since bonuses are paid in QTA at a moving price.
+  const matchCapUsd = selfUsd * DOWNLINE_CAP_MULTIPLE;   // 2× 몸값
+  const paidAgg = await db.prepare(
+    `SELECT COALESCE(SUM(bonus_usd),0) AS paid FROM binary_match_bonuses WHERE user_id = ?`
+  ).bind(userId).first();
+  const alreadyPaidUsd = Number(paidAgg?.paid || 0);
+  const remainingCapUsd = Math.max(0, matchCapUsd - alreadyPaidUsd);
+  // Clamp this payout to the remaining room under the 2× 몸값 ceiling.
+  const bonusUsd = Math.min(bonusUsdRaw, remainingCapUsd);
+
+  // Advance matched_usd to the highest reached TARGET (race-guarded). We STILL
+  // advance the tier pointer even when the cap clamps the payout to 0, so the
+  // same tier is not re-evaluated forever; the member simply receives nothing
+  // more once the 2× ceiling is hit (unless they later raise their 몸값, which
+  // lifts matchCapUsd and lets a subsequent higher tier pay again).
   const upd = await db.prepare(
     `UPDATE binary_volume SET matched_usd = ?, updated_at = datetime('now')
       WHERE user_id = ? AND matched_usd = ?`
   ).bind(reachedTarget, userId, paidTarget).run();
   if (!upd?.meta || upd.meta.changes === 0) return;
+
+  // Nothing left to pay under the cap — advance the pointer only, record no row.
+  if (!(bonusUsd > 0)) return;
+  const bonusQta = qtaPriceUsd > 0 ? bonusUsd / qtaPriceUsd : 0;
 
   // ★ OWNER RULE (2026-09-03): match bonus is NO LONGER credited to the wallet
   //   immediately. It accumulates as CLAIMABLE (claimed=0) together with the
@@ -314,30 +345,16 @@ export async function rollStakeUpBinary(
        ON CONFLICT(user_id) DO NOTHING`
     ).bind(parentId).run();
 
-    // Enforce the 2× cap as a HARD, PER-LEG ceiling. Over-leg-cap volume is
-    // DROPPED (no parking / no reclaim).
-    const cur = await db.prepare(
-      `SELECT left_usd, right_usd, self_usd FROM binary_volume WHERE user_id = ?`
-    ).bind(parentId).first();
-    const left = Number(cur?.left_usd || 0);
-    const right = Number(cur?.right_usd || 0);
-    const selfUsd = Number(cur?.self_usd || 0);
-    const cap = selfUsd * DOWNLINE_CAP_MULTIPLE;
-    const legUsed = leg === 'R' ? right : left;
-    const room = Math.max(0, cap - legUsed);
-    const add = Math.min(usdValue, room);
-    const dropped = usdValue - add;
+    // ★ OWNER RULE (2026-09-04): the leg VOLUME (left_usd / right_usd) is
+    //   UNLIMITED — every downline stake rolls up in FULL, no drop. The 2×
+    //   self_usd cap is NOT a volume ceiling; it is applied ONLY to the total
+    //   MATCH BONUS the member can ever receive (see runMatchForUser). So here
+    //   we simply add the whole usdValue to the correct leg.
     const liveCol = leg === 'R' ? 'right_usd' : 'left_usd';
-
-    if (add > 0) {
-      await db.prepare(
-        `UPDATE binary_volume SET ${liveCol} = ${liveCol} + ?, updated_at = datetime('now') WHERE user_id = ?`
-      ).bind(add, parentId).run();
-      await runMatchForUser(db, parentId, qtaPriceUsd);
-    }
-    if (dropped > 0) {
-      console.log(`[binary] stake over-cap DROPPED user=${parentId} leg=${leg} dropped=${dropped} cap=${cap}`);
-    }
+    await db.prepare(
+      `UPDATE binary_volume SET ${liveCol} = ${liveCol} + ?, updated_at = datetime('now') WHERE user_id = ?`
+    ).bind(usdValue, parentId).run();
+    await runMatchForUser(db, parentId, qtaPriceUsd);
     childId = parentId;
   }
 }
