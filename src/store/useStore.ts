@@ -189,7 +189,20 @@ const useStore = create<ExchangeStore>((set, get) => ({
     }));
   },
 
-  updateOrderbook: (data) => set({ orderbook: data, isLoadingOrderbook: false }),
+  // ★ FIX (2026-09-05): the mm-bot re-arms the QTA book every tick by
+  //   cancelling ALL its quotes and re-posting them. For a brief moment the
+  //   book can come back empty, which made the order book FLICKER (rows vanish
+  //   then reappear). Ignore a fully-empty snapshot and KEEP the last non-empty
+  //   book so the ladder stays populated and only the numbers move in place.
+  updateOrderbook: (data) => set((state) => {
+    const bids = data?.bids || [];
+    const asks = data?.asks || [];
+    if (bids.length === 0 && asks.length === 0) {
+      // Empty refresh — keep the previous book, just clear the loading flag.
+      return { isLoadingOrderbook: false } as any;
+    }
+    return { orderbook: data, isLoadingOrderbook: false };
+  }),
 
   addTrades: (trades) => {
     set((state) => ({
