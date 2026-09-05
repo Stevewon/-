@@ -161,23 +161,33 @@ async function creditUplineRewards(
     const upline = current; // narrow for this iteration
 
     try {
+      // ★ OWNER RULE (2026-09-05): a referral reward reaches the upline's
+      //   spendable `available` ONLY if that upline has VERIFIED their email.
+      //   If NOT verified, the reward is parked in `locked` and released to
+      //   `available` the moment they verify (see verify-email). No QX (welcome
+      //   OR referral) is usable by anyone — self included — before verifying.
+      const uprow = await db.prepare(
+        `SELECT email_verified_at FROM users WHERE id = ?`
+      ).bind(upline.id).first<any>();
+      const uplineVerified = !!(uprow && uprow.email_verified_at);
+      const availDelta = uplineVerified ? reward : 0;
+      const initDelta = uplineVerified ? reward : 0;   // company-issued when spendable
+      const lockedDelta = uplineVerified ? 0 : reward; // parked until verify
+
       // Ensure this upline has a QX wallet row.
       const wallet = await db.prepare(
         `SELECT id, available FROM wallets WHERE user_id = ? AND coin_symbol = ?`
       ).bind(upline.id, REWARD_COIN).first<any>();
 
       if (wallet) {
-        // ★★★★★★★ Boss's permanent rule (2026-06-22):
-        // Referral rewards are COMPANY-ISSUED → bump `available_initial`
-        // by the same amount so the withdrawal endpoint can subtract it
-        // out of withdrawable balance. See migrations/0032.
         await db.batch([
           db.prepare(
             `UPDATE wallets
              SET available = available + ?,
-                 available_initial = COALESCE(available_initial, 0) + ?
+                 available_initial = COALESCE(available_initial, 0) + ?,
+                 locked = COALESCE(locked, 0) + ?
              WHERE id = ?`
-          ).bind(reward, reward, wallet.id),
+          ).bind(availDelta, initDelta, lockedDelta, wallet.id),
           db.prepare(
             `INSERT OR IGNORE INTO referrals
                (id, referrer_id, referred_id, referral_code, reward_qta,
@@ -189,8 +199,8 @@ async function creditUplineRewards(
         await db.batch([
           db.prepare(
             `INSERT INTO wallets (id, user_id, coin_symbol, available, locked, available_initial)
-             VALUES (?, ?, ?, ?, 0, ?)`
-          ).bind(uuid(), upline.id, REWARD_COIN, reward, reward),
+             VALUES (?, ?, ?, ?, ?, ?)`
+          ).bind(uuid(), upline.id, REWARD_COIN, availDelta, lockedDelta, initDelta),
           db.prepare(
             `INSERT OR IGNORE INTO referrals
                (id, referrer_id, referred_id, referral_code, reward_qta,
@@ -1754,23 +1764,25 @@ app.post('/verify-email', async (c) => {
         `SELECT id, available, locked FROM wallets
          WHERE user_id = ? AND coin_symbol = 'QX'`
       ).bind(row.user_id).first<any>();
+      // ★ OWNER RULE (2026-09-05): on FIRST verification, release the FULL
+      //   locked QX to `available`. `locked` now holds the welcome 100 AND any
+      //   referral rewards that were PARKED while this user was unverified
+      //   (see creditUplineRewards). If the account is brand-new (welcome not
+      //   in locked), grant the welcome now. All company-issued → available_initial
+      //   is bumped so it's tradable but not externally withdrawable.
       if (qx && qx.locked > 0) {
-        // Legacy account: unlock the pre-credited locked bonus.
-        const unlock = Math.min(qx.locked, REFERRED_WELCOME_QX);
+        // Release everything held in locked (welcome + parked referral QX).
+        const unlock = Number(qx.locked);
         bonusUnlocked = unlock;
-        // ★★★★★★★ Welcome bonus is COMPANY-ISSUED → bump available_initial
-        // so the user can trade it but cannot withdraw it externally.
         await c.env.DB.prepare(
           `UPDATE wallets
            SET available = available + ?,
-               locked = locked - ?,
+               locked = 0,
                available_initial = COALESCE(available_initial, 0) + ?
            WHERE id = ?`
-        ).bind(unlock, unlock, unlock, qx.id).run();
+        ).bind(unlock, unlock, qx.id).run();
       } else if (qx) {
-        // New account (0 QX at signup): GRANT the full welcome bonus now.
-        // Company-issued → available_initial is bumped so it is tradable but
-        // NOT externally withdrawable.
+        // New account with nothing locked: grant the full welcome bonus now.
         bonusUnlocked = REFERRED_WELCOME_QX;
         await c.env.DB.prepare(
           `UPDATE wallets
