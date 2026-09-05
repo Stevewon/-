@@ -357,6 +357,8 @@ const ja = {
   'wallet.estimatedBalance': '推定残高',
   'wallet.deposit': '入金',
   'wallet.withdraw': '出金',
+  'wallet.withdrawDisabledTitle': '出金停止中',
+  'wallet.withdrawDisabledBody': '出金は一時的に利用できません。しばらくしてから再度お試しください。',
   'wallet.assets': '資産',
   'wallet.coin': 'コイン',
   'wallet.availableBalance': '利用可能',

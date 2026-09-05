@@ -357,6 +357,8 @@ const ko = {
   'wallet.estimatedBalance': '\ucd1d \ubcf4\uc720\uc790\uc0b0',
   'wallet.deposit': '\uc785\uae08',
   'wallet.withdraw': '\ucd9c\uae08',
+  'wallet.withdrawDisabledTitle': '\ucd9c\uae08 \uc77c\uc2dc\uc911\uc9c0',
+  'wallet.withdrawDisabledBody': '\ucd9c\uae08\uc774 \uc77c\uc2dc\uc801\uc73c\ub85c \uc911\uc9c0\ub418\uc5c8\uc2b5\ub2c8\ub2e4. \ub098\uc911\uc5d0 \ub2e4\uc2dc \uc2dc\ub3c4\ud574 \uc8fc\uc138\uc694.',
   'wallet.assets': '\uc790\uc0b0 \ubaa9\ub85d',
   'wallet.coin': '\ucf54\uc778',
   'wallet.availableBalance': '\ubcf4\uc720\uc218\ub7c9',

@@ -357,6 +357,8 @@ const en = {
   'wallet.estimatedBalance': 'Estimated Balance',
   'wallet.deposit': 'Deposit',
   'wallet.withdraw': 'Withdraw',
+  'wallet.withdrawDisabledTitle': 'Withdrawals paused',
+  'wallet.withdrawDisabledBody': 'Withdrawals are temporarily unavailable. Please try again later.',
   'wallet.assets': 'Assets',
   'wallet.coin': 'Coin',
   'wallet.availableBalance': 'Available',

@@ -341,6 +341,8 @@ const zh = {
   'wallet.estimatedBalance': '预估余额',
   'wallet.deposit': '充值',
   'wallet.withdraw': '提现',
+  'wallet.withdrawDisabledTitle': '提现暂停',
+  'wallet.withdrawDisabledBody': '提现暂时不可用，请稍后再试。',
   'wallet.assets': '资产',
   'wallet.coin': '币种',
   'wallet.availableBalance': '可用',
