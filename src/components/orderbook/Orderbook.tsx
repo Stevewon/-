@@ -124,7 +124,7 @@ export default function Orderbook({ onPriceClick, mobile }: Props) {
                   style={{ width: `${Math.min(pct, 100)}%` }}
                 />
                 <span className="w-[46%] text-exchange-sell relative z-10 tabular-nums whitespace-nowrap overflow-hidden">{formatPrice(ask.price)}</span>
-                <span className="w-[30%] text-right text-exchange-sell relative z-10 tabular-nums whitespace-nowrap overflow-hidden">{formatAmountWhole(amt)}</span>
+                <span className="w-[30%] text-right text-exchange-text relative z-10 tabular-nums whitespace-nowrap overflow-hidden">{formatAmountWhole(amt)}</span>
                 <span className="w-[24%] text-right text-exchange-sell/70 relative z-10 tabular-nums whitespace-nowrap overflow-hidden">{formatAmountWhole(askRunning)}</span>
               </div>
             );
@@ -163,7 +163,7 @@ export default function Orderbook({ onPriceClick, mobile }: Props) {
                   style={{ width: `${Math.min(pct, 100)}%` }}
                 />
                 <span className="w-[46%] text-exchange-buy relative z-10 tabular-nums whitespace-nowrap overflow-hidden">{formatPrice(bid.price)}</span>
-                <span className="w-[30%] text-right text-exchange-buy relative z-10 tabular-nums whitespace-nowrap overflow-hidden">{formatAmountWhole(amt)}</span>
+                <span className="w-[30%] text-right text-exchange-text relative z-10 tabular-nums whitespace-nowrap overflow-hidden">{formatAmountWhole(amt)}</span>
                 <span className="w-[24%] text-right text-exchange-buy/70 relative z-10 tabular-nums whitespace-nowrap overflow-hidden">{formatAmountWhole(bidRunning)}</span>
               </div>
             );
