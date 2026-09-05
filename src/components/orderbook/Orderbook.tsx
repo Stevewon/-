@@ -14,13 +14,61 @@ export default function Orderbook({ onPriceClick, mobile }: Props) {
   const [flashPrices, setFlashPrices] = useState<Record<string, 'buy' | 'sell'>>({});
   const prevPricesRef = useRef<Set<string>>(new Set());
 
-  // ★ FIX (2026-09-05): the old ~900ms "wobble" animation re-rendered the whole
-  //   book every tick, which made the price digits look DOUBLED/GHOSTED on
-  //   mobile (sub-pixel text redraw). Removed entirely — amounts are shown as
-  //   the real backend values, static between server updates.
-  const wob = (_side: 'a' | 'b', _price: number, amount: number) => amount;
+  // ★ OWNER RULE (2026-09-05): the book must look ALIVE — rows stay fully
+  //   populated (mobile 8 / desktop 14) but the AMOUNTS jitter in place and the
+  //   changed rows flash, exactly like a real exchange feed. This is purely
+  //   cosmetic (does not touch the real backend amounts used for matching).
+  //
+  //   IMPORTANT: the old "ghost/double text" bug was caused by
+  //   `transition-all duration-500` on the number spans, NOT by the wobble.
+  //   So we keep the wobble but NEVER add a text transition.
+  const [liveTick, setLiveTick] = useState(0);
+  const wobbleRef = useRef<Record<string, number>>({});
 
-  // Track price changes for flash effect
+  // Drive the animation ~800ms — fast enough to feel live, slow enough to read.
+  useEffect(() => {
+    const id = setInterval(() => setLiveTick(t => (t + 1) % 1_000_000), 800);
+    return () => clearInterval(id);
+  }, []);
+
+  // Recompute the per-level cosmetic multiplier every tick. Each level does a
+  // small mean-reverting random walk around 1.0 so the amounts breathe instead
+  // of jumping around wildly.
+  useEffect(() => {
+    const next: Record<string, number> = {};
+    const flashes: Record<string, 'buy' | 'sell'> = {};
+    const roll = (key: string, side: 'buy' | 'sell') => {
+      const prev = wobbleRef.current[key] ?? 1;
+      // ~45% of levels move each tick; the rest hold steady.
+      let factor = prev;
+      if (Math.random() < 0.45) {
+        const drift = (Math.random() - 0.5) * 0.24; // ±12%
+        const meanRevert = (1 - prev) * 0.35;       // pull back toward 1.0
+        factor = Math.min(1.6, Math.max(0.55, prev + drift + meanRevert));
+        flashes[key] = side;
+      }
+      next[key] = factor;
+    };
+    orderbook.asks.forEach(a => roll(`ask-${a.price}`, 'sell'));
+    orderbook.bids.forEach(b => roll(`bid-${b.price}`, 'buy'));
+    wobbleRef.current = next;
+
+    if (Object.keys(flashes).length > 0) {
+      setFlashPrices(flashes);
+      const timer = setTimeout(() => setFlashPrices({}), 380);
+      return () => clearTimeout(timer);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveTick]);
+
+  // Cosmetic amount = real backend amount × per-level wobble factor.
+  const wob = (side: 'a' | 'b', price: number, amount: number) => {
+    const key = `${side === 'a' ? 'ask' : 'bid'}-${price}`;
+    const factor = wobbleRef.current[key] ?? 1;
+    return amount * factor;
+  };
+
+  // Flash brand-new price levels the instant a fresh server snapshot arrives too.
   useEffect(() => {
     const newPrices = new Set<string>();
     const flashes: Record<string, 'buy' | 'sell'> = {};
@@ -42,7 +90,7 @@ export default function Orderbook({ onPriceClick, mobile }: Props) {
     });
 
     if (Object.keys(flashes).length > 0 && Object.keys(flashes).length < 10) {
-      setFlashPrices(flashes);
+      setFlashPrices(prev => ({ ...prev, ...flashes }));
       const timer = setTimeout(() => setFlashPrices({}), 400);
       prevPricesRef.current = newPrices;
       return () => clearTimeout(timer);
@@ -75,10 +123,12 @@ export default function Orderbook({ onPriceClick, mobile }: Props) {
   const prevPrice = recentTrades[1]?.price || lastPrice;
   const priceUp = lastPrice >= prevPrice;
 
-  // Show 8 asks + 8 bids (Bybit-style). Asks are reversed so the BEST (lowest)
-  // ask sits just above the spread line.
-  const asks = [...orderbook.asks].reverse().slice(-8);
-  const bids = orderbook.bids.slice(0, 8);
+  // ★ OWNER RULE (2026-09-05): MOBILE shows 8 asks + 8 bids, DESKTOP shows 14
+  //   each. Asks are reversed so the BEST (lowest) ask sits just above the
+  //   spread line.
+  const ROWS = mobile ? 8 : 14;
+  const asks = [...orderbook.asks].reverse().slice(-ROWS);
+  const bids = orderbook.bids.slice(0, ROWS);
 
   let askRunning = 0;
   let bidRunning = 0;
