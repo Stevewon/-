@@ -21,11 +21,12 @@ import {
 
 type Tab = 'assets' | 'deposits' | 'withdrawals';
 
-// ★ OWNER RULE (2026-09-05): ALL wallet Withdraw buttons are DISABLED until the
-//   owner says otherwise. Every Withdraw entry point routes through
-//   openWithdraw(), so this single gate blocks the top button AND every per-coin
-//   row button. Flip to false to re-enable withdrawals.
-const WITHDRAWALS_DISABLED = true;
+// ★ OWNER RULE (2026-09-05): ONLY the QTA Withdraw button is disabled until the
+//   owner says otherwise. All other coins (QX, USDT, ...) withdraw normally.
+//   Add/remove symbols here to change which coins are blocked.
+const WITHDRAW_DISABLED_COINS = ['QTA'];
+const isWithdrawDisabled = (coin?: string) =>
+  !!coin && WITHDRAW_DISABLED_COINS.includes(coin.toUpperCase());
 
 export default function WalletPage() {
   const { t } = useI18n();
@@ -130,8 +131,8 @@ export default function WalletPage() {
     setDepositOpen(true);
   };
   const openWithdraw = (coin: string = 'USDT') => {
-    // ★ Withdrawals disabled by owner (2026-09-05) — block the modal from opening.
-    if (WITHDRAWALS_DISABLED) {
+    // ★ Only blocked coins (QTA) are stopped; everything else opens normally.
+    if (isWithdrawDisabled(coin)) {
       showToast('error', t('wallet.withdrawDisabledTitle'), t('wallet.withdrawDisabledBody'));
       return;
     }
@@ -312,9 +313,7 @@ export default function WalletPage() {
             </button>
             <button
               onClick={() => openWithdraw()}
-              className={`inline-flex items-center bg-exchange-sell/10 text-exchange-sell transition-colors font-medium ${
-                WITHDRAWALS_DISABLED ? 'opacity-50 cursor-not-allowed' : 'hover:bg-exchange-sell/20'
-              }`}
+              className="inline-flex items-center bg-exchange-sell/10 text-exchange-sell hover:bg-exchange-sell/20 transition-colors font-medium"
               style={{ gap: '6px', padding: '10px 16px', borderRadius: '10px', fontSize: '14px' }}
             >
               <ArrowUpRight size={16} /> {t('wallet.withdraw')}
@@ -585,7 +584,7 @@ export default function WalletPage() {
                           </button>
                           <button
                             onClick={() => openWithdraw(w.coin_symbol)}
-                            disabled={w.available <= 0 || WITHDRAWALS_DISABLED}
+                            disabled={w.available <= 0 || isWithdrawDisabled(w.coin_symbol)}
                             className="rounded bg-exchange-sell/10 text-exchange-sell hover:bg-exchange-sell/20 disabled:opacity-30 disabled:cursor-not-allowed font-medium"
                             style={{ padding: '4px 8px', fontSize: '11px' }}
                           >
@@ -649,7 +648,7 @@ export default function WalletPage() {
                         </button>
                         <button
                           onClick={() => openWithdraw(w.coin_symbol)}
-                          disabled={w.available <= 0 || WITHDRAWALS_DISABLED}
+                          disabled={w.available <= 0 || isWithdrawDisabled(w.coin_symbol)}
                           className="flex-1 text-[11px] py-1.5 rounded bg-exchange-sell/10 text-exchange-sell font-medium disabled:opacity-30 disabled:cursor-not-allowed"
                         >
                           {t('wallet.withdraw')}
