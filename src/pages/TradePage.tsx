@@ -321,7 +321,7 @@ export default function TradePage() {
               </button>
             ))}
           </div>
-          <div className="max-h-40 overflow-y-auto">
+          <div className="min-h-[10rem] max-h-72 overflow-y-auto">
             {bottomTab === 'orders' ? <OpenOrders symbol={symbol} /> : <RecentTrades />}
           </div>
         </div>

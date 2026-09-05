@@ -104,8 +104,10 @@ export default function Orderbook({ onPriceClick, mobile }: Props) {
   const prevPrice = recentTrades[1]?.price || lastPrice;
   const priceUp = lastPrice >= prevPrice;
 
-  const asks = [...orderbook.asks].reverse().slice(-14);
-  const bids = orderbook.bids.slice(0, 14);
+  // Show 8 asks + 8 bids (Bybit-style). Asks are reversed so the BEST (lowest)
+  // ask sits just above the spread line.
+  const asks = [...orderbook.asks].reverse().slice(-8);
+  const bids = orderbook.bids.slice(0, 8);
 
   let askRunning = 0;
   let bidRunning = 0;
@@ -147,12 +149,12 @@ export default function Orderbook({ onPriceClick, mobile }: Props) {
                 onClick={() => onPriceClick?.(ask.price)}
               >
                 <div
-                  className="absolute right-0 top-0 bottom-0 bg-exchange-sell/8 transition-all duration-500"
+                  className="absolute right-0 top-0 bottom-0 bg-exchange-sell/10"
                   style={{ width: `${Math.min(pct, 100)}%` }}
                 />
                 <span className="w-[35%] text-exchange-sell relative z-10 tabular-nums">{formatPrice(ask.price)}</span>
-                <span className="w-[30%] text-right relative z-10 tabular-nums transition-all duration-500">{formatAmountWhole(amt)}</span>
-                <span className="w-[35%] text-right text-exchange-text-secondary relative z-10 tabular-nums transition-all duration-500">{formatAmountWhole(askRunning)}</span>
+                <span className="w-[30%] text-right relative z-10 tabular-nums text-exchange-text">{formatAmountWhole(amt)}</span>
+                <span className="w-[35%] text-right text-exchange-text-secondary relative z-10 tabular-nums">{formatAmountWhole(askRunning)}</span>
               </div>
             );
           })
@@ -186,12 +188,12 @@ export default function Orderbook({ onPriceClick, mobile }: Props) {
                 onClick={() => onPriceClick?.(bid.price)}
               >
                 <div
-                  className="absolute right-0 top-0 bottom-0 bg-exchange-buy/8 transition-all duration-500"
+                  className="absolute right-0 top-0 bottom-0 bg-exchange-buy/10"
                   style={{ width: `${Math.min(pct, 100)}%` }}
                 />
                 <span className="w-[35%] text-exchange-buy relative z-10 tabular-nums">{formatPrice(bid.price)}</span>
-                <span className="w-[30%] text-right relative z-10 tabular-nums transition-all duration-500">{formatAmountWhole(amt)}</span>
-                <span className="w-[35%] text-right text-exchange-text-secondary relative z-10 tabular-nums transition-all duration-500">{formatAmountWhole(bidRunning)}</span>
+                <span className="w-[30%] text-right relative z-10 tabular-nums text-exchange-text">{formatAmountWhole(amt)}</span>
+                <span className="w-[35%] text-right text-exchange-text-secondary relative z-10 tabular-nums">{formatAmountWhole(bidRunning)}</span>
               </div>
             );
           })
