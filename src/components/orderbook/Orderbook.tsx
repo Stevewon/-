@@ -94,9 +94,9 @@ export default function Orderbook({ onPriceClick, mobile }: Props) {
     <div className={`flex flex-col h-full ${bodyFont} font-mono`}>
       {/* Header */}
       <div className={`ob-head${mb} border-b border-exchange-border text-exchange-text-third ${headFont}`}>
-        <span className="w-[35%]">{t('trade.price')}</span>
+        <span className="w-[46%]">{t('trade.price')}</span>
         <span className="w-[30%] text-right">{t('trade.amount')}</span>
-        <span className="w-[35%] text-right">{t('trade.total')}</span>
+        <span className="w-[24%] text-right">{t('trade.total')}</span>
       </div>
 
       {/* Asks (sells) — fixed tight rows, no stretch (Bybit density) */}
@@ -123,9 +123,9 @@ export default function Orderbook({ onPriceClick, mobile }: Props) {
                   className="absolute right-0 top-0 bottom-0 bg-exchange-sell/10"
                   style={{ width: `${Math.min(pct, 100)}%` }}
                 />
-                <span className="w-[35%] text-exchange-sell relative z-10 tabular-nums">{formatPrice(ask.price)}</span>
-                <span className="w-[30%] text-right relative z-10 tabular-nums text-exchange-text">{formatAmountWhole(amt)}</span>
-                <span className="w-[35%] text-right text-exchange-text-secondary relative z-10 tabular-nums">{formatAmountWhole(askRunning)}</span>
+                <span className="w-[46%] text-exchange-sell relative z-10 tabular-nums whitespace-nowrap overflow-hidden">{formatPrice(ask.price)}</span>
+                <span className="w-[30%] text-right text-exchange-sell relative z-10 tabular-nums whitespace-nowrap overflow-hidden">{formatAmountWhole(amt)}</span>
+                <span className="w-[24%] text-right text-exchange-sell/70 relative z-10 tabular-nums whitespace-nowrap overflow-hidden">{formatAmountWhole(askRunning)}</span>
               </div>
             );
           })
@@ -162,9 +162,9 @@ export default function Orderbook({ onPriceClick, mobile }: Props) {
                   className="absolute right-0 top-0 bottom-0 bg-exchange-buy/10"
                   style={{ width: `${Math.min(pct, 100)}%` }}
                 />
-                <span className="w-[35%] text-exchange-buy relative z-10 tabular-nums">{formatPrice(bid.price)}</span>
-                <span className="w-[30%] text-right relative z-10 tabular-nums text-exchange-text">{formatAmountWhole(amt)}</span>
-                <span className="w-[35%] text-right text-exchange-text-secondary relative z-10 tabular-nums">{formatAmountWhole(bidRunning)}</span>
+                <span className="w-[46%] text-exchange-buy relative z-10 tabular-nums whitespace-nowrap overflow-hidden">{formatPrice(bid.price)}</span>
+                <span className="w-[30%] text-right text-exchange-buy relative z-10 tabular-nums whitespace-nowrap overflow-hidden">{formatAmountWhole(amt)}</span>
+                <span className="w-[24%] text-right text-exchange-buy/70 relative z-10 tabular-nums whitespace-nowrap overflow-hidden">{formatAmountWhole(bidRunning)}</span>
               </div>
             );
           })
