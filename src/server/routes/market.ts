@@ -6,8 +6,6 @@ import {
   fetchExternalTicker,
   fetchExternalTickersBatch,
 } from '../lib/market-data';
-import { policyFromCoinRow, nextPolicyPrice } from '../lib/price-policy';
-
 const app = new Hono<AppEnv>();
 
 // Get coins
@@ -168,16 +166,19 @@ app.get('/tickers', async (c) => {
     // Quantarium asset, stablecoin, or external provider miss → our own data.
     // QuantaEX is USD-denominated; USDT and USDC both peg to ~$1 so the
     // base coin's USD price applies directly without conversion.
-    let price = closeByMarket.get(m.id) ?? (coin?.price_usd ?? 0);
-
-    // Apply OUR-COIN price policy (peg / target-drift / managed / jump) so the
-    // REST snapshot matches what the SSE stream is steering toward.
-    if (coin && isQuantariumAsset(m.base_coin)) {
-      const policy = policyFromCoinRow(coin);
-      if (policy.mode !== 'market') {
-        price = nextPolicyPrice(policy, price || coin.price_usd || 0, price || coin.price_usd || 0);
-      }
-    }
+    //
+    // ★ FIX (2026-09-05): for OUR coins (QTA/QX/QKEY) the header ticker MUST
+    //   match the actual last traded price (order-book centre / recent trades),
+    //   which is exactly what `coins.price_usd` is kept at by matchOrder. The
+    //   old code re-ran nextPolicyPrice() here on every /tickers call, which
+    //   pulled the value back toward price_center each request and produced a
+    //   header price (e.g. 0.004373) that disagreed with the order book's last
+    //   price (e.g. 0.004862). We now use the stored price_usd directly so the
+    //   header and the order book always show the SAME number. (The managed
+    //   random-walk lives in the mm-bot tick, which already updates price_usd.)
+    const price = (coin && isQuantariumAsset(m.base_coin))
+      ? (coin.price_usd ?? closeByMarket.get(m.id) ?? 0)
+      : (closeByMarket.get(m.id) ?? coin?.price_usd ?? 0);
 
     tickers[sym] = {
       last: price,

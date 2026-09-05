@@ -2295,16 +2295,24 @@ app.get('/api/stream/ticker', async (c) => {
   // the coins table; we reload the policy every ~6 ticks so changes made in the
   // admin panel take effect within seconds without restarting the stream.
   const coinPolicies = new Map<string, CoinPricePolicy>();
+  // ★ FIX (2026-09-05): for OUR coins the SSE header price MUST equal the actual
+  //   last traded price (what the mm-bot writes into coins.price_usd and what
+  //   the order book / recent trades show). We cache that real price here and
+  //   use it verbatim in buildTickers() instead of running a SEPARATE policy
+  //   random-walk that drifted the header away from the order book.
+  const coinRealPrice = new Map<string, number>();
   const refreshCoinPolicies = async () => {
     try {
       const { results } = await c.env.DB.prepare(
-        `SELECT symbol, price_mode, price_target, price_center, price_band_pct,
+        `SELECT symbol, price_usd, price_mode, price_target, price_center, price_band_pct,
                 price_bias, price_drift_from, price_drift_start, price_drift_end
            FROM coins WHERE is_active = 1`
       ).all();
       for (const row of (results || []) as any[]) {
         if (isQuantariumAsset(row.symbol)) {
           coinPolicies.set(String(row.symbol).toUpperCase(), policyFromCoinRow(row));
+          const p = Number((row as any).price_usd);
+          if (p > 0) coinRealPrice.set(String(row.symbol).toUpperCase(), p);
         }
       }
     } catch { /* columns may not exist yet on a cold DB — leave empty (market mode) */ }
@@ -2328,12 +2336,24 @@ app.get('/api/stream/ticker', async (c) => {
           };
           continue;
         }
-        // Our own coin (or provider miss) → internal price state, steered by
-        // the coin's price policy (peg / target-drift / managed / jump).
+        // Our own coin (or provider miss) → internal price state.
         const s = priceState[key];
         const prev = s.price;
         tickPrice(key); // advances the free random-walk proposal + volume/high/low
-        if (policy && policy.mode !== 'market') {
+        // ★ FIX (2026-09-05): if we have the REAL last price from the DB
+        //   (mm-bot-driven), PIN the header to it so it matches the order book
+        //   exactly. Only fall back to the old policy random-walk when no real
+        //   price is available (cold DB / non-managed coin).
+        const realPrice = isQuantariumAsset(symbol)
+          ? coinRealPrice.get(symbol.toUpperCase())
+          : undefined;
+        if (realPrice && realPrice > 0) {
+          s.price = realPrice;
+          if (s.price > s.high) s.high = s.price;
+          if (s.price < s.low) s.low = s.price;
+          s.change24h = prev > 0 ? ((s.price - prev) / prev) * 100 + s.change24h * 0.9 : s.change24h;
+          s.change24h = Math.max(-30, Math.min(30, s.change24h));
+        } else if (policy && policy.mode !== 'market') {
           const steered = nextPolicyPrice(policy, prev, s.price);
           s.price = steered;
           if (s.price > s.high) s.high = s.price;
