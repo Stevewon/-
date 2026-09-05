@@ -86,6 +86,12 @@ export default function CandleChart({ symbol }: Props) {
         timeVisible: true,
         secondsVisible: false,
         tickMarkFormatter: makeTickMarkFormatter('1h'),
+        // ★ Bybit-style THICK candles: widen the per-bar spacing so bodies are
+        //   fat rectangles instead of thin needles. minBarSpacing stops the
+        //   candles collapsing back to hairlines when many bars are loaded.
+        barSpacing: 12,
+        minBarSpacing: 8,
+        rightOffset: 6,
       },
       handleScroll: { vertTouchDrag: false },
     });
@@ -232,7 +238,12 @@ export default function CandleChart({ symbol }: Props) {
 
       candleSeriesRef.current?.setData(candles);
       volumeSeriesRef.current?.setData(volumes);
-      chartInstance.current?.timeScale().fitContent();
+      // ★ Do NOT fitContent() — it squeezes ALL bars into view, making candles
+      //   hair-thin. Instead keep the fixed barSpacing (fat bodies) and scroll
+      //   to the most recent candles so the latest price is in view.
+      const ts = chartInstance.current?.timeScale();
+      ts?.applyOptions({ barSpacing: 12, rightOffset: 6 });
+      ts?.scrollToRealTime();
     } catch (e) {
       console.error('Failed to load candles:', e);
     }
