@@ -22,7 +22,7 @@ export default function TradePage() {
   const { t } = useI18n();
   const {
     tickers, prevTickers, setCurrentMarket,
-    fetchOrderbook, fetchRecentTrades,
+    fetchTickers, fetchOrderbook, fetchRecentTrades,
     updateAllTickers, updateOrderbook, addTrades, setRecentTrades,
     isLoadingOrderbook, isLoadingTrades,
   } = useStore();
@@ -53,7 +53,11 @@ export default function TradePage() {
     setCurrentMarket(symbol);
     subscribeToMarket(symbol);
 
-    // Initial data fetch
+    // Initial data fetch. Also pull the ticker snapshot so the header price
+    // is populated IMMEDIATELY on entry (esp. when navigating straight to a
+    // trade screen without the markets list having loaded tickers), instead
+    // of showing 0 until the first SSE tick.
+    fetchTickers();
     fetchOrderbook(symbol);
     fetchRecentTrades(symbol);
 

@@ -23,6 +23,7 @@ interface ExchangeStore {
   isLoadingMarkets: boolean;
   setCurrentMarket: (symbol: string) => void;
   fetchMarkets: () => Promise<void>;
+  fetchTickers: () => Promise<void>;
   fetchOrderbook: (symbol: string) => Promise<void>;
   fetchRecentTrades: (symbol: string) => Promise<void>;
   updateTicker: (symbol: string, data: Ticker) => void;
@@ -136,6 +137,20 @@ const useStore = create<ExchangeStore>((set, get) => ({
     setTimeout(() => {
       if (!marketsLoaded) set({ isLoadingMarkets: false });
     }, 8000);
+  },
+
+  // Fetch the full ticker snapshot on demand and MERGE it into the store.
+  // Used by TradePage on entry so a real-time price is shown immediately even
+  // when the user navigates straight to /trade/:symbol without visiting the
+  // markets list first (previously tickers was only populated by fetchMarkets,
+  // so a cold trade screen showed 0 until the first SSE tick arrived).
+  fetchTickers: async () => {
+    try {
+      const res = await api.get('/market/tickers');
+      set((state) => ({ tickers: { ...state.tickers, ...res.data } }));
+    } catch (e) {
+      console.error('fetchTickers:', e);
+    }
   },
 
   fetchOrderbook: async (symbol) => {

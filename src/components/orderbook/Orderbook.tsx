@@ -9,7 +9,7 @@ interface Props {
 }
 
 export default function Orderbook({ onPriceClick, mobile }: Props) {
-  const { orderbook, recentTrades } = useStore();
+  const { orderbook, recentTrades, tickers, currentMarket } = useStore();
   const { t } = useI18n();
   const [flashPrices, setFlashPrices] = useState<Record<string, 'buy' | 'sell'>>({});
   const prevPricesRef = useRef<Set<string>>(new Set());
@@ -92,7 +92,15 @@ export default function Orderbook({ onPriceClick, mobile }: Props) {
     return Math.max(bidTotals[bidTotals.length - 1] || 0, askTotals[askTotals.length - 1] || 0);
   }, [orderbook]);
 
-  const lastPrice = recentTrades[0]?.price || 0;
+  // Center price = last trade price, with a fallback to the live ticker last
+  // price (and then the book mid) so a real-time price ALWAYS shows even when
+  // this market has no recent trades yet (fresh / thin book).
+  const tickerLast = tickers[currentMarket]?.last || 0;
+  const bookMid =
+    orderbook.asks[0]?.price && orderbook.bids[0]?.price
+      ? (orderbook.asks[0].price + orderbook.bids[0].price) / 2
+      : 0;
+  const lastPrice = recentTrades[0]?.price || tickerLast || bookMid || 0;
   const prevPrice = recentTrades[1]?.price || lastPrice;
   const priceUp = lastPrice >= prevPrice;
 
