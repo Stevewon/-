@@ -1362,13 +1362,17 @@ app.post('/qta-mm-tick', async (c) => {
   // ============================================================================
   // ---- Step 1: the COMPANY (mm-bot-b) buys member sells in REAL TIME --------
   // ----------------------------------------------------------------------------
-  // Owner rule (2026-09-05): whenever a member is selling QTA at/below the live
-  // price, the company buys it — AT THE MEMBER'S OWN ASK PRICE (so they get
-  // exactly what they asked) — but only up to KRW 50,000/day PER MEMBER
-  // (≈34.48 USDT @1,450). Beyond that per-member cap the ask just rests until
-  // the member cancels it. Never buy below the 24h floor.
+  // Owner rule (2026-09-05, REVISED): whenever a member is selling QTA at/below
+  // the live price, the company buys it — AT THE MEMBER'S OWN ASK PRICE (so they
+  // get exactly what they asked) — but only up to KRW 50,000/day PER MEMBER
+  // (≈34.48 USDT @1,450). Never buy below the 24h floor.
+  //   ★ POLICY CHANGE (2026-09-05): once a member's daily company-buy hits the
+  //     50,000-KRW cap, their LEFTOVER QTA sell orders are AUTO-CANCELLED —
+  //     removed from the ask book and the locked QTA refunded to `available`.
+  //     (Previously the leftover just rested until the member cancelled it.)
   // We walk each seller's resting asks cheapest-first, per seller, tracking how
-  // much the company has already bought FROM THAT seller today.
+  // much the company has already bought FROM THAT seller today, then sweep-cancel
+  // any remaining asks of members who reached the cap.
   // ============================================================================
   {
     // All resting member asks at/under the live mid (exclude the bots), with
@@ -1400,11 +1404,16 @@ app.post('/qta-mm-tick', async (c) => {
       const askPrice = Number(ask.price);
       const askQty = Number(ask.remaining);
       if (!(askQty > 0) || !(askPrice > 0)) continue;
-      // 🛡️ Never buy below the 24h floor.
-      if (floor > 0 && askPrice < floor - 1e-12) continue;
 
+      // Load this seller's running company-buy total FIRST (even for sub-floor
+      // asks) so they are tracked in spentBySeller and considered by the
+      // auto-cancel sweep below.
       const sellerId = String(ask.user_id);
       const already = await companyBoughtFrom(sellerId);
+
+      // 🛡️ Never buy below the 24h floor (but the seller is now tracked).
+      if (floor > 0 && askPrice < floor - 1e-12) continue;
+
       const roomUsdt = MM_MEMBER_BUY_BUDGET_USDT - already;
       if (roomUsdt < minTotal) continue; // this member is out of daily room
 
@@ -1426,6 +1435,35 @@ app.post('/qta-mm-tick', async (c) => {
         // this same tick if they have multiple asks.
         const spentNow = (m.trades || []).reduce((s: number, t: any) => s + Number(t.total || 0), 0);
         spentBySeller.set(sellerId, already + spentNow);
+      }
+    }
+
+    // ★ AUTO-CANCEL leftover (owner 2026-09-05): for every member who has now
+    //   reached the daily 50,000-KRW company-buy cap, cancel ALL their remaining
+    //   open/partial QTA sell orders and refund the locked QTA to `available`.
+    //   "reached cap" = remaining daily room is below the market minimum, i.e.
+    //   the company can no longer buy a valid lot from them today.
+    for (const [sellerId, spent] of spentBySeller.entries()) {
+      const room = MM_MEMBER_BUY_BUDGET_USDT - spent;
+      if (room >= minTotal) continue; // still has room; leave their asks resting
+      const leftovers = await DB.prepare(
+        `SELECT id, remaining FROM orders
+           WHERE market_id=? AND user_id=? AND side='sell'
+             AND status IN ('open','partial')`
+      ).bind(market.id, sellerId).all<any>().catch(() => ({ results: [] as any[] }));
+      for (const o of (leftovers.results || [])) {
+        const rem = Number(o.remaining || 0);
+        const cancelled = await DB.prepare(
+          `UPDATE orders SET status='cancelled', updated_at=datetime('now')
+             WHERE id=? AND status IN ('open','partial')`
+        ).bind(o.id).run();
+        // Only refund if THIS call actually flipped it to cancelled (guards
+        // against double-refund if the order changed concurrently).
+        if (cancelled?.meta && cancelled.meta.changes > 0 && rem > 0) {
+          await DB.prepare(
+            "UPDATE wallets SET available=available+?, locked=MAX(0,locked-?) WHERE user_id=? AND coin_symbol='QTA'"
+          ).bind(rem, rem, sellerId).run();
+        }
       }
     }
   }
