@@ -1329,6 +1329,19 @@ export default {
       return;
     }
 
+    // ★ 1-minute tick (owner rule 2026-09-05): run ONLY the QTA market-making
+    //   tick so member buys/sells are filled within 1..59s of placement. All
+    //   the heavier jobs (deposits, withdrawals, binary, migrations, alerts)
+    //   stay on the */5 tick below to avoid per-minute CPU load. mm-tick is
+    //   idempotent (it re-arms the book each run), so running it every minute
+    //   AND on the /5 tick is safe.
+    if (cron === '* * * * *') {
+      ctx.waitUntil(
+        qtaMmTick(env).catch((e) => console.error('[cron] qta mm tick (1m) failed:', e))
+      );
+      return;
+    }
+
     // Auto-apply any pending D1 migrations FIRST (cheap no-op once done). This
     // is how new migrations reach prod without a manual wrangler step or a
     // workflow edit — the worker owns migration application.

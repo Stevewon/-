@@ -5,9 +5,12 @@
   "compatibility_date": "2026-04-20",
   "compatibility_flags": ["nodejs_compat"],
   "triggers": {
-    // Price-alert tick every 5 min + daily D1 backup at 03:00 UTC.
+    // Every 1 min → QTA market-making tick ONLY (fills member buys/sells within
+    //   1..59s of placement — owner rule 2026-09-05).
+    // Every 5 min → price alerts + deposits + withdrawals + binary + heavy jobs.
+    // Daily 03:00 UTC → D1 backup.
     // Worker's scheduled() handler inspects event.cron to route.
-    "crons": ["*/5 * * * *", "0 3 * * *"]
+    "crons": ["* * * * *", "*/5 * * * *", "0 3 * * *"]
   },
   "d1_databases": [
     {

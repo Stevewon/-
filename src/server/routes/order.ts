@@ -115,101 +115,20 @@ app.post('/', authMiddleware, rlPlaceOrder, async (c) => {
   }
 
   // ============================================================================
-  // TEMPORARY QTA DAILY SELL CAP  (회사 정책: 당분간 일반 매도자 하루 매도 제한)
+  // QTA SELL POLICY (owner rule 2026-09-05, "가" 방식) — NO up-front rejection.
   // ----------------------------------------------------------------------------
-  //  • Applies ONLY to SELL orders on the QTA base market (QTA-*).
-  //  • Cap = KRW 50,000 valued at that day's USDT price → $35.71 (@1,400 KRW/$).
-  //  • FILL-BASED: we sum the seller's ALREADY-FILLED QTA notional for the
-  //    current KST day (from `trades`) and add this order's max notional; if the
-  //    total would exceed the cap the order is rejected up-front.
-  //  • The COMPANY account (admin@quantaex.io / role='admin') is fully EXEMPT —
-  //    it can sell any quantity, any time (treasury / market-making).
+  // Previous behaviour REJECTED any QTA sell that would exceed the daily 50,000
+  // KRW cap. The owner changed this: a member may PLACE a QTA sell of any size;
+  // it is simply accepted and rests on the book. The COMPANY (mm-bot) only BUYS
+  // FROM a member up to KRW 50,000/day PER MEMBER (valued at the fixed 1,450
+  // KRW/USDT rate → 50000/1450 ≈ 34.48 USDT). Anything above that stays UNFILLED
+  // on the book until the member cancels it themselves (leftover 방치). That
+  // per-member company-buy cap is enforced in the mm-bot tick (qta-mm-tick),
+  // NOT here, so placing the order never fails. Company account stays exempt as
+  // a seller. (See USDT_KRW_RATE / MM_MEMBER_BUY_BUDGET_USDT below.)
   // ============================================================================
   const isCompanyAccount = user.role === 'admin' || user.email === 'admin@quantaex.io';
-  if (side === 'sell' && base === 'QTA' && !isCompanyAccount) {
-    // 50,000 KRW ÷ 1,400 KRW/USD = $35.7142857…  (USDT ≈ $1 → USDT notional)
-    const QTA_DAILY_SELL_CAP_USDT = 50000 / 1400;
-
-    // KST (UTC+9) day boundary expressed in UTC for the SQLite `created_at`
-    // comparison. The KST day starts at UTC 15:00 of the previous calendar day.
-    const nowKst = new Date(Date.now() + 9 * 3600 * 1000);
-    const kstMidnightUtcMs = Date.UTC(
-      nowKst.getUTCFullYear(), nowKst.getUTCMonth(), nowKst.getUTCDate(),
-    ) - 9 * 3600 * 1000;
-    const dayStartUtc = new Date(kstMidnightUtcMs).toISOString().slice(0, 19).replace('T', ' ');
-
-    // Already-filled QTA sell notional (quote = USDT) for this seller today.
-    const filledRow = await c.env.DB.prepare(
-      `SELECT COALESCE(SUM(t.total), 0) AS filled
-         FROM trades t
-         JOIN markets m ON m.id = t.market_id
-        WHERE t.seller_id = ?
-          AND m.base_coin = 'QTA'
-          AND t.created_at >= ?`
-    ).bind(user.id, dayStartUtc).first<{ filled: number }>().catch(() => null);
-    const filledTodayUsdt = Number(filledRow?.filled || 0);
-
-    // 🛡️ CAP-BYPASS FIX (취약점#2): the seller could previously stack many
-    // *resting* (unfilled) QTA sell orders — each one passed the check on its
-    // own (only filled trades were summed), then all filled later in a single
-    // MM tick, blowing past the daily cap. We now also count the notional
-    // still LOCKED in the seller's own open/partial QTA sell orders placed
-    // TODAY (valued at their limit price), so pending exposure counts against
-    // the cap up-front. `remaining * price` is the max USDT each resting order
-    // can still realise. (created_at is a KST-day filter to match the cap.)
-    const restingRow = await c.env.DB.prepare(
-      `SELECT COALESCE(SUM(o.remaining * o.price), 0) AS resting
-         FROM orders o
-         JOIN markets m ON m.id = o.market_id
-        WHERE o.user_id = ?
-          AND m.base_coin = 'QTA'
-          AND o.side = 'sell'
-          AND o.status IN ('open','partial','pending')
-          AND o.price IS NOT NULL
-          AND o.created_at >= ?`
-    ).bind(user.id, dayStartUtc).first<{ resting: number }>().catch(() => null);
-    const restingTodayUsdt = Number(restingRow?.resting || 0);
-
-    // Total exposure already committed today = filled + still-resting.
-    const committedTodayUsdt = filledTodayUsdt + restingTodayUsdt;
-
-    // Estimated notional of THIS order (worst case → best-bid / limit price).
-    let newNotionalUsdt = 0;
-    if (isPricedOrder) {
-      newNotionalUsdt = price * amount; // quote units (USDT)
-    } else {
-      // Market sell: value at current best bid, falling back to the coin's
-      // reference USD price so a thin book can't bypass the cap.
-      const bestBid = await c.env.DB.prepare(
-        `SELECT MAX(price) AS p FROM orders
-          WHERE market_id = ? AND side = 'buy' AND status IN ('open','partial')`
-      ).bind(market.id).first<{ p: number }>().catch(() => null);
-      const refPrice = await c.env.DB.prepare(
-        'SELECT price_usd FROM coins WHERE symbol = ?'
-      ).bind(base).first<{ price_usd: number }>().catch(() => null);
-      const estPrice = (bestBid?.p && bestBid.p > 0)
-        ? bestBid.p
-        : (refPrice?.price_usd && refPrice.price_usd > 0 ? refPrice.price_usd : 0);
-      newNotionalUsdt = estPrice * amount;
-    }
-
-    if (committedTodayUsdt + newNotionalUsdt > QTA_DAILY_SELL_CAP_USDT + 1e-9) {
-      const remaining = Math.max(0, QTA_DAILY_SELL_CAP_USDT - committedTodayUsdt);
-      return c.json(
-        {
-          error: 'QTA_DAILY_SELL_LIMIT',
-          message: 'Daily QTA sell limit reached. You can sell QTA worth up to 50,000 KRW (~$35.71 in USDT) per day (including orders still resting on the book). This limit is temporary.',
-          cap_usdt: QTA_DAILY_SELL_CAP_USDT,
-          cap_krw: 50000,
-          filled_today_usdt: filledTodayUsdt,
-          resting_today_usdt: restingTodayUsdt,
-          committed_today_usdt: committedTodayUsdt,
-          remaining_usdt: remaining,
-        },
-        400,
-      );
-    }
-  }
+  void isCompanyAccount; // reserved (company seller exemption handled elsewhere)
 
   // ============================================================================
   // Balance check & lock
@@ -433,6 +352,50 @@ app.get('/my/trades', authMiddleware, async (c) => {
   return c.json(results);
 });
 
+// ============================================================================
+// 🛡️ QTA 24h PRICE FLOOR (owner rule 2026-09-05)
+// ----------------------------------------------------------------------------
+// "24h 평균 이하 가격에서는 어떤 매도도 체결 안 된다." Prevents a wash-trader from
+// crashing the QTA price by selling at 1 KRW and buying it all back at 1 KRW.
+//   • floor = the PRIOR KST calendar day's volume-weighted avg trade price
+//             (SUM(total) / SUM(amount) over trades in that day).
+//   • If the prior day had NO trades (fresh market), fall back to the coin's
+//     managed price_center.
+// Applied ONLY to the QTA base market. Any prospective trade whose price is
+// BELOW this floor is SKIPPED in matchOrder (so both member↔member and
+// member↔mm-bot fills at sub-floor prices are refused; the order just rests).
+// Cached per matchOrder pass via the caller.
+// ============================================================================
+async function qtaPriceFloor(DB: D1Database, market: any): Promise<number> {
+  if (market.base_coin !== 'QTA') return 0; // no floor on other markets
+  // Prior KST calendar day window [yesterday 00:00 KST, today 00:00 KST) in UTC.
+  const nowKst = new Date(Date.now() + 9 * 3600 * 1000);
+  const todayKstMidnightUtcMs =
+    Date.UTC(nowKst.getUTCFullYear(), nowKst.getUTCMonth(), nowKst.getUTCDate()) - 9 * 3600 * 1000;
+  const yestKstMidnightUtcMs = todayKstMidnightUtcMs - 24 * 3600 * 1000;
+  const dayStart = new Date(yestKstMidnightUtcMs).toISOString().slice(0, 19).replace('T', ' ');
+  const dayEnd = new Date(todayKstMidnightUtcMs).toISOString().slice(0, 19).replace('T', ' ');
+
+  const row = await DB.prepare(
+    `SELECT COALESCE(SUM(total),0) AS t, COALESCE(SUM(amount),0) AS a
+       FROM trades
+      WHERE market_id = ? AND created_at >= ? AND created_at < ?`
+  ).bind(market.id, dayStart, dayEnd).first<{ t: number; a: number }>().catch(() => null);
+
+  const t = Number(row?.t || 0);
+  const a = Number(row?.a || 0);
+  if (a > 0 && t > 0) return t / a; // prior-day volume-weighted average price
+
+  // Fallback: managed center price (or 0 = no floor if not managed).
+  const coin = await DB.prepare(
+    "SELECT price_mode, price_center FROM coins WHERE symbol = 'QTA'"
+  ).first<{ price_mode: string; price_center: number }>().catch(() => null);
+  if (coin?.price_mode === 'managed' && Number(coin.price_center) > 0) {
+    return Number(coin.price_center);
+  }
+  return 0;
+}
+
 // Matching engine for D1.
 //
 // `lockInfo` carries the amount/symbol that the caller pre-locked when the
@@ -536,11 +499,29 @@ async function matchOrder(
   const quoteUsd = await DB.prepare('SELECT price_usd FROM coins WHERE symbol = ?')
     .bind(market.quote_coin).first<{ price_usd: number }>().catch(() => null);
 
+  // 🛡️ QTA 24h floor: no trade may execute BELOW this price (owner 2026-09-05).
+  // 0 = no floor (non-QTA markets or managed center unavailable).
+  const priceFloor = await qtaPriceFloor(DB, market);
+
   for (const match of matchingOrders as any[]) {
     if (remaining <= 0) break;
 
     const tradeAmount = Math.min(remaining, match.remaining);
     const tradePrice = match.price;
+
+    // 🛡️ Refuse any fill BELOW the 24h floor (owner 2026-09-05). The maker
+    // order stays on the book; the taker keeps its remaining (rests, or is
+    // refunded if market/IOC). Blocks sub-floor wash-trade price crashes.
+    //   • BUY taker: asks scanned cheapest-first, so a sub-floor ask is CHEAPER
+    //     than valid ones — SKIP it (continue) and keep looking at pricier asks
+    //     that may be ≥ floor.  (Do NOT break, that would drop valid asks.)
+    //   • SELL taker: bids scanned highest-first, so once a bid is sub-floor
+    //     every remaining bid is too → STOP (break).
+    if (priceFloor > 0 && tradePrice < priceFloor - 1e-12) {
+      if (order.side === 'buy') continue;
+      break;
+    }
+
     const tradeTotal = tradePrice * tradeAmount;
 
     // Taker = the newly placed `order`; maker = the resting `match`.
@@ -1216,7 +1197,13 @@ app.post('/qta-autobuy-tick', async (c) => {
 const MM_BOT_A = 'mm-bot-a';
 const MM_BOT_B = 'mm-bot-b';
 const MM_MARKER = -2;                 // stop_price tag for MM bot quotes
-const MM_MEMBER_BUY_BUDGET_USDT = 51000 / 1400;  // daily KST budget (~$36.43)
+// ★ OWNER RULE (2026-09-05): fixed USDT↔KRW rate while the market is seeded.
+const USDT_KRW_RATE = 1450;
+// ★ OWNER RULE (2026-09-05): the company (mm-bot) buys FROM each member at most
+//   KRW 50,000 / day → 50000/1450 ≈ 34.48 USDT. This is now a PER-MEMBER cap
+//   (previously one global budget). Anything a member sells beyond this in a
+//   day is NOT bought by the company and just rests until they cancel it.
+const MM_MEMBER_BUY_BUDGET_USDT = 50000 / USDT_KRW_RATE;  // ≈ 34.4828 USDT / member / day
 
 app.post('/qta-mm-tick', async (c) => {
   const secret = c.req.header('x-twap-secret') || '';
@@ -1363,41 +1350,139 @@ app.post('/qta-mm-tick', async (c) => {
     return id;
   }
 
-  // KST day start for the daily member-buy budget.
+  // KST day start for the per-member daily company-buy cap.
   const nowKst = new Date(Date.now() + 9 * 3600 * 1000);
   const kstMidnightUtcMs = Date.UTC(nowKst.getUTCFullYear(), nowKst.getUTCMonth(), nowKst.getUTCDate()) - 9 * 3600 * 1000;
   const dayStartUtc = new Date(kstMidnightUtcMs).toISOString().slice(0, 19).replace('T', ' ');
 
-  // How much the bots already BOUGHT FROM MEMBERS today (buyer=bot, seller≠bot).
-  const memRow = await DB.prepare(
-    `SELECT COALESCE(SUM(t.total),0) spent FROM trades t
-      WHERE t.market_id = ? AND t.buyer_id IN (?, ?)
-        AND t.seller_id NOT IN (?, ?)
-        AND t.created_at >= ?`
-  ).bind(market.id, MM_BOT_A, MM_BOT_B, MM_BOT_A, MM_BOT_B, dayStartUtc).first<{ spent: number }>().catch(() => null);
-  const memberSpentToday = Number(memRow?.spent || 0);
-  const memberBudgetLeft = Math.max(0, MM_MEMBER_BUY_BUDGET_USDT - memberSpentToday);
+  // ★ 24h floor: the company must NOT buy (nor let anyone buy) below this price.
+  const floor = await qtaPriceFloor(DB, market);
 
   let memberTrades = 0;
-  // ---- Step 1: absorb member sells at/under the mid (if budget remains) --
-  if (memberBudgetLeft >= minTotal) {
-    // Are there member asks at/under our mid? (exclude the bots themselves)
-    const memAsk = await DB.prepare(
-      `SELECT COALESCE(SUM(remaining),0) qty FROM orders
+  // ============================================================================
+  // ---- Step 1: the COMPANY (mm-bot-b) buys member sells in REAL TIME --------
+  // ----------------------------------------------------------------------------
+  // Owner rule (2026-09-05): whenever a member is selling QTA at/below the live
+  // price, the company buys it — AT THE MEMBER'S OWN ASK PRICE (so they get
+  // exactly what they asked) — but only up to KRW 50,000/day PER MEMBER
+  // (≈34.48 USDT @1,450). Beyond that per-member cap the ask just rests until
+  // the member cancels it. Never buy below the 24h floor.
+  // We walk each seller's resting asks cheapest-first, per seller, tracking how
+  // much the company has already bought FROM THAT seller today.
+  // ============================================================================
+  {
+    // All resting member asks at/under the live mid (exclude the bots), with
+    // the seller id and each ask's price so we can buy at the member's price.
+    const askRows = await DB.prepare(
+      `SELECT id, user_id, remaining, price FROM orders
          WHERE market_id=? AND side='sell' AND status IN ('open','partial')
-           AND user_id NOT IN (?, ?) AND price <= ?`
-    ).bind(market.id, MM_BOT_A, MM_BOT_B, mid).first<{ qty: number }>().catch(() => null);
-    const memAskQty = Number(memAsk?.qty || 0);
-    if (memAskQty > 0) {
-      // Buy up to the smaller of (member ask qty) and (budget-left worth at mid).
-      const budgetQty = memberBudgetLeft / mid;
-      const buyQty = floorToDecimals(Math.min(memAskQty, budgetQty), adec);
-      const buyId = await placeOrder(MM_BOT_B, 'buy', mid, buyQty, tierB);
+           AND user_id NOT IN (?, ?) AND price <= ?
+         ORDER BY user_id ASC, price ASC, created_at ASC`
+    ).bind(market.id, MM_BOT_A, MM_BOT_B, mid).all<any>().catch(() => ({ results: [] as any[] }));
+
+    // Per-seller USDT the company already bought from them TODAY.
+    const spentBySeller = new Map<string, number>();
+    async function companyBoughtFrom(sellerId: string): Promise<number> {
+      const cached = spentBySeller.get(sellerId);
+      if (cached != null) return cached;
+      const r = await DB.prepare(
+        `SELECT COALESCE(SUM(t.total),0) spent FROM trades t
+           WHERE t.market_id=? AND t.buyer_id IN (?, ?) AND t.seller_id=?
+             AND t.created_at >= ?`
+      ).bind(market.id, MM_BOT_A, MM_BOT_B, sellerId, dayStartUtc)
+        .first<{ spent: number }>().catch(() => null);
+      const v = Number(r?.spent || 0);
+      spentBySeller.set(sellerId, v);
+      return v;
+    }
+
+    for (const ask of (askRows.results || [])) {
+      const askPrice = Number(ask.price);
+      const askQty = Number(ask.remaining);
+      if (!(askQty > 0) || !(askPrice > 0)) continue;
+      // 🛡️ Never buy below the 24h floor.
+      if (floor > 0 && askPrice < floor - 1e-12) continue;
+
+      const sellerId = String(ask.user_id);
+      const already = await companyBoughtFrom(sellerId);
+      const roomUsdt = MM_MEMBER_BUY_BUDGET_USDT - already;
+      if (roomUsdt < minTotal) continue; // this member is out of daily room
+
+      // Buy up to the smaller of (this ask qty) and (member's remaining room).
+      const roomQty = roomUsdt / askPrice;
+      const buyQty = floorToDecimals(Math.min(askQty, roomQty), adec);
+      if (!(buyQty > 0) || buyQty * askPrice < minTotal) continue;
+
+      // mm-bot-b crosses at the MEMBER'S ask price → the member sells at their
+      // own price. IOC so no bot bid rests behind.
+      const buyId = await placeOrder(MM_BOT_B, 'buy', askPrice, buyQty, tierB);
       if (buyId) {
         const m = await matchOrder(DB, buyId, market, {
-          lockAmount: floorToDecimals(buyQty * mid, 8), lockSymbol: 'USDT', tif: 'IOC',
+          lockAmount: floorToDecimals(buyQty * askPrice, 8), lockSymbol: 'USDT', tif: 'IOC',
         });
-        memberTrades = (m.trades || []).length;
+        const n = (m.trades || []).length;
+        memberTrades += n;
+        // Update the running per-seller spend so we respect the cap within
+        // this same tick if they have multiple asks.
+        const spentNow = (m.trades || []).reduce((s: number, t: any) => s + Number(t.total || 0), 0);
+        spentBySeller.set(sellerId, already + spentNow);
+      }
+    }
+  }
+
+  // ============================================================================
+  // ---- Step 1.5: the COMPANY (mm-bot-a) SUPPLIES member BUYS in real time ---
+  // ----------------------------------------------------------------------------
+  // Owner rule (2026-09-05): a member BUY is UNLIMITED. After it sweeps any pure
+  // member asks, the company fills the REMAINDER — at the BUYER'S OWN limit
+  // price — so the buy is 100% filled. Refusals:
+  //   • only for resting member BUY orders (limit) that still have room;
+  //   • the buyer's limit price must be ≥ the 24h floor (a sub-floor bid is
+  //     NEVER supplied and just rests — blocks "1원에 1억" crash-buys);
+  //   • the buy price must be ≥ the live mid (a lowball bid under the market
+  //     isn't crossed by the company — "호가 시세 이하면 사주지 말라").
+  // Market buys are already filled synchronously at order time, so here we only
+  // top up resting LIMIT buys from members.
+  // ============================================================================
+  let buySupplyTrades = 0;
+  {
+    const bidRows = await DB.prepare(
+      `SELECT id, user_id, remaining, price FROM orders
+         WHERE market_id=? AND side='buy' AND type='limit' AND status IN ('open','partial')
+           AND user_id NOT IN (?, ?) AND price >= ?
+         ORDER BY price DESC, created_at ASC`
+    ).bind(market.id, MM_BOT_A, MM_BOT_B, mid).all<any>().catch(() => ({ results: [] as any[] }));
+
+    for (const bid of (bidRows.results || [])) {
+      const bidPrice = Number(bid.price);
+      const bidQty = Number(bid.remaining);
+      if (!(bidQty > 0) || !(bidPrice > 0)) continue;
+      // 🛡️ Never supply below the 24h floor.
+      if (floor > 0 && bidPrice < floor - 1e-12) continue;
+
+      // mm-bot-a rests an ask at the BUYER'S price; the member's resting bid
+      // crosses it. We place the bot ask then re-run the member's buy so the
+      // member is the taker and gets filled at their own price.
+      const sellId = await placeOrder(MM_BOT_A, 'sell', bidPrice, floorToDecimals(bidQty, adec), tierA);
+      if (sellId) {
+        // Cross the member's resting bid against the fresh bot ask.
+        const m = await matchOrder(DB, String(bid.id), market);
+        buySupplyTrades += (m.trades || []).length;
+        // Cancel any unmatched remainder of the bot ask so it doesn't linger.
+        await DB.prepare(
+          `UPDATE orders SET status='cancelled', updated_at=datetime('now')
+             WHERE id=? AND status IN ('open','partial')`
+        ).bind(sellId).run();
+        // Refund the bot ask's unfilled base lock.
+        const leftover = await DB.prepare(
+          "SELECT remaining FROM orders WHERE id=?"
+        ).bind(sellId).first<{ remaining: number }>().catch(() => null);
+        const rem = Number(leftover?.remaining || 0);
+        if (rem > 0) {
+          await DB.prepare(
+            "UPDATE wallets SET available=available+?, locked=MAX(0,locked-?) WHERE user_id=? AND coin_symbol='QTA'"
+          ).bind(rem, rem, MM_BOT_A).run();
+        }
       }
     }
   }
@@ -1469,9 +1554,10 @@ app.post('/qta-mm-tick', async (c) => {
 
   return c.json({
     ok: true, action: 'mm_ok',
-    mid, ask, bid,
-    member_trades: memberTrades, candle_trades: candleTrades,
-    member_spent_today_usdt: memberSpentToday, member_budget_left_usdt: memberBudgetLeft,
+    mid, ask, bid, floor,
+    member_sell_trades: memberTrades, buy_supply_trades: buySupplyTrades,
+    candle_trades: candleTrades,
+    per_member_buy_cap_usdt: MM_MEMBER_BUY_BUDGET_USDT,
     cleared, asks_placed: asksPlaced, bids_placed: bidsPlaced,
   });
 });
