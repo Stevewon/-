@@ -294,12 +294,6 @@ export default function EarnPage() {
   //   part of the Claimable balance.
   const unclaimedMatchQta = Number(summary?.unclaimedMatchQta || 0);
   const totalClaimableQta = totalDividendQta + unclaimedMatchQta;
-  // ★ OWNER RULE (2026-09-05): show ONE unified balance so the member never has
-  //   to mentally add "wallet + claimable". The headline QTA balance = the QTA
-  //   actually in the wallet PLUS everything still claimable (accruing dividend
-  //   + unclaimed match). Claiming/withdrawing later just moves the claimable
-  //   part into the wallet — the total the member sees does not change.
-  const unifiedQtaBalance = qtaBalance + totalClaimableQta;
 
   // Option A: pressing "Withdraw Dividend" first auto-claims every position's
   // pending (accruing) dividend into the QTA wallet, then opens the modal with
@@ -368,7 +362,7 @@ export default function EarnPage() {
             <div>
               <div className="text-exchange-text-third">{t('earn.qtaBalance')}</div>
               <div className="text-[15px] font-bold text-exchange-yellow tabular-nums leading-tight mt-0.5">
-                {formatAmount(unifiedQtaBalance)} QTA
+                {formatAmount(qtaBalance)} QTA
               </div>
             </div>
           )}
@@ -380,22 +374,18 @@ export default function EarnPage() {
         <div className="bg-exchange-card border border-exchange-border rounded-2xl p-4 mb-5">
           <div className="flex items-center justify-between">
             <div>
-              {/* ★ ONE unified balance (owner 2026-09-05): the headline number is
-                  the member's TOTAL QTA = wallet + everything claimable, so it
-                  matches the QTA Balance up top exactly. The claimable part is
-                  shown small underneath as an informational breakdown only. */}
-              <div className="text-[12px] text-exchange-text-third">{t('earn.qtaBalance')}</div>
+              <div className="text-[12px] text-exchange-text-third">{t('earn.claimableDividend')}</div>
               <div className="text-[22px] font-bold text-exchange-buy tabular-nums">
-                {formatAmount(unifiedQtaBalance)} <span className="text-[13px] text-exchange-text-third">QTA</span>
+                {formatAmount(totalClaimableQta)} <span className="text-[13px] text-exchange-text-third">QTA {t('earn.accruing')}</span>
               </div>
-              {totalClaimableQta > 0 && (
+              {unclaimedMatchQta > 0 && (
                 <div className="text-[11px] text-exchange-text-third mt-1 tabular-nums">
-                  {t('earn.claimableDividend')}: {formatAmount(totalClaimableQta)} QTA
-                  {unclaimedMatchQta > 0 && (
-                    <> ({t('earn.dividendLabel')} {formatAmount(totalDividendQta)} · {t('earn.matchBonusLabel')} {formatAmount(unclaimedMatchQta)})</>
-                  )}
+                  {t('earn.dividendLabel')}: {formatAmount(totalDividendQta)} QTA · {t('earn.matchBonusLabel')}: {formatAmount(unclaimedMatchQta)} QTA
                 </div>
               )}
+              <div className="text-[11px] text-exchange-text-third mt-1 tabular-nums">
+                {t('earn.walletBalanceLabel')}: {formatAmount(qtaBalance)} QTA
+              </div>
             </div>
             <button
               onClick={handleWithdrawClick}
