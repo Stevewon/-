@@ -252,14 +252,26 @@ export default function TradePage() {
 
         {/* Mobile Content */}
         <div className="flex-1 min-h-0 overflow-y-auto">
-          {/* DEFAULT: Order form full-width (Bybit mobile style). */}
+          {/* DEFAULT (Place Order): Bybit-style split — order form on the LEFT,
+              live order book (ask/bid ladder) on the RIGHT, side by side, so a
+              member sees the buy/sell prices right next to the entry form. */}
           {mobileView === 'orderbook' && (
-            <div className="min-h-0">
-              <TradePanel symbol={symbol} initialPrice={selectedPrice} />
+            <div className="flex min-h-0 gap-2 px-1 pt-1">
+              <div className="flex-[1.35] min-w-0">
+                <TradePanel symbol={symbol} initialPrice={selectedPrice} />
+              </div>
+              <div className="flex-1 min-w-0 border-l border-exchange-border pl-1">
+                {isLoadingOrderbook && useStore.getState().orderbook.bids.length === 0 ? (
+                  <SkeletonLoader type="orderbook" />
+                ) : (
+                  <Orderbook onPriceClick={(p) => setSelectedPrice(p)} mobile />
+                )}
+              </div>
             </div>
           )}
 
-          {/* Order book — its own tab, full width */}
+          {/* Order book — its own tab, full width (kept for users who want the
+              deep book view). */}
           {mobileView === 'book' && (
             <div className="h-full min-h-0">
               {isLoadingOrderbook && useStore.getState().orderbook.bids.length === 0 ? (
