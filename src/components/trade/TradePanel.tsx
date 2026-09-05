@@ -17,7 +17,7 @@ type OrderType = 'limit' | 'market' | 'stop_limit';
 type Tif = 'GTC' | 'IOC' | 'FOK' | 'POST_ONLY';
 
 export default function TradePanel({ symbol, initialPrice, forceSide, onComplete }: Props) {
-  const { user, wallets, fetchWallets, fetchOpenOrders } = useStore();
+  const { user, wallets, fetchWallets, fetchOpenOrders, tickers } = useStore();
   const { t } = useI18n();
   const [side, setSide] = useState<'buy' | 'sell'>(forceSide || 'buy');
   const [orderType, setOrderType] = useState<OrderType>('limit');
@@ -61,9 +61,20 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
 
   const setPercentage = (pct: number) => {
     setSliderPct(pct);
-    if (side === 'buy' && price && parseFloat(price) > 0) {
-      const maxAmount = (available / parseFloat(price)) * 0.999; // account for fee
-      setAmount((maxAmount * pct / 100).toFixed(6));
+    if (side === 'buy') {
+      // ★ FIX (2026-09-05): 매수 슬라이더/MAX가 시장가에서도 동작하도록.
+      //   지정가(limit/stop_limit)는 입력한 price를, 시장가(market)는 현재
+      //   시세(tickers.last)를 기준가로 사용해 매수 가능 수량을 산출한다.
+      //   이전에는 price가 비어있는 시장가 매수에서 조건이 거짓이 되어
+      //   amount가 전혀 채워지지 않았다(BAR가 안 먹히는 버그).
+      const refPrice =
+        price && parseFloat(price) > 0
+          ? parseFloat(price)
+          : (tickers[symbol]?.last || 0);
+      if (refPrice > 0) {
+        const maxAmount = (available / refPrice) * 0.999; // account for fee
+        setAmount((maxAmount * pct / 100).toFixed(6));
+      }
     } else if (side === 'sell') {
       setAmount(((baseWallet?.available || 0) * pct / 100).toFixed(6));
     }
