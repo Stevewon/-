@@ -14,40 +14,11 @@ export default function Orderbook({ onPriceClick, mobile }: Props) {
   const [flashPrices, setFlashPrices] = useState<Record<string, 'buy' | 'sell'>>({});
   const prevPricesRef = useRef<Set<string>>(new Set());
 
-  // ---- Live liquidity animation --------------------------------------------
-  // The server only re-arms the book every few minutes, so the raw amounts
-  // sit frozen between ticks. Real exchanges show every rung breathing as
-  // orders are added/pulled. We drive a lightweight per-price "wobble" on a
-  // ~900ms tick that nudges each displayed amount up/down a few % and flashes
-  // the row, so the wall looks alive without touching the real backend data.
-  const [liveTick, setLiveTick] = useState(0);
-  const wobbleRef = useRef<Record<string, number>>({});
-  useEffect(() => {
-    const id = setInterval(() => setLiveTick((n) => n + 1), 900);
-    return () => clearInterval(id);
-  }, []);
-  useEffect(() => {
-    // On every live tick, jitter a random subset of price levels so the whole
-    // book doesn't move in lockstep (looks mechanical). Each level drifts by a
-    // small random step and mean-reverts toward its base amount.
-    const w = { ...wobbleRef.current };
-    const touch = (key: string) => {
-      const cur = w[key] ?? 1;
-      // random walk with pull back to 1.0, clamped to a believable band
-      const next = cur + (Math.random() - 0.5) * 0.12 + (1 - cur) * 0.15;
-      w[key] = Math.max(0.55, Math.min(1.6, next));
-    };
-    [...orderbook.asks, ...orderbook.bids].forEach((o, i) => {
-      // only wobble ~45% of levels each tick for an organic, staggered feel
-      if (Math.random() < 0.45) touch(`${i < orderbook.asks.length ? 'a' : 'b'}-${o.price}`);
-    });
-    wobbleRef.current = w;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [liveTick]);
-  const wob = (side: 'a' | 'b', price: number, amount: number) => {
-    const f = wobbleRef.current[`${side}-${price}`] ?? 1;
-    return amount * f;
-  };
+  // ★ FIX (2026-09-05): the old ~900ms "wobble" animation re-rendered the whole
+  //   book every tick, which made the price digits look DOUBLED/GHOSTED on
+  //   mobile (sub-pixel text redraw). Removed entirely — amounts are shown as
+  //   the real backend values, static between server updates.
+  const wob = (_side: 'a' | 'b', _price: number, amount: number) => amount;
 
   // Track price changes for flash effect
   useEffect(() => {
@@ -128,8 +99,8 @@ export default function Orderbook({ onPriceClick, mobile }: Props) {
         <span className="w-[35%] text-right">{t('trade.total')}</span>
       </div>
 
-      {/* Asks (sells) */}
-      <div className="flex-1 overflow-hidden flex flex-col justify-end">
+      {/* Asks (sells) — fixed tight rows, no stretch (Bybit density) */}
+      <div className="overflow-hidden flex flex-col justify-end">
         {asks.length === 0 ? (
           <div className="flex-1 flex items-center justify-center text-exchange-text-third text-[10px]">
             {t('trade.noAsks')}
@@ -143,7 +114,7 @@ export default function Orderbook({ onPriceClick, mobile }: Props) {
             return (
               <div
                 key={`a-${i}`}
-                className={`ob-row${mb} cursor-pointer hover:bg-exchange-sell/8 relative group transition-all ${
+                className={`ob-row${mb} cursor-pointer hover:bg-exchange-sell/8 relative ${
                   isFlashing ? 'bg-exchange-sell/15' : ''
                 }`}
                 onClick={() => onPriceClick?.(ask.price)}
@@ -167,8 +138,8 @@ export default function Orderbook({ onPriceClick, mobile }: Props) {
         <span className="ml-1.5 text-xs">{priceUp ? '\u25B2' : '\u25BC'}</span>
       </div>
 
-      {/* Bids (buys) */}
-      <div className="flex-1 overflow-hidden">
+      {/* Bids (buys) — fixed tight rows, no stretch */}
+      <div className="overflow-hidden">
         {bids.length === 0 ? (
           <div className="flex-1 flex items-center justify-center text-exchange-text-third text-[10px] h-full">
             {t('trade.noBids')}
@@ -182,7 +153,7 @@ export default function Orderbook({ onPriceClick, mobile }: Props) {
             return (
               <div
                 key={`b-${i}`}
-                className={`ob-row${mb} cursor-pointer hover:bg-exchange-buy/8 relative group transition-all ${
+                className={`ob-row${mb} cursor-pointer hover:bg-exchange-buy/8 relative ${
                   isFlashing ? 'bg-exchange-buy/15' : ''
                 }`}
                 onClick={() => onPriceClick?.(bid.price)}
