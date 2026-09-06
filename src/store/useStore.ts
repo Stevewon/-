@@ -197,10 +197,33 @@ const useStore = create<ExchangeStore>((set, get) => ({
   updateOrderbook: (data) => set((state) => {
     const bids = data?.bids || [];
     const asks = data?.asks || [];
+    const prevBids = state.orderbook?.bids || [];
+    const prevAsks = state.orderbook?.asks || [];
+
+    // ★ OWNER RULE (2026-09-06): the mm-bot re-arms the whole wall every 1-min
+    //   tick by cancelling ~28 quotes and re-inserting 14+14. During the few
+    //   hundred ms while it re-inserts, a snapshot can momentarily show the
+    //   ladder COLLAPSED to 1-2 rows. We must NEVER paint that collapse — the
+    //   book has to stay fully populated on screen at all times.
+    //
+    //   So: if we already had a healthy wall and the incoming snapshot has
+    //   collapsed to a small fraction of it, treat it as a transient re-arm
+    //   frame and KEEP the previous book. Only accept a shrunken book once it
+    //   stabilises (i.e. it is not a sudden collapse).
+    const prevDepth = Math.max(prevBids.length, prevAsks.length);
+    const newDepth = Math.max(bids.length, asks.length);
+
+    // Fully-empty refresh: always keep the previous book.
     if (bids.length === 0 && asks.length === 0) {
-      // Empty refresh — keep the previous book, just clear the loading flag.
       return { isLoadingOrderbook: false } as any;
     }
+
+    // Sudden collapse guard: had a real wall (>=6 rows) and the new frame has
+    // dropped below 40% of it -> it's the re-arm gap, ignore this frame.
+    if (prevDepth >= 6 && newDepth < Math.ceil(prevDepth * 0.4)) {
+      return { isLoadingOrderbook: false } as any;
+    }
+
     return { orderbook: data, isLoadingOrderbook: false };
   }),
 

@@ -1288,15 +1288,14 @@ app.post('/qta-mm-tick', async (c) => {
   if (bid <= 0) bid = mid;
 
   // ---- Helper: cancel + refund all resting MM bot quotes ----------------
-  async function clearBotQuotes(): Promise<number> {
-    const q = await DB.prepare(
-      `SELECT id, user_id, side, remaining, price FROM orders
-         WHERE market_id = ? AND user_id IN (?, ?) AND status IN ('open','partial')`
-    ).bind(market.id, MM_BOT_A, MM_BOT_B).all<any>();
+  // Cancel a SPECIFIC set of bot quotes (by id) and refund their locked funds.
+  // We cancel by id (not "all open bot orders") so we can build the NEW wall
+  // first and only then retire the OLD one — the book never goes empty.
+  async function cancelBotOrders(rows: any[]): Promise<number> {
     let n = 0;
-    for (const o of (q.results || [])) {
+    for (const o of (rows || [])) {
       await DB.prepare(
-        "UPDATE orders SET status='cancelled', updated_at=datetime('now') WHERE id=?"
+        "UPDATE orders SET status='cancelled', updated_at=datetime('now') WHERE id=? AND status IN ('open','partial')"
       ).bind(o.id).run();
       if (o.side === 'sell') {
         await DB.prepare(
@@ -1313,8 +1312,20 @@ app.post('/qta-mm-tick', async (c) => {
     return n;
   }
 
-  // Clear last tick's stale quotes first (so sizes/prices track the new mid).
-  const cleared = await clearBotQuotes();
+  // Snapshot the OLD bot wall that exists at the start of this tick. We do NOT
+  // cancel it yet — it keeps the book fully populated while we build the new
+  // wall in Step 3. It is retired only AFTER the new wall is in place.
+  async function snapshotBotQuotes(): Promise<any[]> {
+    const q = await DB.prepare(
+      `SELECT id, user_id, side, remaining, price FROM orders
+         WHERE market_id = ? AND user_id IN (?, ?) AND status IN ('open','partial')`
+    ).bind(market.id, MM_BOT_A, MM_BOT_B).all<any>();
+    return q.results || [];
+  }
+
+  // Old wall captured up-front; retired at the very end of Step 3.
+  const oldBotQuotes = await snapshotBotQuotes();
+  const cleared = oldBotQuotes.length;
 
   const tierA = await getUserFeeTier(DB, MM_BOT_A, { maker_fee: market.maker_fee, taker_fee: market.taker_fee });
   const tierB = await getUserFeeTier(DB, MM_BOT_B, { maker_fee: market.maker_fee, taker_fee: market.taker_fee });
@@ -1550,7 +1561,11 @@ app.post('/qta-mm-tick', async (c) => {
   // 0.003216..0.004998 (no more crash-looking outliers), and the price grid
   // guarantees every rung is a distinct row. Rung size grows a little with
   // depth so the far side of the book looks like real liquidity.
-  await clearBotQuotes();
+  //
+  // ★ OWNER RULE (2026-09-06): DO NOT clear the old wall first. If we cancel
+  //   then re-insert, the book is momentarily EMPTY (1-2 rows) and that gap
+  //   leaks to the UI as a "disappear/reappear" flicker. Instead we BUILD the
+  //   new wall first (below) and RETIRE the old one only after it's in place.
 
   const LEVELS = 14;                // rungs per side -> book shows ~14 asks + 14 bids
   // Step between rungs: small enough that all LEVELS ask rungs fit in the
@@ -1590,13 +1605,18 @@ app.post('/qta-mm-tick', async (c) => {
     }
   }
 
+  // ★ New wall is now fully in place. ONLY NOW retire the old wall captured at
+  //   the start of the tick. This guarantees the book is never empty: at every
+  //   instant D1 holds either the old wall, the new wall, or (briefly) both.
+  const retired = await cancelBotOrders(oldBotQuotes);
+
   return c.json({
     ok: true, action: 'mm_ok',
     mid, ask, bid, floor,
     member_sell_trades: memberTrades, buy_supply_trades: buySupplyTrades,
     candle_trades: candleTrades,
     per_member_buy_cap_usdt: MM_MEMBER_BUY_BUDGET_USDT,
-    cleared, asks_placed: asksPlaced, bids_placed: bidsPlaced,
+    cleared, retired, asks_placed: asksPlaced, bids_placed: bidsPlaced,
   });
 });
 
