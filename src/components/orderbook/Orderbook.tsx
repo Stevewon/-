@@ -13,6 +13,10 @@ export default function Orderbook({ onPriceClick, mobile }: Props) {
   const { t } = useI18n();
   const [flashPrices, setFlashPrices] = useState<Record<string, 'buy' | 'sell'>>({});
   const prevPricesRef = useRef<Set<string>>(new Set());
+  // Last time we saw a FULLY populated ladder — reused to pad thin snapshots so
+  // the row COUNT never shrinks (owner: "붙박이 8개, 값만 변동").
+  const lastFullAsksRef = useRef<{ price: number; amount: number }[]>([]);
+  const lastFullBidsRef = useRef<{ price: number; amount: number }[]>([]);
 
   // ★ OWNER RULE (2026-09-05): the book must look ALIVE — rows stay fully
   //   populated (mobile 8 / desktop 14) but the AMOUNTS jitter in place and the
@@ -123,12 +127,46 @@ export default function Orderbook({ onPriceClick, mobile }: Props) {
   const prevPrice = recentTrades[1]?.price || lastPrice;
   const priceUp = lastPrice >= prevPrice;
 
-  // ★ OWNER RULE (2026-09-05): MOBILE shows 8 asks + 8 bids, DESKTOP shows 14
-  //   each. Asks are reversed so the BEST (lowest) ask sits just above the
-  //   spread line.
+  // ★ OWNER RULE (2026-09-05/09-06): MOBILE shows EXACTLY 8 asks + 8 bids,
+  //   DESKTOP EXACTLY 14 each — the row COUNT is a FIXED "붙박이": it must NEVER
+  //   shrink/grow. Only the VALUES inside the rows may move.
+  //
+  //   The server book can momentarily arrive thin (< ROWS) during the mm-bot
+  //   re-arm. To keep the count nailed, we:
+  //     1) take the freshest ROWS levels from the live snapshot,
+  //     2) if that is short, pad the tail from the last FULLY-populated book we
+  //        saw (so old rungs stay put instead of vanishing),
+  //     3) remember any full book for future padding.
   const ROWS = mobile ? 8 : 14;
-  const asks = [...orderbook.asks].reverse().slice(-ROWS);
-  const bids = orderbook.bids.slice(0, ROWS);
+
+  const padTo = (
+    live: { price: number; amount: number }[],
+    lastFullRef: React.MutableRefObject<{ price: number; amount: number }[]>,
+  ) => {
+    // Remember the freshest full ladder for later padding.
+    if (live.length >= ROWS) lastFullRef.current = live.slice(0, ROWS);
+
+    if (live.length >= ROWS) return live.slice(0, ROWS);
+
+    // Thin snapshot → keep live rungs, then append distinct rungs from the last
+    // full book to reach exactly ROWS. Never drop below ROWS.
+    const out = [...live];
+    const seen = new Set(out.map(r => r.price));
+    for (const r of lastFullRef.current) {
+      if (out.length >= ROWS) break;
+      if (!seen.has(r.price)) { out.push(r); seen.add(r.price); }
+    }
+    // Still short (cold start, no history yet): repeat the last known rung so
+    // the count is filled rather than collapsed.
+    while (out.length < ROWS && out.length > 0) {
+      out.push(out[out.length - 1]);
+    }
+    return out;
+  };
+
+  const asksAsc = padTo(orderbook.asks.slice(0, ROWS), lastFullAsksRef); // ascending price
+  const asks = [...asksAsc].reverse();                                   // best ask nearest spread
+  const bids = padTo(orderbook.bids.slice(0, ROWS), lastFullBidsRef);
 
   let askRunning = 0;
   let bidRunning = 0;
