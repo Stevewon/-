@@ -233,8 +233,8 @@ input[type="range"]::-moz-range-thumb {
    so rows never stretch apart when the flex column has spare height. */
 .ob-row.ob-mobile {
   padding: 0 0.5rem;
-  height: 1.35rem;
-  line-height: 1.35rem;
+  height: 1.15rem;
+  line-height: 1.15rem;
   flex: 0 0 auto;
 }
 .ob-head {
@@ -244,13 +244,13 @@ input[type="range"]::-moz-range-thumb {
   padding: 0.375rem 0.5rem;
 }
 .ob-head.ob-mobile {
-  padding: 0.3rem 0.5rem;
+  padding: 0.2rem 0.5rem;
 }
 .ob-spread {
   padding: 0.375rem 0;
 }
 .ob-spread.ob-mobile {
-  padding: 0.4rem 0;
+  padding: 0.25rem 0;
 }
 
 .input-field:focus {

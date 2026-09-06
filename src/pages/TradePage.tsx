@@ -260,7 +260,11 @@ export default function TradePage() {
               <div className="flex-[1.35] min-w-0">
                 <TradePanel symbol={symbol} initialPrice={selectedPrice} />
               </div>
-              <div className="flex-1 min-w-0 border-l border-exchange-border pl-1">
+              {/* ★ OWNER RULE (2026-09-06): the FULL ladder (8 asks + spread + 8
+                  bids) must fit on screen at once — no scroll, buys visible at a
+                  glance. Give the book an explicit compact height so nothing is
+                  clipped. */}
+              <div className="flex-1 min-w-0 border-l border-exchange-border pl-1 h-[22rem]">
                 {isLoadingOrderbook && useStore.getState().orderbook.bids.length === 0 ? (
                   <SkeletonLoader type="orderbook" />
                 ) : (
