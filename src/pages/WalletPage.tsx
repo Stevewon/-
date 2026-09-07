@@ -319,7 +319,7 @@ export default function WalletPage() {
               <ArrowUpRight size={16} /> {t('wallet.withdraw')}
             </button>
             <Link
-              to="/trade/BTC-USDT"
+              to="/trade/QTA-USDT"
               className="inline-flex items-center bg-exchange-yellow/10 text-exchange-yellow hover:bg-exchange-yellow/20 transition-colors font-medium"
               style={{ gap: '6px', padding: '10px 16px', borderRadius: '10px', fontSize: '14px' }}
             >

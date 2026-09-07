@@ -67,7 +67,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 function AdminProtectedRoute({ children }: { children: React.ReactNode }) {
   const user = useStore((s) => s.user);
   if (!user) return <Navigate to="/admin/login" replace />;
-  if (user.role !== 'admin') return <Navigate to="/trade/BTC-USDT" replace />;
+  if (user.role !== 'admin') return <Navigate to="/trade/QTA-USDT" replace />;
   return <>{children}</>;
 }
 
@@ -103,7 +103,7 @@ export default function App() {
 
         {/* Pages with Layout (header + ticker + footer) */}
         <Route path="/" element={<Layout />}>
-          <Route index element={<Navigate to="/trade/BTC-USDT" replace />} />
+          <Route index element={<Navigate to="/trade/QTA-USDT" replace />} />
           <Route path="trade/:symbol" element={<TradePage />} />
           <Route path="markets" element={<MarketsPage />} />
           <Route path="earn" element={<EarnPage />} />

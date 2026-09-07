@@ -17,7 +17,7 @@ import { ChevronDown, X, TrendingUp, TrendingDown, BarChart3, BookOpen, ArrowLef
 type MobileView = 'chart' | 'orderbook' | 'book' | 'trades';
 
 export default function TradePage() {
-  const { symbol = 'BTC-USDT' } = useParams();
+  const { symbol = 'QTA-USDT' } = useParams();
   const navigate = useNavigate();
   const { t } = useI18n();
   const {

@@ -508,6 +508,15 @@ export default {
         headers: { 'content-type': 'application/json' },
       });
     }
+    if (url.pathname === '/accrue/daily') {
+      // Manual daily staking-dividend accrual (also runs on the 03:00 UTC tick).
+      // POSTs the server's /api/earn/accrue-daily so each active position gets
+      // its missing day-by-day snapshot rows. Idempotent.
+      await stakingAccrueDaily(env);
+      return new Response(JSON.stringify({ ok: true, triggered: 'accrue-daily' }), {
+        headers: { 'content-type': 'application/json' },
+      });
+    }
     if (url.pathname === '/ext/env-check') {
       // Read-only diagnostic for external (BSC/BEP-20) deposits. Confirms the
       // secrets landed and shows the derived deposit-address samples + sweep

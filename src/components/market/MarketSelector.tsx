@@ -23,6 +23,9 @@ export default function MarketSelector({ currentSymbol, onClose }: Props) {
     return Array.from(qs);
   }, [markets]);
 
+  // ★ OWNER RULE (2026-09-07): our own coins come FIRST — QTA, then QX, then
+  //   QKEY — followed by everything else in its existing (BTC-first) order.
+  const PRIORITY: Record<string, number> = { QTA: 0, QX: 1, QKEY: 2 };
   const filtered = useMemo(() => {
     return markets
       .filter((m) => m.quote_coin === quoteFilter)
@@ -31,10 +34,16 @@ export default function MarketSelector({ currentSymbol, onClose }: Props) {
         const s = search.toUpperCase();
         return m.base_coin.includes(s) || m.base_name?.toLowerCase().includes(search.toLowerCase());
       })
-      .map((m) => {
+      .map((m, idx) => {
         const sym = `${m.base_coin}-${m.quote_coin}`;
         const ticker = tickers[sym];
-        return { ...m, sym, ticker };
+        return { ...m, sym, ticker, _idx: idx };
+      })
+      .sort((a, b) => {
+        const pa = PRIORITY[a.base_coin] ?? 99;
+        const pb = PRIORITY[b.base_coin] ?? 99;
+        if (pa !== pb) return pa - pb;          // our coins first, in fixed order
+        return a._idx - b._idx;                 // otherwise keep original order
       });
   }, [markets, tickers, search, quoteFilter]);
 

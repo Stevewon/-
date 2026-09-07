@@ -135,7 +135,7 @@ export default function LoginPage() {
   const setAuth = useStore((s) => s.setAuth);
   const navigate = useNavigate();
   const [params] = useSearchParams();
-  const redirect = params.get('redirect') || '/trade/BTC-USDT';
+  const redirect = params.get('redirect') || '/trade/QTA-USDT';
 
   // ---- Referral code (for Google new-signup; ignored for existing users) ----
   // Mirrors RegisterPage pattern: ?ref=CODE auto-catch + live validation.

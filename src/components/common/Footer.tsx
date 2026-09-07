@@ -74,7 +74,7 @@ export default function Footer() {
   ];
 
   const productLinks = [
-    { label: t('footer.exchange'), to: '/trade/BTC-USDT', highlight: true },
+    { label: t('footer.exchange'), to: '/trade/QTA-USDT', highlight: true },
     { label: t('nav.markets'), to: '/markets' },
     { label: t('footer.fee'), to: '/fee' },
     { label: t('footer.academy'), href: '#' },

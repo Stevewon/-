@@ -11,7 +11,7 @@ export default function NotFoundPage() {
         <h1 className="text-2xl font-bold mb-2">{t('error.notFound')}</h1>
         <p className="text-sm text-exchange-text-secondary mb-8">{t('error.notFoundDesc')}</p>
         <div className="flex gap-3 justify-center">
-          <Link to="/trade/BTC-USDT" className="btn-primary !py-2.5 !px-6 text-sm rounded-lg flex items-center gap-2">
+          <Link to="/trade/QTA-USDT" className="btn-primary !py-2.5 !px-6 text-sm rounded-lg flex items-center gap-2">
             <Home size={16} /> {t('nav.trade')}
           </Link>
           <button onClick={() => window.history.back()} className="bg-exchange-card border border-exchange-border text-exchange-text !py-2.5 !px-6 text-sm rounded-lg flex items-center gap-2 hover:bg-exchange-hover transition-colors">

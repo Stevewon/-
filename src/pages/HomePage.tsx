@@ -106,7 +106,7 @@ export default function HomePage() {
                   className="btn-primary !py-3.5 sm:!py-4 !px-8 sm:!px-10 text-base font-bold rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-exchange-yellow/25 hover:shadow-exchange-yellow/40 transition-all">
                   {t('home.hero.cta')} <ArrowRight size={18} />
                 </Link>
-                <Link to="/trade/BTC-USDT"
+                <Link to="/trade/QTA-USDT"
                   className="bg-exchange-card border border-exchange-border text-exchange-text !py-3.5 sm:!py-4 !px-8 sm:!px-10 text-base font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-exchange-hover hover:border-exchange-yellow/20 transition-all">
                   {t('home.hero.explore')}
                 </Link>

@@ -28,7 +28,7 @@ export default function Layout() {
   const isTradeRoute = location.pathname.startsWith('/trade');
 
   const navItems = [
-    { path: '/trade/BTC-USDT', label: t('nav.trade'), icon: BarChart3 },
+    { path: '/trade/QTA-USDT', label: t('nav.trade'), icon: BarChart3 },
     { path: '/markets', label: t('nav.markets'), icon: LayoutGrid },
     { path: '/earn', label: t('nav.earn'), icon: Percent },
     ...(user ? [
@@ -136,13 +136,13 @@ export default function Layout() {
         {(user
           ? [
               { path: '/markets',        label: t('nav.markets'), icon: LayoutGrid },
-              { path: '/trade/BTC-USDT', label: t('nav.trade'),   icon: BarChart3 },
+              { path: '/trade/QTA-USDT', label: t('nav.trade'),   icon: BarChart3 },
               { path: '/earn',           label: t('nav.earn'),    icon: Percent },
               { path: '/wallet',         label: t('nav.wallet'),  icon: Wallet },
               { path: '/profile',        label: t('nav.profile')  || 'Profile',  icon: User },
             ]
           : [
-              { path: '/trade/BTC-USDT', label: t('nav.trade'),   icon: BarChart3 },
+              { path: '/trade/QTA-USDT', label: t('nav.trade'),   icon: BarChart3 },
               { path: '/markets',        label: t('nav.markets'), icon: LayoutGrid },
               { path: '/login',          label: t('nav.login'),   icon: LogIn },
             ]
