@@ -2220,6 +2220,22 @@ function generateTickTrades(price: number, _symbol: string) {
 // Per-market orderbook/trades cache
 const marketCache: Record<string, { orderbook: any; trades: any[] }> = {};
 
+// ★ D1 OVERLOAD FIX (2026-09-07): the SSE stream used to hit D1 for the live
+//   order book + trades ONCE PER CONNECTED CLIENT every 1.5s. With N members on
+//   the trade screen that is ~4N queries/1.5s, which overloaded D1
+//   ("Requests queued for too long") and broke login/markets/tickers.
+//
+//   This module-scoped cache is SHARED across every SSE connection in the same
+//   isolate: the real order book/trades for a market are read from D1 at most
+//   once per REAL_MD_TTL_MS regardless of how many clients are watching. An
+//   in-flight promise is memoised so a burst of clients collapses into ONE
+//   query. This cuts D1 load by orders of magnitude under load.
+const REAL_MD_TTL_MS = 4000;
+const realMarketDataCache: Record<
+  string,
+  { at: number; data: { bids: any[]; asks: any[]; trades: any[] } | null; inflight?: Promise<any> }
+> = {};
+
 function getMarketCache(key: string, price: number) {
   if (!marketCache[key]) {
     marketCache[key] = {
@@ -2376,33 +2392,58 @@ app.get('/api/stream/ticker', async (c) => {
 
   // Fetch real orderbook/trades from D1 for the subscribed market.
   // Returns { bids, asks, trades } or null if market is unknown / DB fails.
-  const fetchRealMarketData = async (sym: string) => {
+  // Raw D1 read — only ever called through the shared cache below.
+  const fetchRealMarketDataFromDB = async (sym: string) => {
     const [base, quote] = sym.split('-');
-    try {
-      const market = await c.env.DB.prepare(
-        'SELECT id FROM markets WHERE base_coin = ? AND quote_coin = ?'
-      ).bind(base, quote).first() as any;
-      if (!market) return null;
-      const { results: bids } = await c.env.DB.prepare(
-        `SELECT price, SUM(remaining) as amount FROM orders WHERE market_id = ? AND side = 'buy' AND status IN ('open','partial') GROUP BY price ORDER BY price DESC LIMIT 25`
-      ).bind(market.id).all();
-      const { results: asks } = await c.env.DB.prepare(
-        `SELECT price, SUM(remaining) as amount FROM orders WHERE market_id = ? AND side = 'sell' AND status IN ('open','partial') GROUP BY price ORDER BY price ASC LIMIT 25`
-      ).bind(market.id).all();
-      const { results: trades } = await c.env.DB.prepare(`
-        SELECT t.id, t.price, t.amount, t.total, t.created_at as time,
-          CASE WHEN o.side = 'buy' THEN 'buy' ELSE 'sell' END as side
-        FROM trades t JOIN orders o ON o.id = t.buy_order_id
-        WHERE t.market_id = ? ORDER BY t.created_at DESC LIMIT 50
-      `).bind(market.id).all();
-      return {
-        bids: (bids as any[]) ?? [],
-        asks: (asks as any[]) ?? [],
-        trades: (trades as any[]) ?? [],
-      };
-    } catch {
-      return null;
+    const market = await c.env.DB.prepare(
+      'SELECT id FROM markets WHERE base_coin = ? AND quote_coin = ?'
+    ).bind(base, quote).first() as any;
+    if (!market) return null;
+    const { results: bids } = await c.env.DB.prepare(
+      `SELECT price, SUM(remaining) as amount FROM orders WHERE market_id = ? AND side = 'buy' AND status IN ('open','partial') GROUP BY price ORDER BY price DESC LIMIT 25`
+    ).bind(market.id).all();
+    const { results: asks } = await c.env.DB.prepare(
+      `SELECT price, SUM(remaining) as amount FROM orders WHERE market_id = ? AND side = 'sell' AND status IN ('open','partial') GROUP BY price ORDER BY price ASC LIMIT 25`
+    ).bind(market.id).all();
+    const { results: trades } = await c.env.DB.prepare(`
+      SELECT t.id, t.price, t.amount, t.total, t.created_at as time,
+        CASE WHEN o.side = 'buy' THEN 'buy' ELSE 'sell' END as side
+      FROM trades t JOIN orders o ON o.id = t.buy_order_id
+      WHERE t.market_id = ? ORDER BY t.created_at DESC LIMIT 50
+    `).bind(market.id).all();
+    return {
+      bids: (bids as any[]) ?? [],
+      asks: (asks as any[]) ?? [],
+      trades: (trades as any[]) ?? [],
+    };
+  };
+
+  // Shared, TTL-cached + single-flight wrapper. Every SSE client watching the
+  // same market reuses ONE D1 read per REAL_MD_TTL_MS instead of each hitting
+  // D1 on its own 1.5s tick — this is the core D1-overload fix.
+  const fetchRealMarketData = async (sym: string) => {
+    const now = Date.now();
+    const entry = realMarketDataCache[sym];
+    if (entry && now - entry.at < REAL_MD_TTL_MS && entry.data !== undefined) {
+      return entry.data;
     }
+    if (entry?.inflight) {
+      // A read is already in progress — piggyback on it.
+      try { return await entry.inflight; } catch { return entry?.data ?? null; }
+    }
+    const p = (async () => {
+      try {
+        const data = await fetchRealMarketDataFromDB(sym);
+        realMarketDataCache[sym] = { at: Date.now(), data };
+        return data;
+      } catch {
+        // On error keep the last good value (if any) and don't hammer D1.
+        realMarketDataCache[sym] = { at: Date.now(), data: entry?.data ?? null };
+        return realMarketDataCache[sym].data;
+      }
+    })();
+    realMarketDataCache[sym] = { at: entry?.at ?? 0, data: entry?.data ?? null, inflight: p };
+    return await p;
   };
 
   const stream = new ReadableStream({
