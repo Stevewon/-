@@ -203,6 +203,24 @@ export default function ReferralPage() {
                 grid-template-columns: minmax(0, 1fr) minmax(320px, 420px) !important;
               }
             }
+            /* ★ Mobile-first referral spacing (2026-09-07). Desktop values in
+               the min-width:768px block; smaller on phones so nothing is
+               cramped or clipped. */
+            .qx-ref-hero { padding: 18px; }
+            .qx-ref-code { font-size: 26px; letter-spacing: 0.12em; padding: 12px 14px; }
+            .qx-ref-card { padding: 16px; }
+            .qx-ref-stat { font-size: 28px; }
+            .qx-ref-linkrow { flex-direction: column; align-items: stretch; }
+            .qx-ref-linkrow > * { width: 100%; }
+            .qx-ref-link { min-width: 0 !important; }
+            @media (min-width: 768px) {
+              .qx-ref-hero { padding: 24px; }
+              .qx-ref-code { font-size: 32px; letter-spacing: 0.15em; padding: 14px 20px; }
+              .qx-ref-card { padding: 20px; }
+              .qx-ref-stat { font-size: 32px; }
+              .qx-ref-linkrow { flex-direction: row; align-items: center; }
+              .qx-ref-linkrow > * { width: auto; }
+            }
           `}</style>
 
           <div
@@ -216,10 +234,7 @@ export default function ReferralPage() {
             {/* LEFT — Code + Share */}
             <div className="space-y-5">
               {/* Hero card with the code */}
-              <div
-                className="bg-gradient-to-br from-exchange-yellow/15 via-exchange-card to-exchange-bg border border-exchange-yellow/30 rounded-2xl"
-                style={{ padding: '24px' }}
-              >
+              <div className="qx-ref-hero bg-gradient-to-br from-exchange-yellow/15 via-exchange-card to-exchange-bg border border-exchange-yellow/30 rounded-2xl">
                 <div className="flex items-center gap-2 text-exchange-yellow mb-3">
                   <Gift size={16} />
                   <span className="text-xs font-semibold uppercase tracking-wider">
@@ -227,60 +242,55 @@ export default function ReferralPage() {
                   </span>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-3 mb-5">
-                  <div
-                    className="font-mono font-bold text-exchange-text tabular-nums select-all bg-exchange-bg border border-exchange-border rounded-xl"
-                    style={{
-                      fontSize: '32px',
-                      letterSpacing: '0.15em',
-                      padding: '14px 20px',
-                    }}
-                  >
+                {/* Code + copy: stacks on mobile, full-width copy button. */}
+                <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3 mb-5">
+                  <div className="qx-ref-code font-mono font-bold text-exchange-text tabular-nums select-all bg-exchange-bg border border-exchange-border rounded-xl text-center sm:text-left break-all">
                     {code || '------'}
                   </div>
                   <button
                     onClick={copyCode}
                     disabled={!code}
-                    className="inline-flex items-center gap-1.5 bg-exchange-yellow text-black hover:bg-exchange-yellow/90 disabled:opacity-50 transition-colors font-semibold"
-                    style={{ padding: '10px 16px', borderRadius: '10px', fontSize: '14px' }}
+                    className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 bg-exchange-yellow text-black hover:bg-exchange-yellow/90 disabled:opacity-50 transition-colors font-semibold"
+                    style={{ padding: '12px 16px', borderRadius: '10px', fontSize: '14px' }}
                   >
                     {copiedCode ? <Check size={16} /> : <Copy size={16} />}
                     {copiedCode ? t('referral.copied') : t('referral.copyCode')}
                   </button>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2">
-                  <div
-                    className="flex-1 min-w-[200px] font-mono text-exchange-text-secondary truncate bg-exchange-bg/60 border border-exchange-border/60 rounded-lg"
+                {/* Link row: stacks on mobile so the link isn't truncated. */}
+                <div className="qx-ref-linkrow flex flex-wrap gap-2">
+                  <div className="qx-ref-link flex-1 min-w-[200px] font-mono text-exchange-text-secondary truncate bg-exchange-bg/60 border border-exchange-border/60 rounded-lg"
                     style={{ fontSize: '13px', padding: '10px 14px' }}
                   >
                     {shareLink || ' '}
                   </div>
-                  <button
-                    onClick={copyLink}
-                    disabled={!code}
-                    className="inline-flex items-center gap-1.5 bg-exchange-hover/60 hover:bg-exchange-hover text-exchange-text disabled:opacity-50 transition-colors"
-                    style={{ padding: '10px 14px', borderRadius: '10px', fontSize: '13px' }}
-                  >
-                    {copiedLink ? <Check size={14} /> : <Copy size={14} />}
-                    {copiedLink ? t('referral.copied') : t('referral.copyLink')}
-                  </button>
-                  <button
-                    onClick={shareNative}
-                    disabled={!code}
-                    className="inline-flex items-center gap-1.5 bg-exchange-buy/15 text-exchange-buy hover:bg-exchange-buy/25 disabled:opacity-50 transition-colors"
-                    style={{ padding: '10px 14px', borderRadius: '10px', fontSize: '13px' }}
-                  >
-                    <Share2 size={14} />
-                    {t('referral.share')}
-                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={copyLink}
+                      disabled={!code}
+                      className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 bg-exchange-hover/60 hover:bg-exchange-hover text-exchange-text disabled:opacity-50 transition-colors"
+                      style={{ padding: '10px 14px', borderRadius: '10px', fontSize: '13px' }}
+                    >
+                      {copiedLink ? <Check size={14} /> : <Copy size={14} />}
+                      {copiedLink ? t('referral.copied') : t('referral.copyLink')}
+                    </button>
+                    <button
+                      onClick={shareNative}
+                      disabled={!code}
+                      className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 bg-exchange-buy/15 text-exchange-buy hover:bg-exchange-buy/25 disabled:opacity-50 transition-colors"
+                      style={{ padding: '10px 14px', borderRadius: '10px', fontSize: '13px' }}
+                    >
+                      <Share2 size={14} />
+                      {t('referral.share')}
+                    </button>
+                  </div>
                 </div>
               </div>
 
               {/* How it works */}
               <div
-                className="bg-exchange-card border border-exchange-border rounded-xl"
-                style={{ padding: '20px' }}
+                className="qx-ref-card bg-exchange-card border border-exchange-border rounded-xl"
               >
                 <h3 className="text-sm font-bold text-exchange-text mb-3 flex items-center gap-2">
                   <TrendingUp size={16} className="text-exchange-yellow" />
@@ -349,16 +359,15 @@ export default function ReferralPage() {
             {/* RIGHT — Stats */}
             <aside className="space-y-4">
               <div
-                className="bg-exchange-card border border-exchange-border rounded-xl"
-                style={{ padding: '20px' }}
+                className="qx-ref-card bg-exchange-card border border-exchange-border rounded-xl"
               >
                 <div className="flex items-center gap-2 text-exchange-text-secondary mb-2">
                   <Users size={14} />
                   <span className="text-xs uppercase tracking-wider">{t('referral.invitedCount')}</span>
                 </div>
                 <div
-                  className="font-bold text-exchange-text tabular-nums"
-                  style={{ fontSize: '32px', lineHeight: 1.1 }}
+                  className="qx-ref-stat font-bold text-exchange-text tabular-nums"
+                  style={{ lineHeight: 1.1 }}
                 >
                   {directCount}
                 </div>
@@ -377,16 +386,15 @@ export default function ReferralPage() {
               </div>
 
               <div
-                className="bg-exchange-card border border-exchange-border rounded-xl"
-                style={{ padding: '20px' }}
+                className="qx-ref-card bg-exchange-card border border-exchange-border rounded-xl"
               >
                 <div className="flex items-center gap-2 text-exchange-text-secondary mb-2">
                   <Gift size={14} className="text-exchange-yellow" />
                   <span className="text-xs uppercase tracking-wider">{t('referral.totalEarned')}</span>
                 </div>
                 <div
-                  className="font-bold text-exchange-yellow tabular-nums"
-                  style={{ fontSize: '32px', lineHeight: 1.1 }}
+                  className="qx-ref-stat font-bold text-exchange-yellow tabular-nums"
+                  style={{ lineHeight: 1.1 }}
                 >
                   {(data?.total_reward_qx ?? data?.total_reward_qta ?? 0).toLocaleString()}
                   <span className="text-base text-exchange-text-secondary ml-1.5 font-medium">QX</span>
@@ -400,10 +408,7 @@ export default function ReferralPage() {
 
               {/* Per-level breakdown */}
               {data?.by_level && (
-                <div
-                  className="bg-exchange-card border border-exchange-border rounded-xl"
-                  style={{ padding: '20px' }}
-                >
+                <div className="qx-ref-card bg-exchange-card border border-exchange-border rounded-xl">
                   <div className="flex items-center gap-2 text-exchange-text-secondary mb-3">
                     <TrendingUp size={14} className="text-exchange-yellow" />
                     <span className="text-xs uppercase tracking-wider">{t('referral.byLevelTitle')}</span>
@@ -557,7 +562,7 @@ export default function ReferralPage() {
               <h3 className="text-sm font-bold text-exchange-text">{t('referral.matchTitle')}</h3>
             </div>
 
-            <div style={{ padding: '20px' }} className="space-y-5">
+            <div className="qx-ref-card space-y-5">
               <p className="text-xs text-exchange-text-secondary leading-relaxed">
                 {t('referral.matchIntro')}
               </p>
