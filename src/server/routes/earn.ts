@@ -1208,6 +1208,135 @@ app.post('/withdraw-dividend', authMiddleware, async (c) => {
 // --------------------------------------------------------------------------
 // GET /dividends — recent dividend + match ledger for the user.
 // --------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Daily dividend ACCRUAL LEDGER — one row PER position PER Korean calendar day.
+// ★ OWNER RULE (2026-09-07): "내역이 계속 쌓이는게 각 사용자에게 보여야 한다."
+//   The live `accrued_dividend_qta` only shows the running TOTAL. Members must
+//   also see a day-by-day list (9/8 +725, 9/9 +725, ...). We persist one
+//   immutable snapshot row for each completed KST day so the history survives
+//   even after claim/redeem and can be listed on the Earn page.
+// ---------------------------------------------------------------------------
+async function ensureDailyAccrualTable(c: any): Promise<void> {
+  try {
+    await c.env.DB.batch([
+      c.env.DB.prepare(
+        `CREATE TABLE IF NOT EXISTS staking_daily_accruals (
+           id           TEXT PRIMARY KEY,
+           position_id  TEXT NOT NULL,
+           user_id      TEXT NOT NULL,
+           day_index    INTEGER NOT NULL,   -- KST day index (from kstDayIndex)
+           kst_date     TEXT NOT NULL,      -- 'YYYY-MM-DD' (KST) for display
+           daily_qta    REAL NOT NULL,      -- QTA accrued THAT day
+           daily_usd    REAL NOT NULL,      -- USD value THAT day
+           cumulative_qta REAL NOT NULL,    -- running total up to & incl. that day
+           created_at   TEXT NOT NULL
+         )`
+      ),
+      c.env.DB.prepare(
+        `CREATE UNIQUE INDEX IF NOT EXISTS idx_sda_pos_day
+           ON staking_daily_accruals(position_id, day_index)`
+      ),
+      c.env.DB.prepare(
+        `CREATE INDEX IF NOT EXISTS idx_sda_user
+           ON staking_daily_accruals(user_id, day_index)`
+      ),
+    ]);
+  } catch { /* table may already exist */ }
+}
+
+// 'YYYY-MM-DD' for a KST day-index (day 0 = 1970-01-01 KST).
+function kstDateFromIndex(dayIndex: number): string {
+  return new Date(dayIndex * MS_PER_DAY).toISOString().slice(0, 10);
+}
+
+// POST /accrue-daily — idempotent snapshot writer. For every ACTIVE position,
+// insert any MISSING daily rows up to (but not including) today's KST day
+// (income starts D+1). Safe to run many times a day: UNIQUE(position_id,
+// day_index) makes re-runs a no-op. Called by the cron worker once per day.
+app.post('/accrue-daily', async (c) => {
+  // Guard: only the cron worker (which holds TWAP_CRON_SECRET) may trigger this.
+  const secret = (c.env as any).TWAP_CRON_SECRET as string | undefined;
+  if (secret) {
+    const provided = c.req.header('x-twap-secret');
+    if (provided !== secret) return c.json({ error: 'forbidden' }, 403);
+  }
+  await ensureDailyAccrualTable(c);
+  const now = Date.now();
+  const basis = await qtaStakeBasisPrice(c);
+  const todayIdx = kstDayIndex(now);
+
+  const { results } = await c.env.DB.prepare(
+    `SELECT * FROM staking_positions WHERE status = 'active'`
+  ).all();
+
+  let inserted = 0;
+  for (const p of ((results || []) as any[])) {
+    const startIdx = kstDayIndex(p.created_at ? Date.parse(p.created_at) : now);
+    const term = Number(p.term_days || 0);
+    // Payable KST days so far: D+1..today, capped at the term length.
+    const maxDay = Math.min(todayIdx - startIdx, term);
+    if (maxDay < 1) continue;
+
+    // The fixed QTA quantity earned per day = staked qty × daily_rate.
+    const stakedQta = stakedQtyOf(p, basis);
+    const dailyQta = stakedQta * Number(p.daily_rate || 0);
+    const dailyUsd = Number(p.principal_usd || 0) * Number(p.daily_rate || 0);
+    if (!(dailyQta > 0)) continue;
+
+    // Which day rows already exist for this position?
+    const existing = await c.env.DB.prepare(
+      `SELECT COALESCE(MAX(day_index),0) AS maxd, COUNT(*) AS n
+         FROM staking_daily_accruals WHERE position_id = ?`
+    ).bind(p.id).first<any>().catch(() => ({ maxd: 0, n: 0 }));
+    const already = Number(existing?.n || 0);
+
+    const stmts: any[] = [];
+    for (let d = 1; d <= maxDay; d++) {
+      const dayIndex = startIdx + d;             // the KST day this row is for
+      const cumulativeQta = dailyQta * d;
+      stmts.push(
+        c.env.DB.prepare(
+          `INSERT OR IGNORE INTO staking_daily_accruals
+             (id, position_id, user_id, day_index, kst_date, daily_qta,
+              daily_usd, cumulative_qta, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?)`
+        ).bind(
+          uuid(), p.id, p.user_id, dayIndex, kstDateFromIndex(dayIndex),
+          dailyQta, dailyUsd, cumulativeQta, new Date().toISOString(),
+        ),
+      );
+    }
+    if (stmts.length) {
+      // Batch in chunks so a long-running position (up to 360 rows) is safe.
+      for (let i = 0; i < stmts.length; i += 40) {
+        const res = await c.env.DB.batch(stmts.slice(i, i + 40));
+        for (const r of res) if (((r as any)?.meta?.changes ?? 0) > 0) inserted++;
+      }
+    }
+    void already;
+  }
+  return c.json({ ok: true, inserted });
+});
+
+// GET /dividend-history — the member's DAY-BY-DAY dividend accrual ledger.
+// This is the "내역이 계속 쌓이는" list each member sees on the Earn page.
+app.get('/dividend-history', authMiddleware, async (c) => {
+  const user = c.get('user');
+  await ensureDailyAccrualTable(c);
+  const { results } = await c.env.DB.prepare(
+    `SELECT sda.kst_date, sda.day_index, sda.daily_qta, sda.daily_usd,
+            sda.cumulative_qta, sp.product_id, sp.daily_rate
+       FROM staking_daily_accruals sda
+       JOIN staking_positions sp ON sp.id = sda.position_id
+      WHERE sda.user_id = ?
+      ORDER BY sda.day_index DESC, sda.created_at DESC
+      LIMIT 400`
+  ).bind(user.id).all<any>().catch(() => ({ results: [] as any[] }));
+  const rows = (results || []) as any[];
+  const totalQta = rows.reduce((s, r) => s + Number(r.daily_qta || 0), 0);
+  return c.json({ history: rows, total_qta: totalQta });
+});
+
 app.get('/dividends', authMiddleware, async (c) => {
   const user = c.get('user');
   const { results } = await c.env.DB.prepare(

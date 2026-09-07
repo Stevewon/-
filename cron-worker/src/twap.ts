@@ -138,3 +138,37 @@ export async function qtaMmTick(env: TwapEnv): Promise<void> {
     console.warn('[mm] tick failed:', String(e?.message || e).slice(0, 200));
   }
 }
+
+// ============================================================================
+// Daily staking dividend ACCRUAL — cron driver. Pokes /api/earn/accrue-daily
+// once per day (on the 03:00 UTC = 12:00 KST tick) so every active staking
+// position gets an immutable day-by-day dividend snapshot row. This is what
+// powers the "배당 내역" list each member sees on the Earn page. Idempotent:
+// the endpoint uses INSERT OR IGNORE keyed on (position_id, day_index), so
+// re-runs never double-count. Guarded by TWAP_CRON_SECRET.
+// ============================================================================
+export async function stakingAccrueDaily(env: TwapEnv): Promise<void> {
+  const secret = env.TWAP_CRON_SECRET;
+  if (!secret) {
+    console.log('[accrue] TWAP_CRON_SECRET not set; skipping daily accrual');
+    return;
+  }
+  const base = (env.APP_URL || 'https://quantaex.io').replace(/\/+$/, '');
+  const url = `${base}/api/earn/accrue-daily`;
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-twap-secret': secret },
+      body: '{}',
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      console.warn(`[accrue] daily HTTP ${res.status}: ${body.slice(0, 200)}`);
+      return;
+    }
+    const data: any = await res.json().catch(() => ({}));
+    console.log(`[accrue] daily ok — inserted=${data?.inserted ?? 0} rows`);
+  } catch (e: any) {
+    console.warn('[accrue] daily failed:', String(e?.message || e).slice(0, 200));
+  }
+}

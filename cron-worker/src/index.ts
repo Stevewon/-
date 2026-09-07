@@ -53,7 +53,7 @@ import { runMigrations } from './migrate';
 import { binaryMatchingTick } from './binary-matching';
 import { scanExtDeposits, extDepositTick } from './ext-watcher';
 import { sweepExtDeposits } from './ext-sweep';
-import { twapTick, qtaAutobuyTick, qtaMmTick } from './twap';
+import { twapTick, qtaAutobuyTick, qtaMmTick, stakingAccrueDaily } from './twap';
 import { deriveEvmAccount, evmAddressIsValid } from './lib/ext-evm-signer';
 import { validateMnemonic as validateBip39 } from '@scure/bip39';
 import { wordlist as bip39Wordlist } from '@scure/bip39/wordlists/english.js';
@@ -1314,8 +1314,15 @@ export default {
     const cron = (event as any).cron as string | undefined;
 
     if (cron === '0 3 * * *') {
+      // Daily (03:00 UTC = 12:00 KST): snapshot each active staking position's
+      // per-day dividend so members see a growing "배당 내역" list, THEN back up.
       ctx.waitUntil(
         (async () => {
+          try {
+            await stakingAccrueDaily(env);
+          } catch (e) {
+            console.error('[cron] staking daily accrual failed:', e);
+          }
           try {
             const r = await backupD1ToR2(env);
             console.log('[cron] d1 backup:', r);

@@ -109,6 +109,16 @@ interface MatchHistoryRow {
   created_at: string;
 }
 
+interface DivHistoryRow {
+  kst_date: string;
+  day_index: number;
+  daily_qta: number;
+  daily_usd: number;
+  cumulative_qta: number;
+  product_id: string;
+  daily_rate: number;
+}
+
 interface BinaryMember { id: string; nickname: string; joined_at: string; staked_usd?: number; assigned_at?: string | null; }
 interface BinaryTree {
   volume: {
@@ -180,6 +190,11 @@ export default function EarnPage() {
   const [matchHistory, setMatchHistory] = useState<MatchHistoryRow[]>([]);
   const [matchHistoryOpen, setMatchHistoryOpen] = useState(false);
 
+  // ★ OWNER RULE (2026-09-07): each member can SEE their DAY-BY-DAY dividend
+  //   accrual list (배당 내역 — 매일 쌓이는 이자 기록).
+  const [divHistory, setDivHistory] = useState<DivHistoryRow[]>([]);
+  const [divHistoryOpen, setDivHistoryOpen] = useState(true);
+
   const qtaBalance = wallets.find((w) => w.coin_symbol === 'QTA')?.available || 0;
 
   const loadBinary = useCallback(async () => {
@@ -207,6 +222,15 @@ export default function EarnPage() {
     } catch { /* not logged in */ }
   }, [user]);
 
+  // Day-by-day dividend accrual history (배당 내역).
+  const loadDivHistory = useCallback(async () => {
+    if (!user) { setDivHistory([]); return; }
+    try {
+      const res = await api.get('/earn/dividend-history');
+      setDivHistory(res.data.history || []);
+    } catch { /* not logged in */ }
+  }, [user]);
+
   // Live USDT price (usually $1.00) — read from the public market coins list
   // so QTA→USDT withdrawal conversion uses the moment's real peg.
   const loadUsdtPrice = useCallback(async () => {
@@ -231,10 +255,10 @@ export default function EarnPage() {
   }, [user]);
 
   useEffect(() => { loadProducts(); loadUsdtPrice(); }, [loadProducts, loadUsdtPrice]);
-  useEffect(() => { loadPositions(); loadBinary(); loadMatchHistory(); if (user) fetchWallets(); }, [user, loadPositions, loadBinary, loadMatchHistory]);
+  useEffect(() => { loadPositions(); loadBinary(); loadMatchHistory(); loadDivHistory(); if (user) fetchWallets(); }, [user, loadPositions, loadBinary, loadMatchHistory, loadDivHistory]);
 
   const refreshAll = async () => {
-    await Promise.all([loadPositions(), fetchWallets(), loadProducts(), loadUsdtPrice(), loadBinary(), loadMatchHistory()]);
+    await Promise.all([loadPositions(), fetchWallets(), loadProducts(), loadUsdtPrice(), loadBinary(), loadMatchHistory(), loadDivHistory()]);
   };
 
   // Sponsor assigns an unplaced downline member to their Left/Right leg (ONCE).
@@ -445,6 +469,51 @@ export default function EarnPage() {
               )}
             </div>
           )}
+
+          {/* ★ Dividend accrual history — the day-by-day list of daily interest
+              that keeps piling up, visible to each member (배당 내역). */}
+          <div className="mt-3 pt-3 border-t border-exchange-border">
+            <button
+              onClick={() => setDivHistoryOpen((v) => !v)}
+              className="flex items-center justify-between w-full text-[12px] font-semibold text-exchange-text"
+            >
+              <span>{t('earn.divHistoryTitle')}</span>
+              <span className="text-exchange-text-third">
+                {divHistoryOpen ? '▲' : '▼'} {divHistory.length}
+              </span>
+            </button>
+            {divHistoryOpen && (
+              divHistory.length > 0 ? (
+                <div className="mt-2 space-y-1.5 max-h-64 overflow-y-auto">
+                  {divHistory.map((d, i) => (
+                    <div
+                      key={`${d.product_id}-${d.day_index}-${i}`}
+                      className="flex items-center justify-between text-[11px] bg-exchange-bg rounded-lg px-3 py-2"
+                    >
+                      <div className="min-w-0">
+                        <div className="text-exchange-buy tabular-nums font-medium">
+                          +{formatAmount(d.daily_qta)} QTA
+                        </div>
+                        <div className="text-exchange-text-third tabular-nums mt-0.5">
+                          {d.kst_date} · {fmtUsd(d.daily_usd)}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-[10px] text-exchange-text-third">{t('earn.divCumulative')}</div>
+                        <div className="text-exchange-text tabular-nums font-medium">
+                          {formatAmount(d.cumulative_qta)} QTA
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-2 text-[11px] text-exchange-text-third leading-relaxed">
+                  {t('earn.divHistoryEmpty')}
+                </p>
+              )
+            )}
+          </div>
         </div>
       )}
 
