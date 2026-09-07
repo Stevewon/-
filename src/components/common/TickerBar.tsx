@@ -7,14 +7,23 @@ export default function TickerBar() {
   const { markets, tickers } = useStore();
   const navigate = useNavigate();
 
+  // ★ OWNER RULE (2026-09-07): our own coins scroll FIRST — QTA, then QX, then
+  //   QKEY — followed by everything else in its existing (BTC-first) order.
+  const PRIORITY: Record<string, number> = { QTA: 0, QX: 1, QKEY: 2 };
   const items = markets
     .filter((m) => m.quote_coin === 'USDT')
-    .map((m) => {
+    .map((m, idx) => {
       const sym = `${m.base_coin}-${m.quote_coin}`;
       const t = tickers[sym];
-      return { sym, base: m.base_coin, last: t?.last || 0, change: t?.change || 0 };
+      return { sym, base: m.base_coin, last: t?.last || 0, change: t?.change || 0, _idx: idx };
     })
-    .filter((item) => item.last > 0);
+    .filter((item) => item.last > 0)
+    .sort((a, b) => {
+      const pa = PRIORITY[a.base] ?? 99;
+      const pb = PRIORITY[b.base] ?? 99;
+      if (pa !== pb) return pa - pb;   // our coins first, in fixed order
+      return a._idx - b._idx;          // otherwise keep original order
+    });
 
   if (items.length === 0) return null;
 
