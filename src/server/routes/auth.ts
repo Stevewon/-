@@ -627,10 +627,16 @@ app.post('/login', rlLogin, turnstileLogin, async (c) => {
       await recordLogin(c, user.id, 'failed', 'bad_totp');
       return c.json({ error: 'Invalid 2FA code' }, 401);
     }
-  } else {
+  } else if (emailOtpLoginEnabled(c)) {
     // ---- Email OTP step-up (Bybit-style) ----
     // Accounts without an authenticator app must still confirm ownership of
     // the inbox with a one-time email code. Password alone is NOT enough.
+    //
+    // ★ OPERATOR SWITCH (2026-09-07): this whole step-up is gated by
+    //   emailOtpLoginEnabled(). When the D1 database is overloaded the OTP
+    //   email cannot be sent (and the code is invalidated), which would lock
+    //   EVERY member out. Setting LOGIN_EMAIL_OTP='off' skips the step-up so
+    //   password (+ Turnstile + optional TOTP) alone logs the user in.
     if (!emailOtp) {
       // First submit: password is correct → issue an email code and ask the
       // client to collect it. Never reveal whether the password was right via
@@ -782,6 +788,16 @@ function randomOtpCode(): string {
  * invalidation. Returns whether a code was sent and, in dev/preview (no mail
  * provider), the raw code so the flow is still testable.
  */
+// Operator switch for the email-OTP login step-up. Defaults to ENABLED to
+// preserve the stricter behaviour; set LOGIN_EMAIL_OTP='off' (or 'false'/'0')
+// to disable it so password alone logs the user in — used to keep members able
+// to sign in while the D1 database is overloaded and OTP email can't be sent.
+function emailOtpLoginEnabled(c: any): boolean {
+  const v = String((c.env as any).LOGIN_EMAIL_OTP ?? '').trim().toLowerCase();
+  if (v === 'off' || v === 'false' || v === '0' || v === 'disabled') return false;
+  return true;
+}
+
 async function issueLoginOtp(
   c: any,
   user: { id: string; email: string },

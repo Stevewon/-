@@ -17,3 +17,6 @@ signup_healthcheck.stdout.log
 *.healthcheck.log
 backups/
 manual/
+_login.mjs
+_*.mjs
+_*.png
