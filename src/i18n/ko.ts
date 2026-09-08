@@ -1721,6 +1721,10 @@ const ko = {
   'swap.errNoQkey': '스왑할 QKEY 잔액이 없습니다.',
   'swap.errInsufficient': 'QKEY 잔액이 부족합니다.',
   'swap.errFailed': '스왑에 실패했습니다. 다시 시도해 주세요.',
+  'swap.popupBody': '기간 한정! 보유하신 QKEY를 QTA로 2배 스왑하세요. 1 QKEY가 2 QTA로 — 놓치지 마세요!',
+  'swap.endsAt': '종료',
+  'swap.popupCta': '지금 스왑하기',
+  'swap.dontShowToday': '오늘 하루 보지 않기',
 };
 
 export default ko;

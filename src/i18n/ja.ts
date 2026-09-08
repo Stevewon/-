@@ -1728,6 +1728,10 @@ const ja = {
   'swap.errNoQkey': 'スワップできるQKEY残高がありません。',
   'swap.errInsufficient': 'QKEY残高が不足しています。',
   'swap.errFailed': 'スワップに失敗しました。もう一度お試しください。',
+  'swap.popupBody': '期間限定！保有中のQKEYをQTAへ2倍スワップ。1 QKEYが2 QTAに — お見逃しなく！',
+  'swap.endsAt': '終了',
+  'swap.popupCta': '今すぐスワップ',
+  'swap.dontShowToday': '今日は表示しない',
 };
 
 export default ja;

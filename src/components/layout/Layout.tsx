@@ -8,6 +8,7 @@ import TickerBar from '../common/TickerBar';
 import Footer from '../common/Footer';
 import NotificationBell from '../common/NotificationBell';
 import EmailVerifyBanner from '../common/EmailVerifyBanner';
+import EventPopup from '../common/EventPopup';
 
 export default function Layout() {
   const { user, logout } = useStore();
@@ -49,6 +50,9 @@ export default function Layout() {
 
   return (
     <div className="min-h-screen w-full max-w-full min-w-0 overflow-x-hidden flex flex-col bg-exchange-bg">
+      {/* Site-wide EVENT popup (QKEY→QTA swap; self-hides after the deadline) */}
+      <EventPopup />
+
       {/* Top Ticker Bar */}
       <TickerBar />
 
