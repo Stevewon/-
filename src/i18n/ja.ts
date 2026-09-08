@@ -1397,8 +1397,9 @@ const ja = {
   // refCode UI on LoginPage + RegisterPage (Google OAuth refCode flow,
   // Task 2 / 2026-05-14). Mirrors REGISTER refCode copy.
   'auth.refCode': '紹介コード',
-  'auth.refCodeAdd': '紹介コードを追加（任意）',
+  'auth.refCodeAdd': '紹介コードを入力（必須）',
   'auth.refCodeInvalid': '無効なコード',
+  'auth.refCodeRequired': '登録には紹介コードが必要です。招待リンクをご利用いただくか、有効なコードを入力してください。',
   'auth.refCodePlaceholder': '例：ABC123',
   'auth.refCodeGoogleHint': '新規Google登録時のみ適用 — 既存アカウントには影響しません',
   // ── No-referral-code warning modal (referral link can ONLY be set at signup) ──
@@ -1476,6 +1477,7 @@ const ja = {
   'referral.referredByPre': 'あなたを招待したのは',
   'referral.loadFailed': '紹介データの読み込みに失敗しました',
   'auth.optional': '任意',
+  'auth.required': '必須',
   'auth.agreeTermsPre': '以下を読み、同意します：',
   'auth.termsOfService': '利用規約',
   'auth.privacyPolicy': 'プライバシーポリシー',

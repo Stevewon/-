@@ -1400,8 +1400,9 @@ const en = {
   // refCode UI on LoginPage + RegisterPage (Google OAuth refCode flow,
   // Task 2 / 2026-05-14). Mirrors REGISTER refCode copy.
   'auth.refCode': 'Referral code',
-  'auth.refCodeAdd': 'Add referral code (optional)',
+  'auth.refCodeAdd': 'Enter referral code (required)',
   'auth.refCodeInvalid': 'Invalid code',
+  'auth.refCodeRequired': 'A referral code is required to sign up. Please use an invitation link or enter a valid code.',
   'auth.refCodePlaceholder': 'e.g. ABC123',
   'auth.refCodeGoogleHint': 'Applied only on new Google sign-up — no effect for existing accounts',
   // ── No-referral-code warning modal (referral link can ONLY be set at signup) ──
@@ -1479,6 +1480,7 @@ const en = {
   'referral.referredByPre': 'You were invited by',
   'referral.loadFailed': 'Failed to load referral data',
   'auth.optional': 'optional',
+  'auth.required': 'required',
   'auth.agreeTermsPre': 'I have read and agree to the',
   'auth.termsOfService': 'Terms of Service',
   'auth.privacyPolicy': 'Privacy Policy',

@@ -1390,8 +1390,9 @@ const ko = {
   // refCode UI on LoginPage + RegisterPage (Google OAuth refCode flow,
   // Task 2 / 2026-05-14). Mirrors REGISTER refCode copy.
   'auth.refCode': '추천 코드',
-  'auth.refCodeAdd': '추천 코드 입력 (선택)',
+  'auth.refCodeAdd': '추천 코드 입력 (필수)',
   'auth.refCodeInvalid': '유효하지 않은 코드',
+  'auth.refCodeRequired': '가입하려면 추천 코드가 필요합니다. 초대 링크를 이용하거나 유효한 코드를 입력해 주세요.',
   'auth.refCodePlaceholder': '예: ABC123',
   'auth.refCodeGoogleHint': '구글 신규 가입 시에만 적용 — 기존 계정 로그인엔 영향 없음',
   // ── 추천코드 미입력 경고 모달 (추천 관계는 가입 시에만 지정 가능) ──
@@ -1468,6 +1469,7 @@ const ko = {
   'referral.referredByPre': '나를 초대한 사람',
   'referral.loadFailed': '추천인 정보를 불러오지 못했습니다',
   'auth.optional': '선택',
+  'auth.required': '필수',
   'auth.agreeTermsPre': '본인은',
   'auth.termsOfService': '이용약관',
   'auth.privacyPolicy': '개인정보 처리방침',

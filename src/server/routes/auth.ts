@@ -334,17 +334,27 @@ app.post('/register', rlRegister, turnstile, async (c) => {
   const existingNick = await c.env.DB.prepare('SELECT id FROM users WHERE nickname = ?').bind(nickname).first();
   if (existingNick) return c.json({ error: 'Nickname already taken' }, 400);
 
-  // Validate referral code (if supplied) BEFORE creating the user so we can
-  // return a clean 400 if the code is invalid. Self-referral is impossible
-  // here because the user does not exist yet.
-  let referrer: { id: string; email: string; nickname: string } | null = null;
-  if (refCode) {
-    referrer = await c.env.DB.prepare(
+  // ★ OWNER RULE (2026-09-08): a referral code is now MANDATORY. Nobody can
+  //   register without a valid referral code — invitation-only signup. We
+  //   enforce this on the SERVER (the real gate) so an API caller cannot
+  //   bypass the frontend. The client also blocks empty codes, but this is
+  //   the authoritative check.
+  if (!refCode) {
+    return c.json(
+      { error: 'A referral code is required to register', code: 'REFERRAL_REQUIRED' },
+      400,
+    );
+  }
+
+  // Validate the referral code BEFORE creating the user so we can return a
+  // clean 400 if the code is invalid. Self-referral is impossible here because
+  // the user does not exist yet.
+  const referrer: { id: string; email: string; nickname: string } | null =
+    await c.env.DB.prepare(
       `SELECT id, email, nickname FROM users WHERE referral_code = ?`
     ).bind(refCode).first<any>();
-    if (!referrer) {
-      return c.json({ error: 'Invalid referral code' }, 400);
-    }
+  if (!referrer) {
+    return c.json({ error: 'Invalid referral code', code: 'REFERRAL_INVALID' }, 400);
   }
 
   const id = uuid();
@@ -1152,6 +1162,24 @@ app.post('/google', rlLogin, async (c) => {
   // ---- Priority 3: brand-new signup ----
   if (!user) {
     isNewUser = true;
+
+    // ★ OWNER RULE (2026-09-08): referral code is MANDATORY for brand-new
+    //   signups — including Google/social. No account is created without a
+    //   valid referral code. Existing users logging in / linking Google are
+    //   unaffected (this branch only runs when there is no matching account).
+    if (!refCode) {
+      return c.json(
+        { error: 'A referral code is required to register', code: 'REFERRAL_REQUIRED' },
+        400,
+      );
+    }
+    const gRefRow = await c.env.DB.prepare(
+      `SELECT id FROM users WHERE referral_code = ?`
+    ).bind(refCode).first<{ id: string }>();
+    if (!gRefRow) {
+      return c.json({ error: 'Invalid referral code', code: 'REFERRAL_INVALID' }, 400);
+    }
+
     const id = uuid();
     const sentinelHash = bcrypt.hashSync(GOOGLE_PASSWORD_SENTINEL, 10);
 

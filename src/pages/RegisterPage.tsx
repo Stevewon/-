@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { Eye, EyeOff, Check, X, Mail, User as UserIcon, Gift, AlertCircle } from 'lucide-react';
+import { Eye, EyeOff, Check, X, Mail, User as UserIcon, Gift } from 'lucide-react';
 import useStore from '../store/useStore';
 import { useI18n } from '../i18n';
 import api from '../utils/api';
@@ -131,8 +131,6 @@ export default function RegisterPage() {
   const [password, setPassword] = useState('');
   const [confirmPw, setConfirmPw] = useState('');
   const [refCode, setRefCode] = useState('');
-  const [showRef, setShowRef] = useState(false);
-  const [showNoRefWarn, setShowNoRefWarn] = useState(false);
   const [refCheck, setRefCheck] = useState<{
     // 'unknown' = the validation request itself failed (network / geo-block),
     // so we could NOT determine validity. This must NOT be treated as invalid,
@@ -207,8 +205,10 @@ export default function RegisterPage() {
       }
       navigate('/wallet');
     } catch (err: any) {
-      const msg = err?.response?.data?.error || t('auth.googleFailed') || 'Google login failed';
-      setError(msg);
+      const code = err?.response?.data?.code;
+      if (code === 'REFERRAL_REQUIRED') setError(t('auth.refCodeRequired'));
+      else if (code === 'REFERRAL_INVALID') setError(t('auth.refCodeInvalid') || 'Invalid referral code');
+      else setError(err?.response?.data?.error || t('auth.googleFailed') || 'Google login failed');
     } finally {
       setGoogleLoading(false);
     }
@@ -216,9 +216,14 @@ export default function RegisterPage() {
 
   const handleGoogleClick = async () => {
     setError('');
-    // Block if refCode is non-empty but invalid — on the register page we
-    // expect the user to fix the code rather than silently ignore it.
-    if (refCode && refCheck.state === 'invalid') {
+    // ★ OWNER RULE (2026-09-08): referral code MANDATORY — also for Google
+    //   sign-up. Block the Google flow entirely until a valid code is present,
+    //   so a brand-new Google account can never be created without one. (The
+    //   server also enforces this, but we stop here for a clean UX.)
+    if (!refCode.trim()) {
+      return setError(t('auth.refCodeRequired'));
+    }
+    if (refCheck.state === 'invalid') {
       return setError(t('auth.refCodeInvalid') || 'Invalid referral code');
     }
 
@@ -321,7 +326,6 @@ export default function RegisterPage() {
     const fromUrl = searchParams.get('ref');
     if (fromUrl) {
       setRefCode(fromUrl.toUpperCase().trim());
-      setShowRef(true);
     }
   }, [searchParams]);
 
@@ -391,7 +395,12 @@ export default function RegisterPage() {
       setAuth(res.data.user, res.data.token);
       navigate('/wallet');
     } catch (err: any) {
-      setError(err.response?.data?.error || t('auth.registerFailed'));
+      // Rule 0: server returns an English message + a machine CODE; the client
+      // localizes known codes so the user sees their own language.
+      const code = err.response?.data?.code;
+      if (code === 'REFERRAL_REQUIRED') setError(t('auth.refCodeRequired'));
+      else if (code === 'REFERRAL_INVALID') setError(t('auth.refCodeInvalid') || 'Invalid referral code');
+      else setError(err.response?.data?.error || t('auth.registerFailed'));
     } finally {
       setLoading(false);
     }
@@ -408,24 +417,18 @@ export default function RegisterPage() {
     if (!rules.match) return setError(t('auth.passwordMismatch'));
     if (!country) return setError(t('country.desc'));
     if (!agreeTerms) return setError(t('auth.mustAgreeTerms'));
-    // Block submit if a referral code is entered but is invalid.
-    if (refCode && refCheck.state === 'invalid') {
-      return setError('Invalid referral code');
-    }
 
-    // ⚠️ Referral code is recorded ONLY at signup and can NEVER be added later.
-    // Only nag with the "sign up without a code?" warning when NO code is
-    // present at all. If a code IS present (e.g. auto-filled from a
-    // `?ref=CODE` link) we must NOT block on validation state — the check is
-    // debounced 400ms, so a fast submit (state 'checking') or transient
-    // validator failure (state 'unknown') should still go through with the
-    // code attached. The server re-validates and the email register path
-    // always forwards `ref_code`. We already blocked confirmed-invalid codes
-    // above, so anything reaching here is either empty or worth sending.
+    // ★ OWNER RULE (2026-09-08): a referral code is now MANDATORY — invitation-
+    //   only signup. Registration is IMPOSSIBLE without a valid referral code.
+    //   No more "sign up without a code?" bypass. The user must arrive via a
+    //   `?ref=CODE` link (auto-fills the field) or type a valid code.
     const hasRefCode = !!refCode.trim();
     if (!hasRefCode) {
-      setShowNoRefWarn(true);
-      return;
+      return setError(t('auth.refCodeRequired'));
+    }
+    // Block submit if the entered code is confirmed invalid.
+    if (refCheck.state === 'invalid') {
+      return setError(t('auth.refCodeInvalid') || 'Invalid referral code');
     }
 
     await doRegister();
@@ -433,59 +436,6 @@ export default function RegisterPage() {
 
   return (
     <AuthLayout variant="register">
-      {/* ⚠️ No-referral-code warning — the referral link can ONLY be set now */}
-      {showNoRefWarn && (
-        <div
-          className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/70"
-          onClick={() => setShowNoRefWarn(false)}
-        >
-          <div
-            className="w-full max-w-md rounded-2xl border-2 border-exchange-sell/60 bg-exchange-card p-6 shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-start gap-3">
-              <div className="mt-0.5 flex h-10 w-10 flex-none items-center justify-center rounded-full bg-exchange-sell/15">
-                <AlertCircle size={22} className="text-exchange-sell" />
-              </div>
-              <div className="min-w-0">
-                <h3 className="text-[17px] font-bold text-exchange-text">
-                  {t('auth.noRefWarnTitle')}
-                </h3>
-                <p className="mt-2 text-[13.5px] leading-relaxed text-exchange-text-secondary">
-                  {t('auth.noRefWarnBody')}
-                </p>
-              </div>
-            </div>
-            <div className="mt-6 flex flex-col gap-2.5">
-              <button
-                type="button"
-                onClick={() => {
-                  setShowNoRefWarn(false);
-                  setShowRef(true);
-                  setTimeout(() => {
-                    const el = document.querySelector<HTMLInputElement>('input[placeholder="' + (t('auth.referralPlaceholder') || '') + '"]');
-                    el?.focus();
-                  }, 60);
-                }}
-                className="w-full rounded-xl bg-exchange-yellow py-3 text-[15px] font-bold text-black hover:opacity-90 transition-opacity"
-              >
-                {t('auth.noRefWarnEnterCode')}
-              </button>
-              <button
-                type="button"
-                onClick={async () => {
-                  setShowNoRefWarn(false);
-                  await doRegister();
-                }}
-                className="w-full rounded-xl border border-exchange-border py-3 text-[14px] font-medium text-exchange-text-third hover:text-exchange-text hover:border-exchange-text-third transition-colors"
-              >
-                {t('auth.noRefWarnProceed')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Headline + inline login link (Binance mobile pattern) */}
       <div className="mb-8">
         <div className="flex items-start justify-between gap-3">
@@ -716,29 +666,15 @@ export default function RegisterPage() {
           <CountrySelect value={country} onChange={setCountry} />
         </div>
 
-        {/* Referral code */}
+        {/* Referral code — MANDATORY (invitation-only signup, 2026-09-08) */}
         <div>
-          <button
-            type="button"
-            onClick={() => setShowRef(!showRef)}
-            className="text-[14px] font-medium text-exchange-text-secondary hover:text-exchange-yellow transition-colors flex items-center gap-1.5 py-1"
-          >
+          <div className="text-[14px] font-medium text-exchange-text-secondary flex items-center gap-1.5 py-1">
             <span>{t('auth.referralCode')}</span>
-            <span className="text-exchange-text-third">
-              ({t('auth.optional')})
+            <span className="text-exchange-sell font-semibold">
+              ({t('auth.required')})
             </span>
-            <svg
-              width="12"
-              height="12"
-              viewBox="0 0 10 10"
-              fill="currentColor"
-              className={`transition-transform ${showRef ? 'rotate-180' : ''}`}
-            >
-              <path d="M5 7L1 3h8L5 7z" />
-            </svg>
-          </button>
-          {showRef && (
-            <div className="mt-2.5">
+          </div>
+          <div className="mt-2.5">
               <div className="relative">
                 <input
                   type="text"
@@ -771,8 +707,7 @@ export default function RegisterPage() {
                   Invalid referral code
                 </p>
               )}
-            </div>
-          )}
+          </div>
         </div>
 
         {/* Terms */}
