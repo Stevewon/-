@@ -206,20 +206,15 @@ export default function ReferralPage() {
             /* ★ Mobile-first referral spacing (2026-09-07). Desktop values in
                the min-width:768px block; smaller on phones so nothing is
                cramped or clipped. */
-            .qx-ref-hero { padding: 18px; }
-            .qx-ref-code { font-size: 26px; letter-spacing: 0.12em; padding: 12px 14px; }
+            .qx-ref-hero { padding: 16px; }
+            .qx-ref-code { font-size: 24px; letter-spacing: 0.1em; padding: 12px 14px; }
             .qx-ref-card { padding: 16px; }
             .qx-ref-stat { font-size: 28px; }
-            .qx-ref-linkrow { flex-direction: column; align-items: stretch; }
-            .qx-ref-linkrow > * { width: 100%; }
-            .qx-ref-link { min-width: 0 !important; }
             @media (min-width: 768px) {
               .qx-ref-hero { padding: 24px; }
               .qx-ref-code { font-size: 32px; letter-spacing: 0.15em; padding: 14px 20px; }
               .qx-ref-card { padding: 20px; }
               .qx-ref-stat { font-size: 32px; }
-              .qx-ref-linkrow { flex-direction: row; align-items: center; }
-              .qx-ref-linkrow > * { width: auto; }
             }
           `}</style>
 
@@ -258,19 +253,23 @@ export default function ReferralPage() {
                   </button>
                 </div>
 
-                {/* Link row: stacks on mobile so the link isn't truncated. */}
-                <div className="qx-ref-linkrow flex flex-wrap gap-2">
-                  <div className="qx-ref-link flex-1 min-w-[200px] font-mono text-exchange-text-secondary truncate bg-exchange-bg/60 border border-exchange-border/60 rounded-lg"
-                    style={{ fontSize: '13px', padding: '10px 14px' }}
+                {/* Link + actions. The link ALWAYS shows in full (break-all, no
+                    truncation), and the two action buttons sit BELOW it as a
+                    full-width 2-column grid — so nothing is ever clipped or
+                    cramped regardless of the exact viewport width. On wide
+                    desktop it lays out inline. */}
+                <div className="qx-ref-linkrow flex flex-col lg:flex-row lg:items-center gap-2">
+                  <div className="qx-ref-link flex-1 min-w-0 font-mono text-exchange-text-secondary break-all bg-exchange-bg/60 border border-exchange-border/60 rounded-lg"
+                    style={{ fontSize: '12px', padding: '10px 12px', lineHeight: 1.5 }}
                   >
                     {shareLink || ' '}
                   </div>
-                  <div className="flex gap-2">
+                  <div className="grid grid-cols-2 lg:flex gap-2 shrink-0">
                     <button
                       onClick={copyLink}
                       disabled={!code}
-                      className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 bg-exchange-hover/60 hover:bg-exchange-hover text-exchange-text disabled:opacity-50 transition-colors"
-                      style={{ padding: '10px 14px', borderRadius: '10px', fontSize: '13px' }}
+                      className="inline-flex items-center justify-center gap-1.5 bg-exchange-hover/60 hover:bg-exchange-hover text-exchange-text disabled:opacity-50 transition-colors"
+                      style={{ padding: '11px 14px', borderRadius: '10px', fontSize: '13px' }}
                     >
                       {copiedLink ? <Check size={14} /> : <Copy size={14} />}
                       {copiedLink ? t('referral.copied') : t('referral.copyLink')}
@@ -278,8 +277,8 @@ export default function ReferralPage() {
                     <button
                       onClick={shareNative}
                       disabled={!code}
-                      className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 bg-exchange-buy/15 text-exchange-buy hover:bg-exchange-buy/25 disabled:opacity-50 transition-colors"
-                      style={{ padding: '10px 14px', borderRadius: '10px', fontSize: '13px' }}
+                      className="inline-flex items-center justify-center gap-1.5 bg-exchange-buy/15 text-exchange-buy hover:bg-exchange-buy/25 disabled:opacity-50 transition-colors"
+                      style={{ padding: '11px 14px', borderRadius: '10px', fontSize: '13px' }}
                     >
                       <Share2 size={14} />
                       {t('referral.share')}
