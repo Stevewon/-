@@ -3,9 +3,19 @@ import type { AppEnv } from '../index';
 import { getRiskState, getClientIp, isIpBlocked } from '../lib/risk';
 
 // Simple JWT (HMAC-SHA256) for Cloudflare Workers
+//
+// ★ OWNER RULE (2026-09-08): a logged-in session must stay logged in until the
+//   user presses the Logout button themselves. Previously the token expired
+//   after 7 days, which silently kicked users back to /login. We now issue a
+//   very long-lived token (10 years) so the session effectively never expires
+//   on its own. Security is preserved: the HMAC signature is still verified on
+//   every request, and forced revocation / bans still work instantly through
+//   the `token_version` (tv) and `is_active` checks in authMiddleware below —
+//   so we can still invalidate any session server-side when we need to.
+const TOKEN_TTL_SEC = 10 * 365 * 86400; // ~10 years — effectively "until logout"
 async function sign(payload: any, secret: string): Promise<string> {
   const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).replace(/=/g, '');
-  const body = btoa(JSON.stringify({ ...payload, exp: Math.floor(Date.now() / 1000) + 7 * 86400 })).replace(/=/g, '');
+  const body = btoa(JSON.stringify({ ...payload, exp: Math.floor(Date.now() / 1000) + TOKEN_TTL_SEC })).replace(/=/g, '');
   const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
   const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${header}.${body}`));
   const sigStr = btoa(String.fromCharCode(...new Uint8Array(sig))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
@@ -53,7 +63,11 @@ export async function authMiddleware(c: Context<AppEnv>, next: Next) {
   }
 
   const token = c.req.header('Authorization')?.replace('Bearer ', '');
-  if (!token) return c.json({ error: 'Authentication required' }, 401);
+  // No token at all — a plain "you need to log in" signal. This is NOT a
+  // "your session died" event, so the client must not treat it as a forced
+  // logout (the api.ts interceptor keys off code === 'AUTH_REQUIRED' + whether
+  // a token is even stored locally).
+  if (!token) return c.json({ error: 'Authentication required', code: 'AUTH_REQUIRED' }, 401);
 
   try {
     const payload = await verify(token, c.env.JWT_SECRET);
@@ -68,10 +82,12 @@ export async function authMiddleware(c: Context<AppEnv>, next: Next) {
       const row = await c.env.DB.prepare(
         'SELECT token_version, is_active FROM users WHERE id = ?'
       ).bind(payload.id).first<{ token_version: number; is_active: number }>();
-      if (!row) return c.json({ error: 'User not found' }, 401);
-      if (!row.is_active) return c.json({ error: 'Account disabled' }, 403);
+      if (!row) return c.json({ error: 'User not found', code: 'TOKEN_INVALID' }, 401);
+      if (!row.is_active) return c.json({ error: 'Account disabled', code: 'ACCOUNT_DISABLED' }, 403);
       if ((row.token_version || 0) !== (payload.tv || 0)) {
-        return c.json({ error: 'Session expired — please login again' }, 401);
+        // Session was explicitly revoked/rotated server-side (forced logout,
+        // password change, ban lift, etc.) — the client SHOULD drop it.
+        return c.json({ error: 'Session expired — please login again', code: 'SESSION_REVOKED' }, 401);
       }
     } catch (e) {
       // Fail CLOSED: if we cannot confirm the session is still valid, do not
@@ -83,7 +99,10 @@ export async function authMiddleware(c: Context<AppEnv>, next: Next) {
     c.set('user', payload);
     await next();
   } catch {
-    return c.json({ error: 'Invalid token' }, 401);
+    // Signature/format failure or (with the 10-year TTL, practically never)
+    // an expired token — this token can never work again, so tell the client
+    // to drop it.
+    return c.json({ error: 'Invalid token', code: 'TOKEN_INVALID' }, 401);
   }
 }
 

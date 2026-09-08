@@ -39,11 +39,38 @@ api.interceptors.response.use(
       if (isLoginCall || isPasswordChange || isWithdrawFlow || isChallenge) {
         return Promise.reject(err);
       }
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      if (!window.location.pathname.startsWith('/login')) {
-        window.location.href = '/login';
+
+      // ★ OWNER RULE (2026-09-08): keep the user logged in until they press the
+      // Logout button themselves. We ONLY tear down the local session when the
+      // server EXPLICITLY tells us the session is truly dead — i.e. the token
+      // was revoked/rotated (token_version bump), the account was disabled, or
+      // the signature is invalid. A generic / transient 401 (e.g. a stray
+      // member call fired before the token attached, a flaky request, or an
+      // endpoint that merely lacks permission) must NOT nuke the session and
+      // bounce the user to /login. Previously ANY 401 forced a logout, which is
+      // what was kicking signed-in users out unexpectedly.
+      const msg = String(data.error || data.message || '').toLowerCase();
+      const sessionTrulyDead =
+        data.code === 'SESSION_REVOKED' ||
+        data.code === 'TOKEN_INVALID' ||
+        msg.includes('session expired') ||
+        msg.includes('invalid token') ||
+        msg.includes('invalid signature') ||
+        msg.includes('account disabled') ||
+        msg.includes('user not found');
+
+      // No token stored at all → nothing to tear down; just reject and let the
+      // caller / route guard handle navigation.
+      const hasToken = !!localStorage.getItem('token');
+
+      if (sessionTrulyDead && hasToken) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        if (!window.location.pathname.startsWith('/login')) {
+          window.location.href = '/login';
+        }
       }
+      // Otherwise: preserve the session, just surface the error to the caller.
     }
     return Promise.reject(err);
   }
