@@ -11,6 +11,7 @@ import WithdrawModal from '../components/wallet/WithdrawModal';
 import { showToast } from '../components/common/Toast';
 import TransactionDetailModal from '../components/wallet/TransactionDetailModal';
 import BalanceBreakdownModal, { type BalanceBreakdown } from '../components/wallet/BalanceBreakdownModal';
+import QkeyQtaSwapCard from '../components/wallet/QkeyQtaSwapCard';
 import api from '../utils/api';
 import {
   Wallet, Eye, EyeOff, RefreshCw, ArrowDownLeft, ArrowUpRight,
@@ -189,6 +190,9 @@ export default function WalletPage() {
 
   return (
     <DesktopPageLayout>
+      {/* ★ EVENT: QKEY → QTA 2× swap (auto-hides after 2026-09-23 23:59 KST) */}
+      <QkeyQtaSwapCard />
+
       {/*
         Quantarium native + ERC-20 (QTA / QX / QKEY) on-chain deposit &
         withdrawal notice — the chain is live (chain_id 60000), but the

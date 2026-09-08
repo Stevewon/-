@@ -1578,6 +1578,24 @@ const zhTW = {
   'margin.levelWarning': '警告',
   'margin.levelCall': '追加保證金',
   'margin.levelLiq': '強制平倉中',
+
+  // ── QKEY → QTA 2倍兌換活動 (2026-09-08，2026-09-23 23:59 KST 結束) ──
+  'swap.title': 'QKEY → QTA 兌換活動',
+  'swap.desc': '將您的 QKEY 以 2 倍兌換為 QTA！1 QKEY 變成 2 QTA。限時活動，9 月 23 日 23:59（KST）結束。',
+  'swap.youPay': '兌換數量',
+  'swap.youGet': '獲得數量',
+  'swap.balance': '餘額',
+  'swap.cta': '立即兌換',
+  'swap.processing': '處理中…',
+  'swap.noQkeyHint': '您還沒有可兌換的 QKEY。',
+  'swap.doneTitle': '兌換完成',
+  'swap.doneBody': '已兌換 {qkey} QKEY，獲得 {qta} QTA。',
+  'swap.errTitle': '兌換失敗',
+  'swap.errEnded': '兌換活動已結束。',
+  'swap.errAmount': '請輸入有效數量。',
+  'swap.errNoQkey': '沒有可兌換的 QKEY 餘額。',
+  'swap.errInsufficient': 'QKEY 餘額不足。',
+  'swap.errFailed': '兌換失敗，請重試。',
 };
 
 export default zhTW;

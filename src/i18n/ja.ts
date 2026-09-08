@@ -1711,6 +1711,23 @@ const ja = {
   'margin.levelCall': '追証（マージンコール）',
   'margin.levelLiq': '清算中',
 
+  // ── QKEY → QTA 2倍スワップイベント (2026-09-08、2026-09-23 23:59 KST 終了) ──
+  'swap.title': 'QKEY → QTA スワップイベント',
+  'swap.desc': '保有中のQKEYをQTAへ2倍スワップ！1 QKEYが2 QTAに。期間限定、9月23日23:59（KST）まで。',
+  'swap.youPay': 'スワップ数量',
+  'swap.youGet': '受取数量',
+  'swap.balance': '保有',
+  'swap.cta': '今すぐスワップ',
+  'swap.processing': '処理中…',
+  'swap.noQkeyHint': 'スワップできるQKEYがまだありません。',
+  'swap.doneTitle': 'スワップ完了',
+  'swap.doneBody': '{qkey} QKEYをスワップし、{qta} QTAを受け取りました。',
+  'swap.errTitle': 'スワップ失敗',
+  'swap.errEnded': 'スワップイベントは終了しました。',
+  'swap.errAmount': '正しい数量を入力してください。',
+  'swap.errNoQkey': 'スワップできるQKEY残高がありません。',
+  'swap.errInsufficient': 'QKEY残高が不足しています。',
+  'swap.errFailed': 'スワップに失敗しました。もう一度お試しください。',
 };
 
 export default ja;

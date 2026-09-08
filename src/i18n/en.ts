@@ -1714,6 +1714,23 @@ const en = {
   'margin.levelCall': 'Margin call',
   'margin.levelLiq': 'Liquidating',
 
+  // ── QKEY → QTA 2× swap event (2026-09-08, closes 2026-09-23 23:59 KST) ──
+  'swap.title': 'QKEY → QTA Swap Event',
+  'swap.desc': 'Swap your QKEY for QTA at 2× — 1 QKEY becomes 2 QTA. Limited-time event, ends Sep 23, 23:59 (KST).',
+  'swap.youPay': 'You swap',
+  'swap.youGet': 'You receive',
+  'swap.balance': 'Balance',
+  'swap.cta': 'Swap now',
+  'swap.processing': 'Processing…',
+  'swap.noQkeyHint': 'You have no QKEY to swap yet.',
+  'swap.doneTitle': 'Swap complete',
+  'swap.doneBody': 'Swapped {qkey} QKEY → received {qta} QTA.',
+  'swap.errTitle': 'Swap failed',
+  'swap.errEnded': 'The swap event has ended.',
+  'swap.errAmount': 'Please enter a valid amount.',
+  'swap.errNoQkey': 'You have no QKEY balance to swap.',
+  'swap.errInsufficient': 'Insufficient QKEY balance.',
+  'swap.errFailed': 'Swap failed. Please try again.',
 };
 
 export default en;
