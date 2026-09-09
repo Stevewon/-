@@ -1578,24 +1578,6 @@ const zh = {
   'margin.levelWarning': '警告',
   'margin.levelCall': '追加保证金',
   'margin.levelLiq': '强制平仓中',
-
-  // ── QKEY → QTA 2倍兑换活动 (2026-09-08，2026-09-23 23:59 KST 结束) ──
-  'swap.title': 'QKEY → QTA 兑换活动',
-  'swap.desc': '将您的 QKEY 以 2 倍兑换为 QTA！1 QKEY 变成 2 QTA。限时活动，9 月 23 日 23:59（KST）结束。',
-  'swap.youPay': '兑换数量',
-  'swap.youGet': '获得数量',
-  'swap.balance': '余额',
-  'swap.cta': '立即兑换',
-  'swap.processing': '处理中…',
-  'swap.noQkeyHint': '您还没有可兑换的 QKEY。',
-  'swap.doneTitle': '兑换完成',
-  'swap.doneBody': '已兑换 {qkey} QKEY，获得 {qta} QTA。',
-  'swap.errTitle': '兑换失败',
-  'swap.errEnded': '兑换活动已结束。',
-  'swap.errAmount': '请输入有效数量。',
-  'swap.errNoQkey': '没有可兑换的 QKEY 余额。',
-  'swap.errInsufficient': 'QKEY 余额不足。',
-  'swap.errFailed': '兑换失败，请重试。',
 };
 
 export default zh;

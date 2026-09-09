@@ -1704,23 +1704,6 @@ const ko = {
   'margin.levelCall': '마진콜',
   'margin.levelLiq': '청산',
 
-  // ── QKEY → QTA 2배 스왑 이벤트 (2026-09-08, 2026-09-23 23:59 KST 종료) ──
-  'swap.title': 'QKEY → QTA 스왑 이벤트',
-  'swap.desc': '보유한 QKEY를 QTA로 2배 스왑! 1 QKEY가 2 QTA가 됩니다. 기간 한정, 9월 23일 23:59(KST) 종료.',
-  'swap.youPay': '스왑할 수량',
-  'swap.youGet': '받는 수량',
-  'swap.balance': '보유',
-  'swap.cta': '지금 스왑',
-  'swap.processing': '처리 중…',
-  'swap.noQkeyHint': '아직 스왑할 QKEY가 없습니다.',
-  'swap.doneTitle': '스왑 완료',
-  'swap.doneBody': '{qkey} QKEY를 스왑하여 {qta} QTA를 받았습니다.',
-  'swap.errTitle': '스왑 실패',
-  'swap.errEnded': '스왑 이벤트가 종료되었습니다.',
-  'swap.errAmount': '올바른 수량을 입력해 주세요.',
-  'swap.errNoQkey': '스왑할 QKEY 잔액이 없습니다.',
-  'swap.errInsufficient': 'QKEY 잔액이 부족합니다.',
-  'swap.errFailed': '스왑에 실패했습니다. 다시 시도해 주세요.',
 };
 
 export default ko;
