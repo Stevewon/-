@@ -123,140 +123,6 @@ app.get('/breakdown/:symbol', authMiddleware, async (c) => {
   }
 });
 
-// ============================================================================
-// ★ EVENT (2026-09-08): QKEY → QTA 2× SWAP promotion
-// ----------------------------------------------------------------------------
-// Owner directive: during the promo window, a member may swap their QKEY for
-// QTA at a fixed 1 QKEY → 2 QTA rate. QKEY is DEBITED from the member's
-// spendable balance; QTA is CREDITED at 2× (company-issued, so it lands in
-// both `available` and `available_initial`, matching admin-credit behaviour).
-//
-//   • Rate:   1 QKEY = 2 QTA  (fixed)
-//   • Cap:    none (per boss — unlimited per user & overall)
-//   • Window: now  →  2026-09-23 23:59:59 KST  (= 2026-09-23 14:59:59 UTC)
-//
-// The window is enforced SERVER-SIDE so it closes automatically at the
-// deadline with no redeploy needed. All balance changes go through a single
-// D1.batch() so the QKEY debit and the QTA credit are atomic (no half-swap).
-// ============================================================================
-const QKEY_QTA_SWAP_RATE = 2;                          // 1 QKEY → 2 QTA
-// 2026-09-23 23:59:59 KST == 2026-09-23 14:59:59 UTC. Epoch ms (UTC):
-const QKEY_QTA_SWAP_DEADLINE_MS = Date.UTC(2026, 8, 23, 14, 59, 59, 999);
-
-function swapWindowOpen(): boolean {
-  return Date.now() <= QKEY_QTA_SWAP_DEADLINE_MS;
-}
-
-// Public status endpoint so the UI can show/hide the promo + a countdown.
-app.get('/swap/qkey-qta/status', async (c) => {
-  return c.json({
-    open: swapWindowOpen(),
-    rate: QKEY_QTA_SWAP_RATE,
-    from_coin: 'QKEY',
-    to_coin: 'QTA',
-    deadline_ms: QKEY_QTA_SWAP_DEADLINE_MS,
-    deadline_iso: new Date(QKEY_QTA_SWAP_DEADLINE_MS).toISOString(),
-  });
-});
-
-app.post('/swap/qkey-qta', authMiddleware, async (c) => {
-  const user = c.get('user');
-
-  // 1) Window gate — fail closed after the deadline.
-  if (!swapWindowOpen()) {
-    return c.json(
-      { error: 'The QKEY→QTA swap event has ended', code: 'SWAP_EVENT_ENDED' },
-      400,
-    );
-  }
-
-  // 2) Parse & validate amount (QKEY to swap).
-  let body: any;
-  try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON', code: 'BAD_REQUEST' }, 400); }
-  const amount = Number(body?.amount);
-  if (!Number.isFinite(amount) || amount <= 0) {
-    return c.json({ error: 'Invalid amount', code: 'SWAP_BAD_AMOUNT' }, 400);
-  }
-
-  // 3) Load QKEY wallet and check the spendable balance covers it.
-  const qkeyWallet = await c.env.DB.prepare(
-    'SELECT id, available FROM wallets WHERE user_id = ? AND coin_symbol = ?'
-  ).bind(user.id, 'QKEY').first<{ id: string; available: number }>();
-  const qkeyAvail = Number(qkeyWallet?.available || 0);
-  if (!qkeyWallet || qkeyAvail <= 0) {
-    return c.json({ error: 'No QKEY balance to swap', code: 'SWAP_NO_QKEY' }, 400);
-  }
-  // Guard against float dust: allow a tiny epsilon so "swap all" works cleanly.
-  if (amount > qkeyAvail + 1e-9) {
-    return c.json(
-      { error: 'Insufficient QKEY balance', code: 'SWAP_INSUFFICIENT', available: qkeyAvail },
-      400,
-    );
-  }
-  const swapQkey = Math.min(amount, qkeyAvail); // clamp to available (dust-safe)
-  const qtaOut = swapQkey * QKEY_QTA_SWAP_RATE;
-
-  // 4) Ensure a QTA wallet row exists (create if missing) so the batch UPDATE
-  //    always hits a row.
-  const qtaWallet = await c.env.DB.prepare(
-    'SELECT id FROM wallets WHERE user_id = ? AND coin_symbol = ?'
-  ).bind(user.id, 'QTA').first<{ id: string }>();
-
-  const swapId = uuid();
-  const depositId = uuid();
-  const txHash = `qkeyswap-${swapId.replace(/-/g, '').slice(0, 16)}`;
-
-  // 5) Atomic balance change: debit QKEY, credit QTA (2×). QTA is company-
-  //    issued → credited to BOTH available and available_initial.
-  const stmts: any[] = [
-    c.env.DB.prepare(
-      'UPDATE wallets SET available = available - ? WHERE id = ? AND available >= ?'
-    ).bind(swapQkey, qkeyWallet.id, swapQkey - 1e-9),
-  ];
-  if (qtaWallet) {
-    stmts.push(
-      c.env.DB.prepare(
-        'UPDATE wallets SET available = available + ?, available_initial = COALESCE(available_initial,0) + ? WHERE id = ?'
-      ).bind(qtaOut, qtaOut, qtaWallet.id),
-    );
-  } else {
-    stmts.push(
-      c.env.DB.prepare(
-        'INSERT INTO wallets (id, user_id, coin_symbol, available, available_initial) VALUES (?,?,?,?,?)'
-      ).bind(uuid(), user.id, 'QTA', qtaOut, qtaOut),
-    );
-  }
-  // Record the QTA credit as a completed deposit (visible in deposit history).
-  stmts.push(
-    c.env.DB.prepare(
-      "INSERT INTO deposits (id, user_id, coin_symbol, amount, status, tx_hash) VALUES (?,?,?,?,'completed',?)"
-    ).bind(depositId, user.id, 'QTA', qtaOut, txHash),
-  );
-
-  try {
-    await c.env.DB.batch(stmts);
-  } catch (e) {
-    console.error('[qkey-qta-swap] batch failed:', e);
-    return c.json({ error: 'Swap failed, please try again', code: 'SWAP_FAILED' }, 500);
-  }
-
-  // Best-effort audit trail (never blocks the swap result).
-  try {
-    await c.env.DB.prepare(
-      `INSERT INTO admin_audit_logs (id, admin_id, action, target_type, target_id, payload)
-       VALUES (?, ?, 'qkey_qta_swap', 'user', ?, ?)`
-    ).bind(uuid(), user.id, user.id, JSON.stringify({ qkey_in: swapQkey, qta_out: qtaOut, rate: QKEY_QTA_SWAP_RATE })).run();
-  } catch { /* audit table optional */ }
-
-  return c.json({
-    message: 'Swap complete',
-    qkey_swapped: swapQkey,
-    qta_received: qtaOut,
-    rate: QKEY_QTA_SWAP_RATE,
-    tx_hash: txHash,
-  });
-});
-
 // Get single wallet
 app.get('/:symbol', authMiddleware, async (c) => {
   const user = c.get('user');
@@ -841,5 +707,138 @@ app.get('/history/withdrawals', authMiddleware, async (c) => {
   return c.json(results);
 });
 
+// ============================================================================
+// ★ EVENT (2026-09-08): QKEY → QTA 2× SWAP promotion
+// ----------------------------------------------------------------------------
+// Owner directive: during the promo window, a member may swap their QKEY for
+// QTA at a fixed 1 QKEY → 2 QTA rate. QKEY is DEBITED from the member's
+// spendable balance; QTA is CREDITED at 2× (company-issued, so it lands in
+// both `available` and `available_initial`, matching admin-credit behaviour).
+//
+//   • Rate:   1 QKEY = 2 QTA  (fixed)
+//   • Cap:    none (per boss — unlimited per user & overall)
+//   • Window: now  →  2026-09-23 23:59:59 KST  (= 2026-09-23 14:59:59 UTC)
+//
+// The window is enforced SERVER-SIDE so it closes automatically at the
+// deadline with no redeploy needed. All balance changes go through a single
+// D1.batch() so the QKEY debit and the QTA credit are atomic (no half-swap).
+// ============================================================================
+const QKEY_QTA_SWAP_RATE = 2;                          // 1 QKEY → 2 QTA
+// 2026-09-23 23:59:59 KST == 2026-09-23 14:59:59 UTC. Epoch ms (UTC):
+const QKEY_QTA_SWAP_DEADLINE_MS = Date.UTC(2026, 8, 23, 14, 59, 59, 999);
+
+function swapWindowOpen(): boolean {
+  return Date.now() <= QKEY_QTA_SWAP_DEADLINE_MS;
+}
+
+// Public status endpoint so the UI can show/hide the promo + a countdown.
+app.get('/swap/qkey-qta/status', async (c) => {
+  return c.json({
+    open: swapWindowOpen(),
+    rate: QKEY_QTA_SWAP_RATE,
+    from_coin: 'QKEY',
+    to_coin: 'QTA',
+    deadline_ms: QKEY_QTA_SWAP_DEADLINE_MS,
+    deadline_iso: new Date(QKEY_QTA_SWAP_DEADLINE_MS).toISOString(),
+  });
+});
+
+app.post('/swap/qkey-qta', authMiddleware, async (c) => {
+  const user = c.get('user');
+
+  // 1) Window gate — fail closed after the deadline.
+  if (!swapWindowOpen()) {
+    return c.json(
+      { error: 'The QKEY→QTA swap event has ended', code: 'SWAP_EVENT_ENDED' },
+      400,
+    );
+  }
+
+  // 2) Parse & validate amount (QKEY to swap).
+  let body: any;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON', code: 'BAD_REQUEST' }, 400); }
+  const amount = Number(body?.amount);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return c.json({ error: 'Invalid amount', code: 'SWAP_BAD_AMOUNT' }, 400);
+  }
+
+  // 3) Load QKEY wallet and check the spendable balance covers it.
+  const qkeyWallet = await c.env.DB.prepare(
+    'SELECT id, available FROM wallets WHERE user_id = ? AND coin_symbol = ?'
+  ).bind(user.id, 'QKEY').first<{ id: string; available: number }>();
+  const qkeyAvail = Number(qkeyWallet?.available || 0);
+  if (!qkeyWallet || qkeyAvail <= 0) {
+    return c.json({ error: 'No QKEY balance to swap', code: 'SWAP_NO_QKEY' }, 400);
+  }
+  // Guard against float dust: allow a tiny epsilon so "swap all" works cleanly.
+  if (amount > qkeyAvail + 1e-9) {
+    return c.json(
+      { error: 'Insufficient QKEY balance', code: 'SWAP_INSUFFICIENT', available: qkeyAvail },
+      400,
+    );
+  }
+  const swapQkey = Math.min(amount, qkeyAvail); // clamp to available (dust-safe)
+  const qtaOut = swapQkey * QKEY_QTA_SWAP_RATE;
+
+  // 4) Ensure a QTA wallet row exists (create if missing) so the batch UPDATE
+  //    always hits a row.
+  const qtaWallet = await c.env.DB.prepare(
+    'SELECT id FROM wallets WHERE user_id = ? AND coin_symbol = ?'
+  ).bind(user.id, 'QTA').first<{ id: string }>();
+
+  const swapId = uuid();
+  const depositId = uuid();
+  const txHash = `qkeyswap-${swapId.replace(/-/g, '').slice(0, 16)}`;
+
+  // 5) Atomic balance change: debit QKEY, credit QTA (2×). QTA is company-
+  //    issued → credited to BOTH available and available_initial.
+  const stmts: any[] = [
+    c.env.DB.prepare(
+      'UPDATE wallets SET available = available - ? WHERE id = ? AND available >= ?'
+    ).bind(swapQkey, qkeyWallet.id, swapQkey - 1e-9),
+  ];
+  if (qtaWallet) {
+    stmts.push(
+      c.env.DB.prepare(
+        'UPDATE wallets SET available = available + ?, available_initial = COALESCE(available_initial,0) + ? WHERE id = ?'
+      ).bind(qtaOut, qtaOut, qtaWallet.id),
+    );
+  } else {
+    stmts.push(
+      c.env.DB.prepare(
+        'INSERT INTO wallets (id, user_id, coin_symbol, available, available_initial) VALUES (?,?,?,?,?)'
+      ).bind(uuid(), user.id, 'QTA', qtaOut, qtaOut),
+    );
+  }
+  // Record the QTA credit as a completed deposit (visible in deposit history).
+  stmts.push(
+    c.env.DB.prepare(
+      "INSERT INTO deposits (id, user_id, coin_symbol, amount, status, tx_hash) VALUES (?,?,?,?,'completed',?)"
+    ).bind(depositId, user.id, 'QTA', qtaOut, txHash),
+  );
+
+  try {
+    await c.env.DB.batch(stmts);
+  } catch (e) {
+    console.error('[qkey-qta-swap] batch failed:', e);
+    return c.json({ error: 'Swap failed, please try again', code: 'SWAP_FAILED' }, 500);
+  }
+
+  // Best-effort audit trail (never blocks the swap result).
+  try {
+    await c.env.DB.prepare(
+      `INSERT INTO admin_audit_logs (id, admin_id, action, target_type, target_id, payload)
+       VALUES (?, ?, 'qkey_qta_swap', 'user', ?, ?)`
+    ).bind(uuid(), user.id, user.id, JSON.stringify({ qkey_in: swapQkey, qta_out: qtaOut, rate: QKEY_QTA_SWAP_RATE })).run();
+  } catch { /* audit table optional */ }
+
+  return c.json({
+    message: 'Swap complete',
+    qkey_swapped: swapQkey,
+    qta_received: qtaOut,
+    rate: QKEY_QTA_SWAP_RATE,
+    tx_hash: txHash,
+  });
+});
 
 export default app;
