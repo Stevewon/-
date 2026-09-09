@@ -1731,10 +1731,6 @@ const en = {
   'swap.errNoQkey': 'You have no QKEY balance to swap.',
   'swap.errInsufficient': 'Insufficient QKEY balance.',
   'swap.errFailed': 'Swap failed. Please try again.',
-  'swap.popupBody': 'For a limited time, swap your QKEY for QTA at 2×. Every 1 QKEY becomes 2 QTA — don\'t miss it!',
-  'swap.endsAt': 'Ends',
-  'swap.popupCta': 'Swap now',
-  'swap.dontShowToday': "Don't show again today",
 };
 
 export default en;

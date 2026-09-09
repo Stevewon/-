@@ -1596,10 +1596,6 @@ const zhTW = {
   'swap.errNoQkey': '沒有可兌換的 QKEY 餘額。',
   'swap.errInsufficient': 'QKEY 餘額不足。',
   'swap.errFailed': '兌換失敗，請重試。',
-  'swap.popupBody': '限時活動！將您的 QKEY 以 2 倍兌換為 QTA。1 QKEY 變成 2 QTA — 不要錯過！',
-  'swap.endsAt': '結束',
-  'swap.popupCta': '立即兌換',
-  'swap.dontShowToday': '今日不再顯示',
 };
 
 export default zhTW;

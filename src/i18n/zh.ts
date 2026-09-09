@@ -1596,10 +1596,6 @@ const zh = {
   'swap.errNoQkey': '没有可兑换的 QKEY 余额。',
   'swap.errInsufficient': 'QKEY 余额不足。',
   'swap.errFailed': '兑换失败，请重试。',
-  'swap.popupBody': '限时活动！将您的 QKEY 以 2 倍兑换为 QTA。1 QKEY 变成 2 QTA — 不要错过！',
-  'swap.endsAt': '结束',
-  'swap.popupCta': '立即兑换',
-  'swap.dontShowToday': '今日不再显示',
 };
 
 export default zh;
