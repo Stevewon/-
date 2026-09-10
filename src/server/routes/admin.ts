@@ -3,6 +3,11 @@ import type { AppEnv } from '../index';
 import { authMiddleware, adminMiddleware } from '../middleware/auth';
 import { createNotification } from './notifications';
 import { logAdminAction } from '../utils/audit';
+import {
+  loadPlan as loadQtaDayPlan, savePlan as saveQtaDayPlan, normalizePlan as normalizeQtaDayPlan,
+  planPhase as qtaPlanPhase, planStep as qtaPlanStep, DEFAULT_PLAN as QTA_DEFAULT_PLAN,
+  kstDateString,
+} from '../lib/qta-day-plan';
 import { computeBalanceBreakdown } from '../lib/balance-breakdown';
 import { recomputeBinaryFromStaking, rollStakeUpBinary, placeInBinaryTree, assignBinaryLeg } from '../lib/binary-matching';
 import {
@@ -1453,6 +1458,69 @@ app.put('/coins/:symbol/price-policy', async (c) => {
 
   const updated = await db.prepare('SELECT * FROM coins WHERE symbol = ?').bind(symbol).first();
   return c.json({ message: 'Price policy updated', coin: updated });
+});
+
+// ============================================================================
+// QTA DAY PLAN — "오늘은 X 중심으로 오르내리다가 마감 Y" (owner 2026-09-10)
+// ----------------------------------------------------------------------------
+// GET    /coins/QTA/day-plan   → stored plan + live phase/preview
+// PUT    /coins/QTA/day-plan   → { date?, center, band_pct?, close, close_start?,
+//                                 close_end?, ramp_minutes?, carry_band_pct? }
+// DELETE /coins/QTA/day-plan   → tombstone (MM tick falls back to managed walk)
+// The 1-minute MM tick reads this and steers the printed mid (see
+// src/server/lib/qta-day-plan.ts).
+// ============================================================================
+async function qtaLastPrice(db: D1Database): Promise<number> {
+  const t = await db.prepare(
+    "SELECT price FROM trades WHERE market_id = 'm-qta-usdt' ORDER BY created_at DESC LIMIT 1"
+  ).first<{ price: number }>().catch(() => null);
+  if (Number(t?.price) > 0) return Number(t!.price);
+  const cn = await db.prepare("SELECT price_usd FROM coins WHERE symbol = 'QTA'").first<{ price_usd: number }>().catch(() => null);
+  return Number(cn?.price_usd) || 0;
+}
+
+app.get('/coins/QTA/day-plan', async (c) => {
+  const db = c.env.DB;
+  const now = Date.now();
+  const plan = await loadQtaDayPlan(db);
+  const last = await qtaLastPrice(db);
+  const active = plan && !plan.cleared ? plan : null;
+  const phase = active ? qtaPlanPhase(active, now) : 'inactive';
+  const preview = active ? qtaPlanStep(active, last, now, 0.5) : null;
+  return c.json({
+    plan: active,
+    cleared: !!plan?.cleared,
+    phase,
+    preview_mid: preview?.mid ?? null,
+    last_price: last,
+    kst_today: kstDateString(now),
+    default_plan: QTA_DEFAULT_PLAN,
+  });
+});
+
+app.put('/coins/QTA/day-plan', async (c) => {
+  const db = c.env.DB;
+  const admin = c.get('user') as { id: string; email: string };
+  const body = await c.req.json().catch(() => ({}));
+  const now = Date.now();
+  const last = await qtaLastPrice(db);
+  let plan;
+  try {
+    plan = normalizeQtaDayPlan({ ...body, start_ms: now, start_price: last, created_by: admin?.email || admin?.id }, now, last);
+  } catch (e: any) {
+    return c.json({ error: String(e?.message || 'invalid plan') }, 400);
+  }
+  await saveQtaDayPlan(db, plan);
+  await logAdminAction(c, { action: 'coin.day_plan', targetType: 'coin', targetId: 'QTA', payload: { ...plan } });
+  return c.json({ message: 'Day plan saved', plan, phase: qtaPlanPhase(plan, now) });
+});
+
+app.delete('/coins/QTA/day-plan', async (c) => {
+  const db = c.env.DB;
+  const admin = c.get('user') as { id: string; email: string };
+  await saveQtaDayPlan(db, { cleared: true, cleared_at: new Date().toISOString(), cleared_by: admin?.email || admin?.id });
+  await logAdminAction(c, { action: 'coin.day_plan_clear', targetType: 'coin', targetId: 'QTA', payload: {} });
+  return c.json({ message: 'Day plan cleared' });
 });
 
 // ============================================================================
