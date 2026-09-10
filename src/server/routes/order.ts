@@ -4,6 +4,7 @@ import { authMiddleware } from '../middleware/auth';
 import { rateLimit } from '../middleware/rateLimit';
 import { getUserFeeTier, recordFeeLedger, type FeeTier } from '../utils/fees';
 import { getRiskState } from '../lib/risk';
+import { loadPlan, planPhase, planEnvelope, planStep, resolveEffectivePlan } from '../lib/qta-day-plan';
 
 const app = new Hono<AppEnv>();
 
@@ -501,6 +502,11 @@ async function matchOrder(
 
   // 🛡️ QTA 24h floor: no trade may execute BELOW this price (owner 2026-09-05).
   // 0 = no floor (non-QTA markets or managed center unavailable).
+  //   ★ 2026-09-10: the floor exists to stop MEMBER wash-trades. A cosmetic
+  //   candle between the two company MM bots involves no member on either
+  //   side, so it is exempt — otherwise a day plan whose close is below the
+  //   prior-day VWAP could never be printed by the bots.
+  const isBotOrder = (uid: any) => uid === MM_BOT_A || uid === MM_BOT_B;
   const priceFloor = await qtaPriceFloor(DB, market);
 
   for (const match of matchingOrders as any[]) {
@@ -517,7 +523,8 @@ async function matchOrder(
     //     that may be ≥ floor.  (Do NOT break, that would drop valid asks.)
     //   • SELL taker: bids scanned highest-first, so once a bid is sub-floor
     //     every remaining bid is too → STOP (break).
-    if (priceFloor > 0 && tradePrice < priceFloor - 1e-12) {
+    if (priceFloor > 0 && tradePrice < priceFloor - 1e-12
+        && !(isBotOrder(order.user_id) && isBotOrder(match.user_id))) {
       if (order.side === 'buy') continue;
       break;
     }
@@ -673,16 +680,27 @@ async function matchOrder(
       // accounts could still cross at a band-edge price and drag the oracle,
       // so we clamp here at the write boundary.
       let refPrice = lastPrice;
-      const coinRow = await DB.prepare(
-        'SELECT price_mode, price_center, price_band_pct FROM coins WHERE symbol = ?'
-      ).bind(market.base_coin).first<any>().catch(() => null);
-      if (coinRow?.price_mode === 'managed' && Number(coinRow.price_center) > 0) {
-        const band = Math.max(0, Number(coinRow.price_band_pct) || 0) / 100;
-        const center = Number(coinRow.price_center);
-        const lo = center * (1 - band);
-        const hi = center * (1 + band);
-        if (refPrice < lo) refPrice = lo;
-        if (refPrice > hi) refPrice = hi;
+      // ★ 2026-09-10: when a QTA day plan is active its envelope (centre /
+      //   close ± band) is the clamp — the legacy managed band would otherwise
+      //   pin the reference price to its old ceiling and fight the plan.
+      const plan = market.base_coin === 'QTA' ? await loadPlan(DB) : null;
+      const planActive = plan && !plan.cleared && planPhase(plan, Date.now()) !== 'inactive';
+      if (planActive && plan) {
+        const env = planEnvelope(plan);
+        if (refPrice < env.lo) refPrice = env.lo;
+        if (refPrice > env.hi) refPrice = env.hi;
+      } else {
+        const coinRow = await DB.prepare(
+          'SELECT price_mode, price_center, price_band_pct FROM coins WHERE symbol = ?'
+        ).bind(market.base_coin).first<any>().catch(() => null);
+        if (coinRow?.price_mode === 'managed' && Number(coinRow.price_center) > 0) {
+          const band = Math.max(0, Number(coinRow.price_band_pct) || 0) / 100;
+          const center = Number(coinRow.price_center);
+          const lo = center * (1 - band);
+          const hi = center * (1 + band);
+          if (refPrice < lo) refPrice = lo;
+          if (refPrice > hi) refPrice = hi;
+        }
       }
       await DB.prepare('UPDATE coins SET price_usd = ? WHERE symbol = ?').bind(refPrice, market.base_coin).run();
     }
@@ -1252,28 +1270,48 @@ app.post('/qta-mm-tick', async (c) => {
 
   // Band bounds (reused by the wall builder in Step 3).
   let bandLo = 0, bandHi = Number.MAX_VALUE, center = mid;
-  if (qtaCoin?.price_mode === 'managed' && Number(qtaCoin.price_center) > 0) {
-    const band = Math.max(0, Number(qtaCoin.price_band_pct) || 0) / 100;
-    center = Number(qtaCoin.price_center);
-    bandHi = center * (1 + band);
-    bandLo = center * (1 - band);
-  }
 
-  // Tiny per-tick step with a gentle upward bias.
-  const rnd = Math.random();                 // 0..1, fresh each tick
-  const step = (rnd - 0.42) * 0.003;         // ~ -0.126% .. +0.174%  (slight up bias)
-  mid = mid * (1 + step);
-  // Soft mean-reversion: if we drift into the outer ~15% of the band, pull back
-  // toward the centre a little so we never pin to an edge (which killed one wall
-  // side and produced the saw-tooth). This keeps ~15% headroom for both walls.
-  if (bandHi < Number.MAX_VALUE) {
-    const innerHi = center + (bandHi - center) * 0.85;
-    const innerLo = center - (center - bandLo) * 0.85;
-    if (mid > innerHi) mid = mid + (innerHi - mid) * 0.5;
-    if (mid < innerLo) mid = mid + (innerLo - mid) * 0.5;
-    // Hard safety clamp strictly inside the band.
+  // ★ DAY PLAN (owner 2026-09-10): "오늘은 X 중심으로 오르내리다가 마감 Y".
+  //   When a plan is active for today (or carrying over from yesterday) it
+  //   fully decides the mid: ramp → oscillate around centre → glide to the
+  //   close → hold → carry. The legacy managed random-walk below is the
+  //   fallback only when no plan is in force.
+  const nowMs = Date.now();
+  const plan = await resolveEffectivePlan(DB, nowMs, mid);
+  const step_ = plan ? planStep(plan, mid, nowMs) : null;
+  let planPhaseName: string = 'none';
+  if (step_) {
+    planPhaseName = step_.phase;
+    mid = step_.mid;
+    center = step_.anchor;
+    bandLo = step_.lo;
+    bandHi = step_.hi;
     if (mid > bandHi) mid = bandHi;
     if (mid < bandLo) mid = bandLo;
+  } else {
+    if (qtaCoin?.price_mode === 'managed' && Number(qtaCoin.price_center) > 0) {
+      const band = Math.max(0, Number(qtaCoin.price_band_pct) || 0) / 100;
+      center = Number(qtaCoin.price_center);
+      bandHi = center * (1 + band);
+      bandLo = center * (1 - band);
+    }
+
+    // Tiny per-tick step with a gentle upward bias.
+    const rnd = Math.random();                 // 0..1, fresh each tick
+    const step = (rnd - 0.42) * 0.003;         // ~ -0.126% .. +0.174%  (slight up bias)
+    mid = mid * (1 + step);
+    // Soft mean-reversion: if we drift into the outer ~15% of the band, pull back
+    // toward the centre a little so we never pin to an edge (which killed one wall
+    // side and produced the saw-tooth). This keeps ~15% headroom for both walls.
+    if (bandHi < Number.MAX_VALUE) {
+      const innerHi = center + (bandHi - center) * 0.85;
+      const innerLo = center - (center - bandLo) * 0.85;
+      if (mid > innerHi) mid = mid + (innerHi - mid) * 0.5;
+      if (mid < innerLo) mid = mid + (innerLo - mid) * 0.5;
+      // Hard safety clamp strictly inside the band.
+      if (mid > bandHi) mid = bandHi;
+      if (mid < bandLo) mid = bandLo;
+    }
   }
   mid = floorToDecimals(mid, pdec);
   if (!(mid > 0)) return c.json({ error: 'invalid mm mid' }, 500);
@@ -1613,6 +1651,8 @@ app.post('/qta-mm-tick', async (c) => {
   return c.json({
     ok: true, action: 'mm_ok',
     mid, ask, bid, floor,
+    plan_phase: planPhaseName,
+    plan_anchor: step_ ? step_.anchor : null,
     member_sell_trades: memberTrades, buy_supply_trades: buySupplyTrades,
     candle_trades: candleTrades,
     per_member_buy_cap_usdt: MM_MEMBER_BUY_BUDGET_USDT,
