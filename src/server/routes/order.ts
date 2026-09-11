@@ -1575,19 +1575,44 @@ app.post('/qta-mm-tick', async (c) => {
   }
 
   // ---- Step 2: print one cosmetic candle at the mid ---------------------
-  // bot-a rests a small ask at the mid; bot-b crosses it with a tiny taker buy.
-  const candleQty = floorToDecimals(Math.max(minAmt, (minTotal * 1.2) / mid), adec);
+  // ★ 2026-09-11 owner: "매도도 좀 있으면서 가야지" — the tape showed 100% BUY
+  //   because bot-b always crossed bot-a's ask. Now the TAKER SIDE follows the
+  //   candle direction: a down-tick prints as a SELL (bot-a market-sells into
+  //   bot-b's bid), an up-tick as a BUY. Flat ticks are randomised ~45% sell.
+  //   Occasionally (25%) print a SECOND smaller trade on the opposite side so
+  //   the tape shows mixed red/green like a real market.
+  const prevPrice = Number(lastTradeRow?.price) || mid;
+  const dirDown = mid < prevPrice - 1e-12;
+  const dirUp = mid > prevPrice + 1e-12;
+  const takerSell = dirDown ? true : dirUp ? false : Math.random() < 0.45;
+  const candleQty = floorToDecimals(Math.max(minAmt, (minTotal * (1.0 + Math.random() * 0.8)) / mid), adec);
   let candleTrades = 0;
-  const aSell = await placeOrder(MM_BOT_A, 'sell', mid, candleQty, tierA);
-  if (aSell) {
-    await matchOrder(DB, aSell, market, { lockAmount: candleQty, lockSymbol: 'QTA', tif: 'GTC' });
-    const bBuy = await placeOrder(MM_BOT_B, 'buy', mid, candleQty, tierB);
-    if (bBuy) {
-      const m = await matchOrder(DB, bBuy, market, {
-        lockAmount: floorToDecimals(candleQty * mid, 8), lockSymbol: 'USDT', tif: 'IOC',
-      });
-      candleTrades = (m.trades || []).length;
+
+  async function printTrade(sellTaker: boolean, qty: number, px: number): Promise<number> {
+    if (sellTaker) {
+      // bot-b rests a bid at px; bot-a hits it with an IOC sell → tape shows SELL.
+      const bBid = await placeOrder(MM_BOT_B, 'buy', px, qty, tierB);
+      if (!bBid) return 0;
+      await matchOrder(DB, bBid, market, { lockAmount: floorToDecimals(qty * px, 8), lockSymbol: 'USDT', tif: 'GTC' });
+      const aSell = await placeOrder(MM_BOT_A, 'sell', px, qty, tierA);
+      if (!aSell) return 0;
+      const m = await matchOrder(DB, aSell, market, { lockAmount: qty, lockSymbol: 'QTA', tif: 'IOC' });
+      return (m.trades || []).length;
     }
+    // bot-a rests an ask at px; bot-b crosses it with an IOC buy → tape shows BUY.
+    const aSell = await placeOrder(MM_BOT_A, 'sell', px, qty, tierA);
+    if (!aSell) return 0;
+    await matchOrder(DB, aSell, market, { lockAmount: qty, lockSymbol: 'QTA', tif: 'GTC' });
+    const bBuy = await placeOrder(MM_BOT_B, 'buy', px, qty, tierB);
+    if (!bBuy) return 0;
+    const m = await matchOrder(DB, bBuy, market, { lockAmount: floorToDecimals(qty * px, 8), lockSymbol: 'USDT', tif: 'IOC' });
+    return (m.trades || []).length;
+  }
+
+  candleTrades += await printTrade(takerSell, candleQty, mid);
+  if (Math.random() < 0.25) {
+    const q2 = floorToDecimals(Math.max(minAmt, (minTotal * 1.05) / mid), adec);
+    candleTrades += await printTrade(!takerSell, q2, mid);
   }
 
   // ---- Step 3: re-arm a DEEP multi-level two-sided book ----------------
