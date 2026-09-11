@@ -554,9 +554,25 @@ async function matchOrder(
     const sellerId    = order.side === 'sell' ? order.user_id : match.user_id;
 
     // Insert trade
-    await DB.prepare(
-      'INSERT INTO trades (id, market_id, buy_order_id, sell_order_id, buyer_id, seller_id, price, amount, total, buyer_fee, seller_fee) VALUES (?,?,?,?,?,?,?,?,?,?,?)'
-    ).bind(tradeId, market.id, buyOrderId, sellOrderId, buyerId, sellerId, tradePrice, tradeAmount, tradeTotal, buyerFee, sellerFee).run();
+    // ★ 2026-09-11: persist the TAKER side so the tape shows real buy/sell
+    //   colour (the old JOIN on buy_order_id always yielded 'buy').
+    try {
+      await DB.prepare(
+        'INSERT INTO trades (id, market_id, buy_order_id, sell_order_id, buyer_id, seller_id, price, amount, total, buyer_fee, seller_fee, taker_side) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)'
+      ).bind(tradeId, market.id, buyOrderId, sellOrderId, buyerId, sellerId, tradePrice, tradeAmount, tradeTotal, buyerFee, sellerFee, order.side).run();
+    } catch {
+      // Column not yet present (cold DB) → add it once, then retry; fall back to legacy insert.
+      try { await DB.prepare("ALTER TABLE trades ADD COLUMN taker_side TEXT").run(); } catch { /* exists */ }
+      try {
+        await DB.prepare(
+          'INSERT INTO trades (id, market_id, buy_order_id, sell_order_id, buyer_id, seller_id, price, amount, total, buyer_fee, seller_fee, taker_side) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)'
+        ).bind(tradeId, market.id, buyOrderId, sellOrderId, buyerId, sellerId, tradePrice, tradeAmount, tradeTotal, buyerFee, sellerFee, order.side).run();
+      } catch {
+        await DB.prepare(
+          'INSERT INTO trades (id, market_id, buy_order_id, sell_order_id, buyer_id, seller_id, price, amount, total, buyer_fee, seller_fee) VALUES (?,?,?,?,?,?,?,?,?,?,?)'
+        ).bind(tradeId, market.id, buyOrderId, sellOrderId, buyerId, sellerId, tradePrice, tradeAmount, tradeTotal, buyerFee, sellerFee).run();
+      }
+    }
 
     // Update maker order
     const makerRemaining = match.remaining - tradeAmount;
@@ -1223,6 +1239,7 @@ const USDT_KRW_RATE = 1450;
 //   day is NOT bought by the company and just rests until they cancel it.
 const MM_MEMBER_BUY_BUDGET_USDT = 50000 / USDT_KRW_RATE;  // ≈ 34.4828 USDT / member / day
 
+let takerSideEnsured = false;
 app.post('/qta-mm-tick', async (c) => {
   const secret = c.req.header('x-twap-secret') || '';
   const expected = (c.env as any).TWAP_CRON_SECRET || '';
@@ -1231,6 +1248,14 @@ app.post('/qta-mm-tick', async (c) => {
   }
 
   const DB = c.env.DB;
+
+  // ★ 2026-09-11 self-bootstrap (migration 0057): trades.taker_side. The deploy
+  //   workflow does not auto-apply new migrations, so the 1-minute tick adds
+  //   the column idempotently (ALTER fails harmlessly once it exists).
+  if (!takerSideEnsured) {
+    try { await DB.prepare("ALTER TABLE trades ADD COLUMN taker_side TEXT").run(); } catch { /* exists */ }
+    takerSideEnsured = true;
+  }
 
   const market = await DB.prepare(
     "SELECT * FROM markets WHERE base_coin = 'QTA' AND quote_coin = 'USDT' AND is_active = 1"
