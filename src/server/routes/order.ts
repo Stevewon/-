@@ -1609,8 +1609,13 @@ app.post('/qta-mm-tick', async (c) => {
   const prevPrice = Number(lastTradeRow?.price) || mid;
   const dirDown = mid < prevPrice - 1e-12;
   const dirUp = mid > prevPrice + 1e-12;
-  const takerSell = dirDown ? true : dirUp ? false : Math.random() < 0.45;
-  const candleQty = floorToDecimals(Math.max(minAmt, (minTotal * (1.0 + Math.random() * 0.8)) / mid), adec);
+  // ★ "Someone is selling" (owner 2026-09-11): during a plan dump event the
+  //   prints are SELL, fat (2.5–5.5x lots) and come 2–3 per tick.
+  const dumping = step_?.event === 'dump';
+  const recovering = step_?.event === 'recover';
+  const sizeMul = Math.max(1, Number(step_?.sizeMul) || 1);
+  const takerSell = dumping ? true : dirDown ? true : dirUp ? false : Math.random() < 0.45;
+  const candleQty = floorToDecimals(Math.max(minAmt, (minTotal * (1.0 + Math.random() * 0.8) * sizeMul) / mid), adec);
   let candleTrades = 0;
 
   async function printTrade(sellTaker: boolean, qty: number, px: number): Promise<number> {
@@ -1635,7 +1640,22 @@ app.post('/qta-mm-tick', async (c) => {
   }
 
   candleTrades += await printTrade(takerSell, candleQty, mid);
-  if (Math.random() < 0.25) {
+  if (dumping) {
+    // Extra sell prints at slightly different prices inside the tick so the
+    // tape reads like one seller working through the bids.
+    const extra = 1 + Math.floor(Math.random() * 2); // 1..2 more
+    for (let i = 0; i < extra; i++) {
+      const px = floorToDecimals(mid * (1 + (Math.random() * 0.0015)), pdec); // a hair above the low
+      const q = floorToDecimals(Math.max(minAmt, (minTotal * (0.8 + Math.random() * 1.6) * sizeMul) / px), adec);
+      candleTrades += await printTrade(true, q, px > 0 ? px : mid);
+    }
+  } else if (recovering) {
+    // Bids absorbing: mostly buys, some sells re-testing.
+    if (Math.random() < 0.5) {
+      const q2 = floorToDecimals(Math.max(minAmt, (minTotal * (1.0 + Math.random())) / mid), adec);
+      candleTrades += await printTrade(Math.random() < 0.3, q2, mid);
+    }
+  } else if (Math.random() < 0.25) {
     const q2 = floorToDecimals(Math.max(minAmt, (minTotal * 1.05) / mid), adec);
     candleTrades += await printTrade(!takerSell, q2, mid);
   }
@@ -1703,6 +1723,7 @@ app.post('/qta-mm-tick', async (c) => {
     mid, ask, bid, floor,
     plan_phase: planPhaseName,
     plan_anchor: step_ ? step_.anchor : null,
+    plan_event: step_?.event ?? null,
     member_sell_trades: memberTrades, buy_supply_trades: buySupplyTrades,
     candle_trades: candleTrades,
     per_member_buy_cap_usdt: MM_MEMBER_BUY_BUDGET_USDT,
