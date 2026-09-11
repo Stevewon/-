@@ -2405,12 +2405,18 @@ app.get('/api/stream/ticker', async (c) => {
     const { results: asks } = await c.env.DB.prepare(
       `SELECT price, SUM(remaining) as amount FROM orders WHERE market_id = ? AND side = 'sell' AND status IN ('open','partial') GROUP BY price ORDER BY price ASC LIMIT 25`
     ).bind(market.id).all();
-    const { results: trades } = await c.env.DB.prepare(`
-      SELECT t.id, t.price, t.amount, t.total, t.created_at as time,
-        CASE WHEN o.side = 'buy' THEN 'buy' ELSE 'sell' END as side
-      FROM trades t JOIN orders o ON o.id = t.buy_order_id
-      WHERE t.market_id = ? ORDER BY t.created_at DESC LIMIT 50
-    `).bind(market.id).all();
+    const tradesSql = (sideExpr: string) => `
+      SELECT t.id, t.price, t.amount, t.total, t.created_at as time, ${sideExpr}
+      FROM trades t
+      WHERE t.market_id = ? ORDER BY t.created_at DESC LIMIT 50`;
+    let trades: any[] = [];
+    try {
+      trades = ((await c.env.DB.prepare(tradesSql(`COALESCE(t.taker_side,
+        CASE WHEN t.price < (SELECT p.price FROM trades p WHERE p.market_id = t.market_id AND (p.created_at < t.created_at OR (p.created_at = t.created_at AND p.rowid < t.rowid)) ORDER BY p.created_at DESC, p.rowid DESC LIMIT 1) THEN 'sell' ELSE 'buy' END) as side`)).bind(market.id).all()).results as any[]) ?? [];
+    } catch {
+      // trades.taker_side not yet added → price-tick rule only.
+      trades = ((await c.env.DB.prepare(tradesSql(`CASE WHEN t.price < (SELECT p.price FROM trades p WHERE p.market_id = t.market_id AND (p.created_at < t.created_at OR (p.created_at = t.created_at AND p.rowid < t.rowid)) ORDER BY p.created_at DESC, p.rowid DESC LIMIT 1) THEN 'sell' ELSE 'buy' END as side`)).bind(market.id).all()).results as any[]) ?? [];
+    }
     return {
       bids: (bids as any[]) ?? [],
       asks: (asks as any[]) ?? [],
@@ -2601,12 +2607,17 @@ app.get('/api/stream/trades/:symbol', async (c) => {
   try {
     const market = await c.env.DB.prepare('SELECT id FROM markets WHERE base_coin = ? AND quote_coin = ?').bind(base, quote).first() as any;
     if (market) {
-      const { results: realTrades } = await c.env.DB.prepare(`
-        SELECT t.id, t.price, t.amount, t.total, t.created_at as time,
-          CASE WHEN o.side = 'buy' THEN 'buy' ELSE 'sell' END as side
-        FROM trades t JOIN orders o ON o.id = t.buy_order_id
-        WHERE t.market_id = ? ORDER BY t.created_at DESC LIMIT 50
-      `).bind(market.id).all();
+      const sql = (sideExpr: string) => `
+        SELECT t.id, t.price, t.amount, t.total, t.created_at as time, ${sideExpr}
+        FROM trades t
+        WHERE t.market_id = ? ORDER BY t.created_at DESC LIMIT 50`;
+      let realTrades: any[] = [];
+      try {
+        realTrades = ((await c.env.DB.prepare(sql(`COALESCE(t.taker_side,
+        CASE WHEN t.price < (SELECT p.price FROM trades p WHERE p.market_id = t.market_id AND (p.created_at < t.created_at OR (p.created_at = t.created_at AND p.rowid < t.rowid)) ORDER BY p.created_at DESC, p.rowid DESC LIMIT 1) THEN 'sell' ELSE 'buy' END) as side`)).bind(market.id).all()).results as any[]) ?? [];
+      } catch {
+        realTrades = ((await c.env.DB.prepare(sql(`CASE WHEN t.price < (SELECT p.price FROM trades p WHERE p.market_id = t.market_id AND (p.created_at < t.created_at OR (p.created_at = t.created_at AND p.rowid < t.rowid)) ORDER BY p.created_at DESC, p.rowid DESC LIMIT 1) THEN 'sell' ELSE 'buy' END as side`)).bind(market.id).all()).results as any[]) ?? [];
+      }
       return c.json(realTrades ?? []);
     }
   } catch (e) {

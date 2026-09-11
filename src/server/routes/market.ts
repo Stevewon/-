@@ -63,12 +63,26 @@ app.get('/trades/:symbol', async (c) => {
   if (!market) return c.json({ error: 'Market not found' }, 404);
 
   const limit = parseInt(c.req.query('limit') || '50');
-  const { results } = await c.env.DB.prepare(`
-    SELECT t.id, t.price, t.amount, t.total, t.created_at,
-      CASE WHEN o.side = 'buy' THEN 'buy' ELSE 'sell' END as side
-    FROM trades t JOIN orders o ON o.id = t.buy_order_id
-    WHERE t.market_id = ? ORDER BY t.created_at DESC LIMIT ?
-  `).bind(market.id, limit).all();
+  let results: any[] = [];
+  try {
+    const r = await c.env.DB.prepare(`
+      SELECT t.id, t.price, t.amount, t.total, t.created_at,
+        COALESCE(t.taker_side,
+          CASE WHEN t.price < (SELECT p.price FROM trades p WHERE p.market_id = t.market_id AND (p.created_at < t.created_at OR (p.created_at = t.created_at AND p.rowid < t.rowid)) ORDER BY p.created_at DESC, p.rowid DESC LIMIT 1) THEN 'sell' ELSE 'buy' END) as side
+      FROM trades t
+      WHERE t.market_id = ? ORDER BY t.created_at DESC LIMIT ?
+    `).bind(market.id, limit).all();
+    results = (r.results || []) as any[];
+  } catch {
+    // taker_side column not yet added → price-tick rule only.
+    const r = await c.env.DB.prepare(`
+      SELECT t.id, t.price, t.amount, t.total, t.created_at,
+        CASE WHEN t.price < (SELECT p.price FROM trades p WHERE p.market_id = t.market_id AND (p.created_at < t.created_at OR (p.created_at = t.created_at AND p.rowid < t.rowid)) ORDER BY p.created_at DESC, p.rowid DESC LIMIT 1) THEN 'sell' ELSE 'buy' END as side
+      FROM trades t
+      WHERE t.market_id = ? ORDER BY t.created_at DESC LIMIT ?
+    `).bind(market.id, limit).all();
+    results = (r.results || []) as any[];
+  }
   return c.json(results);
 });
 
