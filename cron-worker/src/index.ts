@@ -929,6 +929,31 @@ export default {
              FROM staking_positions WHERE user_id = ? ORDER BY created_at`,
         ).bind(u.id).all<any>();
         out.staking_positions = pos || [];
+        // On-chain Quantarium deposits (QTA / QX / QKEY) for this user — the
+        // trace for "I sent 10,000 QX, where is it?" questions.
+        try {
+          const qd = await env.DB.prepare(
+            `SELECT id, asset, amount, status, confirmations, required_confs, block_height,
+                    tx_hash, address, network, created_at, credited_at, updated_at
+               FROM qta_deposits WHERE user_id = ? ORDER BY created_at DESC LIMIT 50`,
+          ).bind(u.id).all<any>();
+          out.qta_deposits = qd.results || [];
+        } catch (e: any) { out.qta_deposits_error = String(e?.message || e); }
+        try {
+          const qa = await env.DB.prepare(
+            `SELECT address, network, is_active, created_at FROM qta_addresses WHERE user_id = ? ORDER BY created_at DESC`,
+          ).bind(u.id).all<any>();
+          out.qta_addresses = qa.results || [];
+        } catch (e: any) { out.qta_addresses_error = String(e?.message || e); }
+        // Recent wallet-affecting events: trades / swaps / manual credits.
+        try {
+          const tr = await env.DB.prepare(
+            `SELECT market_id, price, amount, total, created_at,
+                    CASE WHEN buyer_id = ? THEN 'buy' ELSE 'sell' END AS side
+               FROM trades WHERE buyer_id = ? OR seller_id = ? ORDER BY created_at DESC LIMIT 20`,
+          ).bind(u.id, u.id, u.id).all<any>();
+          out.recent_trades = tr.results || [];
+        } catch (e: any) { out.recent_trades_error = String(e?.message || e); }
       } catch (e: any) { out.error = String(e?.message || e); }
       return new Response(JSON.stringify(out, null, 2), { headers: { 'content-type': 'application/json' } });
     }
