@@ -54,6 +54,7 @@ import { binaryMatchingTick } from './binary-matching';
 import { scanExtDeposits, extDepositTick } from './ext-watcher';
 import { sweepExtDeposits } from './ext-sweep';
 import { twapTick, qtaAutobuyTick, qtaMmTick, stakingAccrueDaily } from './twap';
+import { treasurySweep, treasuryReport } from './treasury-sweep';
 import { deriveEvmAccount, evmAddressIsValid } from './lib/ext-evm-signer';
 import { validateMnemonic as validateBip39 } from '@scure/bip39';
 import { wordlist as bip39Wordlist } from '@scure/bip39/wordlists/english.js';
@@ -394,6 +395,16 @@ export default {
   // Optional HTTP endpoint for manual runs (useful for debugging)
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    if (url.pathname === '/treasury/sweep') {
+      // ★ Owner 2026-09-12: move member-sold QTA bots → treasury (ledger) and
+      //   hot wallet → main wallet (on-chain). Also runs on the daily cron.
+      const r = await treasurySweep(env as any);
+      return new Response(JSON.stringify(r, null, 2), { headers: { 'content-type': 'application/json' } });
+    }
+    if (url.pathname === '/treasury/report') {
+      const r = await treasuryReport(env as any);
+      return new Response(JSON.stringify(r, null, 2), { headers: { 'content-type': 'application/json' } });
+    }
     if (url.pathname === '/run') {
       const result = await checkPriceAlerts(env);
       return new Response(JSON.stringify(result), {
@@ -1356,6 +1367,12 @@ export default {
             await stakingAccrueDaily(env);
           } catch (e) {
             console.error('[cron] staking daily accrual failed:', e);
+          }
+          try {
+            const r = await treasurySweep(env as any);
+            console.log('[cron] treasury sweep:', JSON.stringify(r).slice(0, 500));
+          } catch (e) {
+            console.error('[cron] treasury sweep failed:', e);
           }
           try {
             const r = await backupD1ToR2(env);
