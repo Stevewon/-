@@ -198,9 +198,21 @@ export function planStep(
     case 'ramp': {
       const start = Math.max(plan.start_ms || 0, kstDayStartMs(plan.date));
       const rampEnd = start + plan.ramp_minutes * 60_000;
+      // ★ 2026-09-11 owner: "마냥 올리기만 하면 어쯔나" — the ramp must look like a
+      //   real up-trend: ~35% of ticks are RED pull-backs. We aim a little
+      //   ahead of the linear path (overshoot) so the pull-backs still land on
+      //   the centre in time, and use a large symmetric noise term.
       const f = stepFrac(rampEnd);
-      let mid = cur + (plan.center - cur) * f;
-      mid *= 1 + noise * 0.0012; // ±0.12% texture so the ramp isn't a ruler line
+      const remain = Math.max(0, rampEnd - nowMs);
+      const overshoot = remain > tickMs ? 1.6 : 1; // push a bit harder, then let noise retrace
+      const drift = (plan.center - cur) * Math.min(1, f * overshoot);
+      let mid = cur + drift;
+      mid *= 1 + noise * 0.005; // ±0.5% — red candles appear regularly on the way up
+      // Never run past the centre band during the ramp.
+      const hiCap = plan.center * (1 + band * 0.6);
+      const loCap = Math.min(cur, plan.center) * (1 - band);
+      if (mid > hiCap) mid = hiCap;
+      if (mid < loCap) mid = loCap;
       return { phase, mid, lo: Math.min(mid, plan.center) * (1 - band), hi: Math.max(mid, plan.center) * (1 + band), anchor: plan.center };
     }
     case 'oscillate': {
@@ -223,10 +235,13 @@ export function planStep(
       const closeEnd = kstTimeMs(plan.date, plan.close_end);
       const closeStart = kstTimeMs(plan.date, plan.close_start);
       const f = stepFrac(closeEnd);
-      let mid = cur + (plan.close - cur) * f;
-      // Noise fades to zero as we approach close_end.
+      const remain = Math.max(0, closeEnd - nowMs);
+      const overshoot = remain > tickMs ? 1.6 : 1;
+      let mid = cur + (plan.close - cur) * Math.min(1, f * overshoot);
+      // Real-looking glide: green bounces on the way down; noise fades to zero
+      // as we approach close_end so the landing is exact.
       const remainFrac = Math.max(0, Math.min(1, (closeEnd - nowMs) / Math.max(1, closeEnd - closeStart)));
-      mid *= 1 + noise * 0.0015 * remainFrac;
+      mid *= 1 + noise * 0.004 * remainFrac;
       const span = Math.max(plan.center, plan.close) * (1 + band);
       const floorP = Math.min(plan.center, plan.close) * (1 - band);
       return { phase, mid, lo: floorP, hi: span, anchor: plan.close };
