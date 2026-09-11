@@ -71,20 +71,23 @@ export interface PlanStep {
   anchor: number;
 }
 
-// ★ OWNER INSTRUCTION 2026-09-10 (KST):
-//   "오늘은 0.006을 중심으로 오르내리다가 마감을 0.0058 정도에 끝내라"
+// ★ OWNER INSTRUCTION 2026-09-11 (KST):
+//   "오늘은 0.007 ±2.5% 사이 오르내림 / 23:00 → 23:55 0.0065로 서서히 내려와 마감"
+//   (2026-09-10: centre 0.006 → close 0.0058 — executed, carried at 0.0058.)
 // Built-in default so the plan is live the moment this deploys — no DB write
-// needed. Admin can override / clear via /api/admin/coins/QTA/day-plan.
+// needed. A default whose date is NEWER than the stored plan (or tombstone)
+// supersedes it — the owner's latest daily instruction always wins. Admin can
+// still override / clear for the day via /api/admin/coins/QTA/day-plan.
 export const DEFAULT_PLAN: Omit<QtaDayPlan, 'start_ms' | 'start_price'> = {
-  date: '2026-09-10',
-  center: 0.006,
+  date: '2026-09-11',
+  center: 0.007,
   band_pct: 2.5,
-  close: 0.0058,
+  close: 0.0065,
   close_start: '23:00',
   close_end: '23:55',
   ramp_minutes: 90,
   carry_band_pct: 1.0,
-  created_by: 'owner-rule-2026-09-10',
+  created_by: 'owner-rule-2026-09-11',
 };
 
 // ---------------------------------------------------------------------------
@@ -262,7 +265,7 @@ export async function loadPlan(DB: D1Database): Promise<QtaDayPlan | null> {
   }
 }
 
-export async function savePlan(DB: D1Database, plan: QtaDayPlan | { cleared: true; cleared_at: string; cleared_by?: string }): Promise<void> {
+export async function savePlan(DB: D1Database, plan: QtaDayPlan | { cleared: true; date: string; cleared_at: string; cleared_by?: string }): Promise<void> {
   await DB.prepare(
     `INSERT INTO system_state (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`
@@ -271,9 +274,11 @@ export async function savePlan(DB: D1Database, plan: QtaDayPlan | { cleared: tru
 
 /**
  * Resolve the EFFECTIVE plan for the MM tick:
- *   • stored plan (or tombstone) wins;
- *   • otherwise, if the built-in DEFAULT_PLAN is for today or an earlier day
- *     (carry), seed it now (anchoring the ramp at `lastPrice`) and return it.
+ *   • the built-in DEFAULT_PLAN, once its date has arrived (KST), supersedes
+ *     any stored plan / tombstone whose date is OLDER — it is seeded now
+ *     (anchoring the ramp at `lastPrice`);
+ *   • otherwise the stored plan wins (tombstone → no plan);
+ *   • no stored plan and default not yet due → null.
  */
 export async function resolveEffectivePlan(
   DB: D1Database,
@@ -281,10 +286,15 @@ export async function resolveEffectivePlan(
   lastPrice: number,
 ): Promise<QtaDayPlan | null> {
   const stored = await loadPlan(DB);
-  if (stored) return stored.cleared ? null : stored;
   const today = kstDateString(nowMs);
-  if (DEFAULT_PLAN.date > today) return null; // default is for a future day; wait
-  const seeded = normalizePlan({ ...DEFAULT_PLAN }, nowMs, lastPrice);
-  try { await savePlan(DB, seeded); } catch { /* best-effort */ }
-  return seeded;
+  const defaultDue = DEFAULT_PLAN.date <= today;
+  const storedDate = String((stored as any)?.date || '');
+  const defaultNewer = defaultDue && (!stored || storedDate < DEFAULT_PLAN.date);
+  if (defaultNewer) {
+    const seeded = normalizePlan({ ...DEFAULT_PLAN }, nowMs, lastPrice);
+    try { await savePlan(DB, seeded); } catch { /* best-effort */ }
+    return seeded;
+  }
+  if (stored) return stored.cleared ? null : stored;
+  return null;
 }

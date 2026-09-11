@@ -1518,7 +1518,7 @@ app.put('/coins/QTA/day-plan', async (c) => {
 app.delete('/coins/QTA/day-plan', async (c) => {
   const db = c.env.DB;
   const admin = c.get('user') as { id: string; email: string };
-  await saveQtaDayPlan(db, { cleared: true, cleared_at: new Date().toISOString(), cleared_by: admin?.email || admin?.id });
+  await saveQtaDayPlan(db, { cleared: true, date: kstDateString(Date.now()), cleared_at: new Date().toISOString(), cleared_by: admin?.email || admin?.id });
   await logAdminAction(c, { action: 'coin.day_plan_clear', targetType: 'coin', targetId: 'QTA', payload: {} });
   return c.json({ message: 'Day plan cleared' });
 });
