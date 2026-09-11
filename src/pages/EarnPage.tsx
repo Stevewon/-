@@ -1375,13 +1375,15 @@ function WithdrawDividendModal({ qtaBalance, qtaPrice, usdtPrice, onClose, onDon
   const effQtaPrice = fixedWin ? FIXED_QTA_USD : qtaPrice;   // QTA price used for conversion
   const effUsdtPrice = fixedWin ? 1 : (usdtPrice > 0 ? usdtPrice : 1);
 
-  const MIN_WITHDRAW_USD = 50;
+  // ★★★ PERMANENT OWNER ORDER (2026-09-12): max KRW 50,000 (≈ $34.48) per
+  //   request, ONE request per KST day. (Old $50 minimum retired.)
+  const MAX_WITHDRAW_USD = 50_000 / 1450;
   const num = parseFloat(amount) || 0;
   const in100 = num % 100 === 0 && num > 0;
   const enough = num <= qtaBalance;
   const addrOk = /^0x[0-9a-fA-F]{40}$/.test(address);
   const requestUsd = num * effQtaPrice;
-  const belowMinUsd = num > 0 && effQtaPrice > 0 && requestUsd < MIN_WITHDRAW_USD;
+  const belowMinUsd = num > 0 && effQtaPrice > 0 && requestUsd > MAX_WITHDRAW_USD + 1e-9; // (name kept; now = OVER the daily cap)
   const feeQta = num * 0.05;
   const netQta = num - feeQta;
   // ★ 100-QTA 단위는 더 이상 버튼을 "무조건 비활성화"하지 않는다. 버튼은 눌리게 두고,
@@ -1399,9 +1401,9 @@ function WithdrawDividendModal({ qtaBalance, qtaPrice, usdtPrice, onClose, onDon
       showToast('error', t('earn.unit100WarnTitle'), t('earn.unit100WarnBody'));
       return;
     }
-    // ★ Hard warning popup for sub-$50 attempts (boss rule).
+    // ★ Hard warning popup for over-cap attempts (owner rule 2026-09-12).
     if (belowMinUsd) {
-      showToast('error', t('earn.minWarnTitle'), t('earn.minWarnBody', { usd: MIN_WITHDRAW_USD }));
+      showToast('error', t('earn.maxWarnTitle'), t('earn.maxWarnBody'));
       return;
     }
     if (!valid) return;
