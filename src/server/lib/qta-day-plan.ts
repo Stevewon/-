@@ -69,6 +69,65 @@ export interface PlanStep {
   hi: number;
   /** The centre currently being tracked (centre / close). */
   anchor: number;
+  /** Market-texture event in force this tick (see dumpEvent). */
+  event?: 'dump' | 'recover' | null;
+  /** Trade-size multiplier for the cosmetic print (dump = bigger lots). */
+  sizeMul?: number;
+}
+
+// ---------------------------------------------------------------------------
+// "Someone is selling" texture — owner 2026-09-11:
+//   "가장 자연스럽게 내림폭도 가끔은 있어야 하잖아, 누군가 파는 것처럼"
+// A real market is not a symmetric wobble: every so often a seller dumps and
+// the price drops 1–2.5% over a handful of minutes with FAT red prints, then
+// bids absorb it and the price creeps back over 10–25 minutes. We schedule
+// these deterministically from the clock (stateless per tick): each 20-minute
+// slot has a ~45% chance of a dump starting at a pseudo-random minute inside
+// it, lasting 3–7 ticks, followed by a recovery window.
+// ---------------------------------------------------------------------------
+export interface DumpEvent {
+  kind: 'dump' | 'recover';
+  /** 0..1 progress inside the dump (kind='dump'). */
+  progress: number;
+  /** Total depth of this dump as a fraction (e.g. 0.018 = -1.8%). */
+  depth: number;
+  /** Ticks (minutes) the dump lasts. */
+  dumpTicks: number;
+  /** 0..1 progress inside the recovery (kind='recover'). */
+  recoverProgress: number;
+}
+
+const SLOT_MS = 20 * 60_000;
+
+function hashNoise(n: number): number {
+  const x = Math.sin(n * 12.9898 + 78.233) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+/** Returns the dump/recovery event active at `nowMs`, or null. */
+export function dumpEvent(nowMs: number, tickMs: number = 60_000, salt = 0): DumpEvent | null {
+  // Look at this slot and the previous one (a recovery may spill over).
+  for (let back = 0; back <= 1; back++) {
+    const slotIdx = Math.floor(nowMs / SLOT_MS) - back;
+    const r1 = hashNoise(slotIdx * 3 + 1 + salt);
+    if (r1 > 0.40) continue; // no dump in this slot (~40% of 20-min slots)
+    const r2 = hashNoise(slotIdx * 3 + 2 + salt);
+    const r3 = hashNoise(slotIdx * 3 + 3 + salt);
+    const dumpTicks = 3 + Math.floor(r2 * 5);                 // 3..7 ticks
+    const depth = 0.010 + r3 * 0.015;                          // -1.0% .. -2.5%
+    const startOffset = Math.floor(hashNoise(slotIdx * 7 + 5 + salt) * 10) * tickMs; // minute 0..9 of slot
+    const start = slotIdx * SLOT_MS + startOffset;
+    const dumpEnd = start + dumpTicks * tickMs;
+    const recoverTicks = 10 + Math.floor(r2 * 15);             // 10..24 ticks
+    const recoverEnd = dumpEnd + recoverTicks * tickMs;
+    if (nowMs >= start && nowMs < dumpEnd) {
+      return { kind: 'dump', progress: (nowMs - start) / (dumpEnd - start), depth, dumpTicks, recoverProgress: 0 };
+    }
+    if (nowMs >= dumpEnd && nowMs < recoverEnd) {
+      return { kind: 'recover', progress: 1, depth, dumpTicks, recoverProgress: (nowMs - dumpEnd) / (recoverEnd - dumpEnd) };
+    }
+  }
+  return null;
 }
 
 // ★ OWNER INSTRUCTION 2026-09-11 (KST):
@@ -217,19 +276,45 @@ export function planStep(
     }
     case 'oscillate': {
       const center = plan.center;
-      // Symmetric random step (±~0.35%) + pull toward centre.
-      const vol = 0.0035;
-      const pull = ((center - cur) / cur) * 0.08;
-      let mid = cur * (1 + noise * vol + pull);
       const hi = center * (1 + band), lo = center * (1 - band);
-      // Soft edge: outer 15% of the band pushes back toward the centre.
-      const innerHi = center + (hi - center) * 0.85;
-      const innerLo = center - (center - lo) * 0.85;
-      if (mid > innerHi) mid = mid + (innerHi - mid) * 0.5;
-      if (mid < innerLo) mid = mid + (innerLo - mid) * 0.5;
-      if (mid > hi) mid = hi;
-      if (mid < lo) mid = lo;
-      return { phase, mid, lo, hi, anchor: center };
+      const ev = dumpEvent(nowMs, tickMs);
+      let mid: number;
+      let sizeMul = 1;
+      if (ev?.kind === 'dump') {
+        // Someone is selling: a run of red ticks. Per-tick drop = depth /
+        // dumpTicks with front-loading (first ticks biggest), fat prints.
+        // A dump may pierce the soft band slightly but never below the hard
+        // floor; if we are ALREADY low, the seller has less room → shallower.
+        const hardLo = center * (1 - band * 1.3);
+        const room = Math.max(0, Math.min(1, (cur - hardLo) / Math.max(1e-12, center - hardLo)));
+        const perTick = (ev.depth * (0.35 + 0.65 * room)) / ev.dumpTicks;
+        const frontLoad = 1.5 - ev.progress;                 // 1.5 → 0.5
+        const drop = perTick * frontLoad * (0.7 + rnd * 0.6); // jittered
+        mid = cur * (1 - drop);
+        sizeMul = 2.5 + rnd * 3;                             // 2.5x .. 5.5x lots
+        if (mid < hardLo) mid = hardLo * (1 + rnd * 0.0012); // sit on the floor with a wobble, never flat-line
+      } else if (ev?.kind === 'recover') {
+        // Bids absorb it: slow creep back toward the centre, mostly green,
+        // with small red re-tests in between.
+        const gap = center - cur;
+        const creep = gap * (0.06 + 0.10 * ev.recoverProgress);
+        mid = cur + creep + cur * noise * 0.0022;
+        sizeMul = 1.2 + rnd * 0.8;
+      } else {
+        // Calm regime: symmetric wobble (±~0.35%) + gentle pull to centre.
+        const vol = 0.0035;
+        const pull = ((center - cur) / cur) * 0.08;
+        mid = cur * (1 + noise * vol + pull);
+        // Soft edge: outer 15% of the band pushes back toward the centre.
+        const innerHi = center + (hi - center) * 0.85;
+        const innerLo = center - (center - lo) * 0.85;
+        if (mid > innerHi) mid = mid + (innerHi - mid) * 0.5;
+        if (mid < innerLo) mid = mid + (innerLo - mid) * 0.5;
+        if (mid > hi) mid = hi;
+        if (mid < lo) mid = lo;
+      }
+      const outLo = Math.min(lo, mid), outHi = hi;
+      return { phase, mid, lo: outLo, hi: outHi, anchor: center, event: ev?.kind ?? null, sizeMul };
     }
     case 'close': {
       const closeEnd = kstTimeMs(plan.date, plan.close_end);
@@ -253,12 +338,26 @@ export function planStep(
     case 'carry': {
       const center = plan.close;
       const b = plan.carry_band_pct / 100;
-      const pull = ((center - cur) / cur) * 0.15;
-      let mid = cur * (1 + noise * 0.0015 + pull);
       const hi = center * (1 + b), lo = center * (1 - b);
-      if (mid > hi) mid = hi;
-      if (mid < lo) mid = lo;
-      return { phase, mid, lo, hi, anchor: center };
+      const ev = dumpEvent(nowMs, tickMs, 11);
+      let mid: number;
+      let sizeMul = 1;
+      if (ev?.kind === 'dump') {
+        const hardLo = center * (1 - b * 1.5);
+        const room = Math.max(0, Math.min(1, (cur - hardLo) / Math.max(1e-12, center - hardLo)));
+        const perTick = (ev.depth * 0.5 * (0.35 + 0.65 * room)) / ev.dumpTicks; // half-depth overnight dumps
+        mid = cur * (1 - perTick * (1.5 - ev.progress) * (0.7 + rnd * 0.6));
+        sizeMul = 2 + rnd * 2;
+        if (mid < hardLo) mid = hardLo * (1 + rnd * 0.0012);
+      } else if (ev?.kind === 'recover') {
+        mid = cur + (center - cur) * (0.06 + 0.10 * ev.recoverProgress) + cur * noise * 0.0015;
+      } else {
+        const pull = ((center - cur) / cur) * 0.15;
+        mid = cur * (1 + noise * 0.0015 + pull);
+        if (mid > hi) mid = hi;
+        if (mid < lo) mid = lo;
+      }
+      return { phase, mid, lo: Math.min(lo, mid), hi, anchor: center, event: ev?.kind ?? null, sizeMul };
     }
     default:
       return null;
