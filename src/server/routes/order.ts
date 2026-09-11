@@ -6,6 +6,19 @@ import { getUserFeeTier, recordFeeLedger, type FeeTier } from '../utils/fees';
 import { getRiskState } from '../lib/risk';
 import { loadPlan, planPhase, planEnvelope, planStep, resolveEffectivePlan } from '../lib/qta-day-plan';
 
+// ★★★ PERMANENT OWNER ORDER — QTA member-sell hard cap (OWNER_RULES.md §6) ★★★
+const MM_BOT_A = 'mm-bot-a';
+const MM_BOT_B = 'mm-bot-b';
+const MM_MARKER = -2;                 // stop_price tag for MM bot quotes
+// ★ OWNER RULE (2026-09-05): fixed USDT↔KRW rate while the market is seeded.
+const USDT_KRW_RATE = 1450;
+// ★ OWNER RULE (2026-09-05): the company (mm-bot) buys FROM each member at most
+//   KRW 50,000 / day → 50000/1450 ≈ 34.48 USDT. This is now a PER-MEMBER cap
+//   (previously one global budget). Anything a member sells beyond this in a
+//   day is NOT bought by the company and just rests until they cancel it.
+const MM_MEMBER_BUY_BUDGET_USDT = 50000 / USDT_KRW_RATE;  // ≈ 34.4828 USDT / member / day
+
+
 const app = new Hono<AppEnv>();
 
 // 100 orders / minute / IP — tight enough to stop order-book spam,
@@ -129,7 +142,46 @@ app.post('/', authMiddleware, rlPlaceOrder, async (c) => {
   // a seller. (See USDT_KRW_RATE / MM_MEMBER_BUY_BUDGET_USDT below.)
   // ============================================================================
   const isCompanyAccount = user.role === 'admin' || user.email === 'admin@quantaex.io';
-  void isCompanyAccount; // reserved (company seller exemption handled elsewhere)
+
+  // ★★★ PERMANENT OWNER ORDER (2026-09-12, OWNER_RULES.md §6) ★★★
+  //   "5만원 이상 절대 안 된다." A member's QTA sell to the company is HARD-CAPPED
+  //   at KRW 50,000 (= 50000/1450 USDT) per KST day, enforced at THREE layers:
+  //     (1) HERE at order placement: a MARKET sell (which can only fill against
+  //         the company bid wall) is clamped to today's remaining room and
+  //         REJECTED outright when no room is left;
+  //     (2) matchOrder(): every bot-buys-from-member fill is clamped;
+  //     (3) qta-mm-tick sweep: per-member cap + auto-cancel of leftovers.
+  //   Limit sells may still REST (they are only filled up to the cap by 2/3).
+  if (base === 'QTA' && side === 'sell' && !isCompanyAccount && user.id !== MM_BOT_A && user.id !== MM_BOT_B) {
+    const nowKst = new Date(Date.now() + 9 * 3600 * 1000);
+    const kstMidnightUtcMs = Date.UTC(nowKst.getUTCFullYear(), nowKst.getUTCMonth(), nowKst.getUTCDate()) - 9 * 3600 * 1000;
+    const dayStartUtc = new Date(kstMidnightUtcMs).toISOString().slice(0, 19).replace('T', ' ');
+    const r = await c.env.DB.prepare(
+      `SELECT COALESCE(SUM(total),0) spent FROM trades
+        WHERE market_id=? AND buyer_id IN (?, ?) AND seller_id=? AND created_at >= ?`
+    ).bind(market.id, MM_BOT_A, MM_BOT_B, user.id, dayStartUtc).first<{ spent: number }>().catch(() => null);
+    const roomUsdt = Math.max(0, MM_MEMBER_BUY_BUDGET_USDT - Number(r?.spent || 0));
+    if (type === 'market') {
+      if (roomUsdt < Number(market.min_order_total || 1)) {
+        return c.json({
+          error: 'DAILY_SELL_CAP_REACHED',
+          message: 'Daily QTA sell limit (KRW 50,000) reached. Try again after 00:00 KST.',
+          remaining_usdt: roomUsdt,
+        }, 400);
+      }
+      const refPx = await c.env.DB.prepare(
+        "SELECT price FROM orders WHERE market_id=? AND side='buy' AND status IN ('open','partial') ORDER BY price DESC LIMIT 1"
+      ).bind(market.id).first<{ price: number }>().catch(() => null);
+      const px = Number(refPx?.price) || 0;
+      if (px > 0) {
+        const maxQty = floorToDecimals(roomUsdt / px, market.amount_decimals);
+        if (amount > maxQty) amount = maxQty; // clamp the market sell to today's room
+        if (!(amount > 0)) {
+          return c.json({ error: 'DAILY_SELL_CAP_REACHED', message: 'Daily QTA sell limit (KRW 50,000) reached.', remaining_usdt: roomUsdt }, 400);
+        }
+      }
+    }
+  }
 
   // ============================================================================
   // Balance check & lock
@@ -1285,16 +1337,9 @@ app.post('/qta-autobuy-tick', async (c) => {
 // refreshed without touching real member/company orders. Guarded by the shared
 // x-twap-secret.
 // ============================================================================
-const MM_BOT_A = 'mm-bot-a';
-const MM_BOT_B = 'mm-bot-b';
-const MM_MARKER = -2;                 // stop_price tag for MM bot quotes
-// ★ OWNER RULE (2026-09-05): fixed USDT↔KRW rate while the market is seeded.
-const USDT_KRW_RATE = 1450;
-// ★ OWNER RULE (2026-09-05): the company (mm-bot) buys FROM each member at most
-//   KRW 50,000 / day → 50000/1450 ≈ 34.48 USDT. This is now a PER-MEMBER cap
-//   (previously one global budget). Anything a member sells beyond this in a
-//   day is NOT bought by the company and just rests until they cancel it.
-const MM_MEMBER_BUY_BUDGET_USDT = 50000 / USDT_KRW_RATE;  // ≈ 34.4828 USDT / member / day
+// (MM_BOT_A / MM_BOT_B / MM_MARKER / USDT_KRW_RATE / MM_MEMBER_BUY_BUDGET_USDT are
+//  hoisted to the top of this file — they are used by the order router AND
+//  matchOrder, not only by the mm-tick.)
 
 let takerSideEnsured = false;
 app.post('/qta-mm-tick', async (c) => {
