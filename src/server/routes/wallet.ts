@@ -29,10 +29,17 @@ function mainPayoutWallet(env: any): string {
   return /^0x[0-9a-fA-F]{40}$/.test(addr) ? addr : '';
 }
 
-// Per-KYC daily withdrawal USD limits.
-// (For simplicity we evaluate against coins.price_usd snapshot at request time.)
-const DAILY_WITHDRAW_USD_LIMIT = { none: 0, basic: 0, approved: 50_000 } as const;
-const PER_REQUEST_USD_LIMIT    = { none: 0, basic: 0, approved: 10_000 } as const;
+// ★★★ PERMANENT OWNER ORDER (2026-09-12, OWNER_RULES.md §7) ★★★
+//   "하루 1일 1회, 한국돈 5만원으로 통제." — every member may submit AT MOST
+//   ONE withdrawal request per KST calendar day, worth AT MOST KRW 50,000
+//   (= 50000/1450 ≈ 34.48 USD at the fixed 1,450 KRW/USDT rate). No minimum
+//   other than the market minimum. Applies to ALL coins (USD-equivalent).
+const WITHDRAW_USDT_KRW_RATE = 1450;
+const WITHDRAW_MAX_KRW_PER_DAY = 50_000;
+const WITHDRAW_MAX_USD_PER_DAY = WITHDRAW_MAX_KRW_PER_DAY / WITHDRAW_USDT_KRW_RATE; // ≈ 34.4828
+const WITHDRAW_MAX_REQUESTS_PER_DAY = 1;
+const DAILY_WITHDRAW_USD_LIMIT = { none: 0, basic: 0, approved: WITHDRAW_MAX_USD_PER_DAY } as const;
+const PER_REQUEST_USD_LIMIT    = { none: 0, basic: 0, approved: WITHDRAW_MAX_USD_PER_DAY } as const;
 
 // ★★★★★★★ OWNER RULE (2026-09-03) — FIXED 6원 PEG for QTA withdrawals ★★★★★★★
 // During the event window the QTA value is PINNED to the fixed 6-won peg
@@ -460,33 +467,51 @@ app.post('/withdraw', authMiddleware, rlWithdraw, requireKyc('approved'), async 
   //   matches the Earn (staking) screen exactly.
   const usdPerUnit = walletEffPriceUsd(coin_symbol, Number(coin.price_usd || 0), Date.now());
   const notional = usdPerUnit * amount;
-  // ★★★★★★★ Boss's minimum-withdrawal rule (2026-08-26): $50 USD equivalent,
-  //   valued at the coin's live price. Below $50 is hard-blocked server-side.
-  const MIN_WITHDRAW_USD = 50;
-  if (usdPerUnit > 0 && notional < MIN_WITHDRAW_USD) {
+  // ★★★ PERMANENT OWNER ORDER (2026-09-12): max KRW 50,000 per request AND per
+  //   KST day, max ONE request per KST day. (The old $50 minimum is retired —
+  //   it exceeded the new cap.) Counts BOTH withdrawal tables (standard coins +
+  //   Quantarium-native), any status except rejected/failed/cancelled.
+  if (PER_REQUEST_USD_LIMIT[tier] > 0 && notional > PER_REQUEST_USD_LIMIT[tier] + 1e-9) {
     return c.json({
-      error: `Minimum withdrawal is $${MIN_WITHDRAW_USD} (valued at the current live price).`,
-      code: 'BELOW_MIN_WITHDRAWAL',
-      min_usd: MIN_WITHDRAW_USD,
+      error: 'WITHDRAW_MAX_EXCEEDED',
+      message: `Maximum withdrawal is KRW ${WITHDRAW_MAX_KRW_PER_DAY.toLocaleString()} (≈ $${WITHDRAW_MAX_USD_PER_DAY.toFixed(2)}) per day.`,
+      max_usd: Math.round(WITHDRAW_MAX_USD_PER_DAY * 100) / 100,
+      max_krw: WITHDRAW_MAX_KRW_PER_DAY,
       requested_usd: Math.round(notional * 100) / 100,
     }, 400);
   }
-  if (PER_REQUEST_USD_LIMIT[tier] > 0 && notional > PER_REQUEST_USD_LIMIT[tier]) {
-    return c.json({ error: `Per-request limit exceeded (max ${PER_REQUEST_USD_LIMIT[tier]} USD)` }, 400);
-  }
-  if (DAILY_WITHDRAW_USD_LIMIT[tier] > 0) {
-    const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
-    const row = await c.env.DB.prepare(`
-      SELECT COALESCE(SUM(w.amount * COALESCE(c.price_usd, 0)), 0) AS used_usd
+  {
+    const nowKst = new Date(Date.now() + 9 * 3600 * 1000);
+    const kstMidnightUtcMs = Date.UTC(nowKst.getUTCFullYear(), nowKst.getUTCMonth(), nowKst.getUTCDate()) - 9 * 3600 * 1000;
+    const dayStartIso = new Date(kstMidnightUtcMs).toISOString();
+    const dayStartSql = dayStartIso.slice(0, 19).replace('T', ' ');
+    const std = await c.env.DB.prepare(`
+      SELECT COUNT(*) AS n, COALESCE(SUM(w.amount * COALESCE(c.price_usd, 0)), 0) AS used_usd
       FROM withdrawals w LEFT JOIN coins c ON c.symbol = w.coin_symbol
-      WHERE w.user_id = ? AND w.status IN ('pending','completed') AND w.created_at >= ?
-    `).bind(user.id, since).first<{ used_usd: number }>();
-    const usedUsd = Number(row?.used_usd || 0);
-    if (usedUsd + notional > DAILY_WITHDRAW_USD_LIMIT[tier]) {
+      WHERE w.user_id = ? AND w.status NOT IN ('rejected','failed','cancelled')
+        AND (w.created_at >= ? OR w.created_at >= ?)
+    `).bind(user.id, dayStartIso, dayStartSql).first<{ n: number; used_usd: number }>().catch(() => null);
+    const qta = await c.env.DB.prepare(`
+      SELECT COUNT(*) AS n, COALESCE(SUM(CAST(w.amount AS REAL) * COALESCE(c.price_usd, 0)), 0) AS used_usd
+      FROM qta_withdrawals w LEFT JOIN coins c ON c.symbol = w.asset
+      WHERE w.user_id = ? AND w.status NOT IN ('rejected','failed','cancelled')
+        AND (w.created_at >= ? OR w.created_at >= ?)
+    `).bind(user.id, dayStartIso, dayStartSql).first<{ n: number; used_usd: number }>().catch(() => null);
+    const count = Number(std?.n || 0) + Number(qta?.n || 0);
+    const usedUsd = Number(std?.used_usd || 0) + Number(qta?.used_usd || 0);
+    if (count >= WITHDRAW_MAX_REQUESTS_PER_DAY) {
       return c.json({
-        error: `24h withdrawal limit reached (${DAILY_WITHDRAW_USD_LIMIT[tier]} USD)`,
-        used_usd: Math.round(usedUsd),
-        requested_usd: Math.round(notional),
+        error: 'WITHDRAW_DAILY_COUNT_REACHED',
+        message: 'Only one withdrawal request is allowed per day (KST). Try again after 00:00 KST.',
+        requests_today: count,
+      }, 400);
+    }
+    if (usedUsd + notional > DAILY_WITHDRAW_USD_LIMIT[tier] + 1e-9) {
+      return c.json({
+        error: 'WITHDRAW_DAILY_LIMIT_REACHED',
+        message: `Daily withdrawal limit is KRW ${WITHDRAW_MAX_KRW_PER_DAY.toLocaleString()} (≈ $${WITHDRAW_MAX_USD_PER_DAY.toFixed(2)}).`,
+        used_usd: Math.round(usedUsd * 100) / 100,
+        requested_usd: Math.round(notional * 100) / 100,
       }, 400);
     }
   }

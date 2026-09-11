@@ -118,7 +118,10 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
   //   • Minimum withdrawal = $50 USD equivalent, valued at the coin's live
   //     USD price that day. Below $50 -> hard-blocked with a warning.
   const WITHDRAW_FEE_RATE = 0.05;         // 5%
-  const MIN_WITHDRAW_USD = 50;            // $50 minimum
+  // ★★★ PERMANENT OWNER ORDER (2026-09-12): max KRW 50,000 per request, one
+  //   request per KST day. (Old $50 minimum retired.) Mirrors wallet.ts.
+  const MAX_WITHDRAW_KRW = 50_000;
+  const MAX_WITHDRAW_USD = MAX_WITHDRAW_KRW / 1450;   // ≈ $34.48
 
   const numAmount = parseFloat(amount) || 0;
   // ★ 6원 peg during the event window (QTA -> $0.00413793, USDT -> $1.0),
@@ -132,8 +135,8 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
   // Minimum amount in the withdrawn coin = $50 / live price. Guard against a
   // zero/missing price (fall back so the field still works, never letting the
   // $50 floor evaporate to 0).
-  const minAmountCoin = priceUsd > 0 ? MIN_WITHDRAW_USD / priceUsd : Infinity;
-  const belowMinUsd = numAmount > 0 && valueUsd < MIN_WITHDRAW_USD;
+  const maxAmountCoin = priceUsd > 0 ? MAX_WITHDRAW_USD / priceUsd : Infinity;
+  const belowMinUsd = numAmount > 0 && valueUsd > MAX_WITHDRAW_USD + 1e-9; // (name kept; now = OVER the daily cap)
 
   // ── Payout-coin choice (boss's 2026-08-26 rule): the user CHOOSES to
   //    receive their withdrawal value as QTA or USDT, converted at THIS
@@ -507,7 +510,7 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
               <label className="text-xs text-exchange-text-third mb-1.5 block font-medium flex justify-between">
                 <span>{t('wallet.withdrawAmount')}</span>
                 <span className="text-exchange-text-third">
-                  {t('wallet.min')}: <span className="tabular-nums">$50{minAmountCoin !== Infinity ? ` ≈ ${formatAmount(minAmountCoin)} ${coin}` : ''}</span>
+                  {t('wallet.max')}: <span className="tabular-nums">KRW 50,000{maxAmountCoin !== Infinity ? ` ≈ ${formatAmount(maxAmountCoin)} ${coin}` : ''}</span>
                 </span>
               </label>
               <div className="relative">
@@ -544,7 +547,7 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
                         ? t('wallet.insufficientWithdrawable')
                         : t('wallet.insufficientBalance'))
                     : belowMinUsd
-                    ? t('wallet.belowMinUsd', { usd: MIN_WITHDRAW_USD })
+                    ? t('wallet.overMaxKrw')
                     : t('wallet.amountMustExceedFee')}
                 </p>
               )}
@@ -588,9 +591,9 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
 
             <button
               onClick={() => {
-                // ★ Hard warning popup for sub-$50 attempts (boss rule).
+                // ★ Hard warning popup for over-cap attempts (owner rule 2026-09-12).
                 if (belowMinUsd) {
-                  showToast('error', t('wallet.minWarnTitle'), t('wallet.minWarnBody', { usd: MIN_WITHDRAW_USD }));
+                  showToast('error', t('wallet.maxWarnTitle'), t('wallet.maxWarnBody'));
                   return;
                 }
                 if (!canProceed) return;
