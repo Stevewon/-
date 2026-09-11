@@ -509,11 +509,67 @@ async function matchOrder(
   const isBotOrder = (uid: any) => uid === MM_BOT_A || uid === MM_BOT_B;
   const priceFloor = await qtaPriceFloor(DB, market);
 
+  // ★ OWNER RULE (2026-09-05, re-enforced 2026-09-12): the COMPANY buys FROM a
+  //   member at most KRW 50,000 / day (≈34.48 USDT). Previously this was only
+  //   applied in the mm-tick sweep — a member SELL that crossed the bots'
+  //   resting BID WALL at order time bypassed it (insillee sold ≈140,000 KRW in
+  //   one go). Now the cap is enforced HERE, at the fill boundary, for every
+  //   trade where a bot is the buyer and a member is the seller.
+  const isQtaMarket = market.base_coin === 'QTA';
+  let memberSellRoomUsdt = Number.POSITIVE_INFINITY;
+  let capSellerId: string | null = null;
+  if (isQtaMarket) {
+    if (order.side === 'sell' && !isBotOrder(order.user_id)) capSellerId = String(order.user_id);
+    // (bot BUY taker hitting member asks is capped per-ask by the mm-tick itself,
+    //  but guard here too in case of a multi-ask sweep.)
+    if (capSellerId) {
+      const nowKst = new Date(Date.now() + 9 * 3600 * 1000);
+      const kstMidnightUtcMs = Date.UTC(nowKst.getUTCFullYear(), nowKst.getUTCMonth(), nowKst.getUTCDate()) - 9 * 3600 * 1000;
+      const dayStartUtc = new Date(kstMidnightUtcMs).toISOString().slice(0, 19).replace('T', ' ');
+      const r = await DB.prepare(
+        `SELECT COALESCE(SUM(total),0) spent FROM trades
+          WHERE market_id=? AND buyer_id IN (?, ?) AND seller_id=? AND created_at >= ?`
+      ).bind(market.id, MM_BOT_A, MM_BOT_B, capSellerId, dayStartUtc).first<{ spent: number }>().catch(() => null);
+      memberSellRoomUsdt = Math.max(0, MM_MEMBER_BUY_BUDGET_USDT - Number(r?.spent || 0));
+    }
+  }
+  const perSellerSpent = new Map<string, number>();
+
   for (const match of matchingOrders as any[]) {
     if (remaining <= 0) break;
 
-    const tradeAmount = Math.min(remaining, match.remaining);
+    let tradeAmount = Math.min(remaining, match.remaining);
     const tradePrice = match.price;
+
+    // 🛡️ Per-member daily company-buy cap (QTA): member SELL taker vs bot bid.
+    if (capSellerId && isBotOrder(match.user_id)) {
+      if (memberSellRoomUsdt * 1 < 1e-9) break;             // out of room → rest of sell stays on book
+      const maxQty = memberSellRoomUsdt / tradePrice;
+      if (tradeAmount > maxQty) tradeAmount = floorToDecimals(maxQty, market.amount_decimals);
+      if (!(tradeAmount > 0)) break;
+    }
+    // 🛡️ Same cap when a bot BUY taker sweeps a member's resting ask.
+    if (isQtaMarket && order.side === 'buy' && isBotOrder(order.user_id) && !isBotOrder(match.user_id)) {
+      const sid = String(match.user_id);
+      let spent = perSellerSpent.get(sid);
+      if (spent == null) {
+        const nowKst = new Date(Date.now() + 9 * 3600 * 1000);
+        const kstMidnightUtcMs = Date.UTC(nowKst.getUTCFullYear(), nowKst.getUTCMonth(), nowKst.getUTCDate()) - 9 * 3600 * 1000;
+        const dayStartUtc = new Date(kstMidnightUtcMs).toISOString().slice(0, 19).replace('T', ' ');
+        const r = await DB.prepare(
+          `SELECT COALESCE(SUM(total),0) spent FROM trades
+            WHERE market_id=? AND buyer_id IN (?, ?) AND seller_id=? AND created_at >= ?`
+        ).bind(market.id, MM_BOT_A, MM_BOT_B, sid, dayStartUtc).first<{ spent: number }>().catch(() => null);
+        spent = Number(r?.spent || 0);
+        perSellerSpent.set(sid, spent);
+      }
+      const room = MM_MEMBER_BUY_BUDGET_USDT - spent;
+      if (room < 1e-9) continue;                              // this member is done for today → skip their ask
+      const maxQty = room / tradePrice;
+      if (tradeAmount > maxQty) tradeAmount = floorToDecimals(maxQty, market.amount_decimals);
+      if (!(tradeAmount > 0)) continue;
+      perSellerSpent.set(sid, spent + tradeAmount * tradePrice);
+    }
 
     // 🛡️ Refuse any fill BELOW the 24h floor (owner 2026-09-05). The maker
     // order stays on the book; the taker keeps its remaining (rests, or is
@@ -530,6 +586,7 @@ async function matchOrder(
     }
 
     const tradeTotal = tradePrice * tradeAmount;
+    if (capSellerId && isBotOrder(match.user_id)) memberSellRoomUsdt -= tradeTotal;
 
     // Taker = the newly placed `order`; maker = the resting `match`.
     // Use the fee rates snapshotted when each order was placed (falling
