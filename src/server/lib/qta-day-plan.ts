@@ -130,23 +130,24 @@ export function dumpEvent(nowMs: number, tickMs: number = 60_000, salt = 0): Dum
   return null;
 }
 
-// ★ OWNER INSTRUCTION 2026-09-11 (KST):
-//   "오늘은 0.007 ±2.5% 사이 오르내림 / 23:00 → 23:55 0.0065로 서서히 내려와 마감"
-//   (2026-09-10: centre 0.006 → close 0.0058 — executed, carried at 0.0058.)
+// ★ OWNER INSTRUCTION 2026-09-13 (KST, Sunday):
+//   "8원대까지 끌어올렸다가 마지막에는 7.8원에 끝맺음. 등락폭은 사람이 매도·매수하는 것처럼."
+//   Read in the owner's price units: 0.0080 (≈ "8") intraday, close 0.0078.
+//   (09-11: 0.007 → 0.0065 done. 09-12: carried at 0.0065.)
 // Built-in default so the plan is live the moment this deploys — no DB write
 // needed. A default whose date is NEWER than the stored plan (or tombstone)
 // supersedes it — the owner's latest daily instruction always wins. Admin can
 // still override / clear for the day via /api/admin/coins/QTA/day-plan.
 export const DEFAULT_PLAN: Omit<QtaDayPlan, 'start_ms' | 'start_price'> = {
-  date: '2026-09-11',
-  center: 0.007,
-  band_pct: 2.5,
-  close: 0.0065,
-  close_start: '23:00',
+  date: '2026-09-13',
+  center: 0.0080,
+  band_pct: 3.0,
+  close: 0.0078,
+  close_start: '22:30',
   close_end: '23:55',
-  ramp_minutes: 90,
+  ramp_minutes: 300,   // +23% from 0.0065 → spread over 5h so it reads as a real rally
   carry_band_pct: 1.0,
-  created_by: 'owner-rule-2026-09-11',
+  created_by: 'owner-rule-2026-09-13',
 };
 
 // ---------------------------------------------------------------------------
