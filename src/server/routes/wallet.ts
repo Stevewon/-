@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { effPriceUsd } from '../../shared/qta-peg';
 import type { AppEnv } from '../index';
 import { authMiddleware, adminMiddleware } from '../middleware/auth';
 import { requireKyc } from '../middleware/kyc';
@@ -48,22 +49,9 @@ const PER_REQUEST_USD_LIMIT    = { none: 0, basic: 0, approved: WITHDRAW_MAX_USD
 // count / USDT conversion consistent across BOTH the Earn (staking) screen
 // and the general Wallet-withdraw screen, so users no longer see two
 // different QTA prices. Outside the window the live coins.price_usd is used.
-const WALLET_FIXED_USDT_KRW = 1450;
-const WALLET_FIXED_QTA_KRW  = 6;
-const WALLET_FIXED_QTA_USD  = WALLET_FIXED_QTA_KRW / WALLET_FIXED_USDT_KRW; // $0.00413793
-const WALLET_FIXED_WIN_START_MS = Date.parse('2026-09-01T00:00:00+09:00');
-const WALLET_FIXED_WIN_END_MS   = Date.parse('2026-09-12T00:00:00+09:00'); // END exclusive (through 09-11 KST)
-function walletInFixedWindow(nowMs: number): boolean {
-  return nowMs >= WALLET_FIXED_WIN_START_MS && nowMs < WALLET_FIXED_WIN_END_MS;
-}
-// Returns the effective USD unit price for a coin, applying the 6원 peg to
-// QTA and $1.0 to USDT during the event window; otherwise the live price.
+// Peg schedule lives in src/shared/qta-peg.ts (6원 09-01~11, 10원 09-14~).
 function walletEffPriceUsd(symbol: string, livePriceUsd: number, nowMs: number): number {
-  if (!walletInFixedWindow(nowMs)) return livePriceUsd;
-  const s = String(symbol).toUpperCase();
-  if (s === 'QTA') return WALLET_FIXED_QTA_USD;
-  if (s === 'USDT') return 1;
-  return livePriceUsd;
+  return effPriceUsd(symbol, livePriceUsd, nowMs);
 }
 
 function uuid() {

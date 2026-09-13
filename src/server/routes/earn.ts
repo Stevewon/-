@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { PEG_USDT_KRW, pegQtaUsd, inFixedWindow } from '../../shared/qta-peg';
 import type { AppEnv } from '../index';
 import { authMiddleware } from '../middleware/auth';
 import { assignBinaryLeg, rollStakeUpBinary } from '../lib/binary-matching';
@@ -40,25 +41,13 @@ const MATCH_L1 = 0.10;               // 1st-level referral match
 const MATCH_L2 = 0.05;               // 2nd-level referral match
 const STAKE_UNIT_USD = 100;          // $100 increments
 
-// ★ OWNER RULE (2026-09-01): FIXED 6-WON ENTRY-PRICE WINDOW ─────────────────
-//   For 2026-09-01 through 2026-09-11 (KST, 11 days — extended +1 day) the QTA "entry price"
-//   used to derive the STAKED QUANTITY (dividend basis) and to convert the
-//   DIVIDEND WITHDRAWAL is FIXED at 6원, with USDT pegged at 1,450원/USD.
-//     6원 ÷ 1,450원/USD = $0.00413793 per QTA.
-//   This ONLY affects staking (entry/dividend/withdraw conversion). It does
-//   NOT touch the live exchange trading price. Outside the window we fall back
-//   to the managed band center (price-independent) as before.
-const FIXED_USDT_KRW = 1450;                       // 테더 고정 환율 (1 USD = 1,450원)
-const FIXED_QTA_KRW = 6;                            // QTA 고정 진입가 (개당 6원)
-const FIXED_QTA_USD = FIXED_QTA_KRW / FIXED_USDT_KRW; // = $0.00413793.../QTA
-// Window in KST day-index terms (kstDayIndex). 2026-09-01 KST 00:00 .. 2026-09-11 KST 23:59.
-const FIXED_WINDOW_START_MS = Date.parse('2026-09-01T00:00:00+09:00');
-const FIXED_WINDOW_END_MS   = Date.parse('2026-09-12T00:00:00+09:00'); // exclusive (through 09-11 KST — extended +1 day)
-
-// True if `nowMs` falls inside the fixed 6-won staking window (KST).
-function inFixedWindow(nowMs: number): boolean {
-  return nowMs >= FIXED_WINDOW_START_MS && nowMs < FIXED_WINDOW_END_MS;
-}
+// ★ OWNER RULE — FIXED QTA PEG (see src/shared/qta-peg.ts for the schedule):
+//   2026-09-01~09-11 KST = 6원, 2026-09-14 KST~ (당분간) = 10원. USDT = 1,450원.
+//   Applies to staking ENTRY basis (staked qty), DIVIDEND valuation and the
+//   dividend WITHDRAWAL conversion. Outside a peg window → live price.
+const FIXED_USDT_KRW = PEG_USDT_KRW;
+/** Pegged QTA USD at `now` (throws-free; callers only use it inside inFixedWindow()). */
+function fixedQtaUsdNow(): number { return pegQtaUsd(Date.now()) ?? 0; }
 
 async function qtaPrice(c: any): Promise<number> {
   const row = await c.env.DB.prepare(
@@ -81,7 +70,7 @@ async function qtaPrice(c: any): Promise<number> {
 //   QTA price only if no center is configured.
 async function qtaStakeBasisPrice(c: any): Promise<number> {
   // ★ 2026-09-01 ~ 09-10 (KST): fixed 6원 entry price (USDT pegged 1,450원).
-  if (inFixedWindow(Date.now())) return FIXED_QTA_USD;
+  if (inFixedWindow(Date.now())) return fixedQtaUsdNow();
   const row = await c.env.DB.prepare(
     `SELECT price_usd, price_mode, price_center FROM coins WHERE symbol = 'QTA'`
   ).first<any>();
@@ -95,7 +84,7 @@ async function qtaStakeBasisPrice(c: any): Promise<number> {
 // During the fixed window this is the 6원 peg ($0.00413793); otherwise it is
 // the live QTA price. (Part "C" of the owner rule: withdraw at 6원 / 1,450원.)
 async function qtaWithdrawPrice(c: any): Promise<number> {
-  if (inFixedWindow(Date.now())) return FIXED_QTA_USD;
+  if (inFixedWindow(Date.now())) return fixedQtaUsdNow();
   return qtaPrice(c);
 }
 
@@ -202,9 +191,40 @@ function accruedQta(p: {
   created_at: string | null;
 }, nowMs: number, basisPrice: number): number {
   const days = accruedDays(p, nowMs);
-  const principalQta = stakedQtyOf(p, basisPrice);
-  const qta = principalQta * (p.daily_rate || 0) * days;
+  // Positions that locked REAL QTA (or recorded a stake price) pay a fixed
+  // QTA quantity per day regardless of any peg.
+  const explicit = Number(p.principal_qta || p.principal || 0);
+  const stakePx = Number(p.qta_price_at_stake || 0);
+  if (explicit > 0 || stakePx > 0) {
+    const qta = stakedQtyOf(p, basisPrice) * (p.daily_rate || 0) * days;
+    return isFinite(qta) ? qta : 0;
+  }
+  // ★ OWNER RULE (2026-09-13): admin-GRANTED positions (USD principal, no QTA
+  //   locked) pay dividend_usd / PEG-OF-THAT-DAY. 09-01~11 → 6원, 09-14~ →
+  //   10원 (당분간), gap days → the stable band centre. Summed day-by-day so a
+  //   peg change never re-prices days already paid (paid_dividend_qta stays
+  //   consistent; no negative claimable, no windfall).
+  const dailyUsd = Number(p.principal_usd || 0) * (p.daily_rate || 0);
+  if (!(dailyUsd > 0) || days <= 0) return 0;
+  const start = p.created_at ? Date.parse(p.created_at) : nowMs;
+  const startIdx = kstDayIndex(isNaN(start) ? nowMs : start);
+  let qta = 0;
+  for (let d = 1; d <= days; d++) {
+    qta += dailyUsd / basisForDayIndex(startIdx + d, basisPrice);
+  }
   return isFinite(qta) ? qta : 0;
+}
+
+/** Peg (USD) in force on a given KST day index; falls back to `fallback`. */
+function basisForDayIndex(dayIndex: number, fallback: number): number {
+  // Noon KST of that day → unambiguous inside the day.
+  const ms = dayIndex * MS_PER_DAY - KST_OFFSET_MS + 12 * 3600_000;
+  const peg = pegQtaUsd(ms);
+  if (peg && peg > 0) return peg;
+  // Gap days (e.g. 09-12/13) — the prior rule was 6원; keep it so history never
+  // re-prices when the CURRENT peg changes. `fallback` is unused on purpose.
+  void fallback;
+  return 6 / FIXED_USDT_KRW;
 }
 
 // Resolve a position's canonical STAKED QTA QUANTITY (price-independent basis
@@ -1134,7 +1154,7 @@ app.post('/withdraw-dividend', authMiddleware, async (c) => {
   //     withdrawal converts at 6원 / 1,450원, NOT the live market price.
   //   Outside the window: live prices.
   const fixedWin = inFixedWindow(Date.now());
-  const qPrice = fixedWin ? FIXED_QTA_USD : await qtaPrice(c);   // QTA price in USD
+  const qPrice = fixedWin ? fixedQtaUsdNow() : await qtaPrice(c);   // QTA price in USD
   const uPrice = fixedWin ? 1.0 : await usdtPrice(c);            // USDT price in USD (≈1)
 
   // ★★★ PERMANENT OWNER ORDER (2026-09-12, OWNER_RULES.md §7): withdrawals are
@@ -1314,11 +1334,14 @@ app.post('/accrue-daily', async (c) => {
     const maxDay = Math.min(todayIdx - startIdx, term);
     if (maxDay < 1) continue;
 
-    // The fixed QTA quantity earned per day = staked qty × daily_rate.
+    // The QTA earned per day. Real-QTA positions: staked qty × rate (fixed).
+    // Admin-GRANTED positions: dividend USD / peg of THAT day (owner 2026-09-13).
+    const explicitQ = Number(p.principal_qta || p.principal || 0) > 0 || Number(p.qta_price_at_stake || 0) > 0;
     const stakedQta = stakedQtyOf(p, basis);
-    const dailyQta = stakedQta * Number(p.daily_rate || 0);
     const dailyUsd = Number(p.principal_usd || 0) * Number(p.daily_rate || 0);
-    if (!(dailyQta > 0)) continue;
+    const dailyQtaFixed = stakedQta * Number(p.daily_rate || 0);
+    const dailyQtaFor = (dayIndex: number) => explicitQ ? dailyQtaFixed : dailyUsd / basisForDayIndex(dayIndex, basis);
+    if (!(dailyUsd > 0) && !(dailyQtaFixed > 0)) continue;
 
     // Which day rows already exist for this position?
     const existing = await c.env.DB.prepare(
@@ -1328,9 +1351,11 @@ app.post('/accrue-daily', async (c) => {
     const already = Number(existing?.n || 0);
 
     const stmts: any[] = [];
+    let cumulativeQta = 0;
     for (let d = 1; d <= maxDay; d++) {
       const dayIndex = startIdx + d;             // the KST day this row is for
-      const cumulativeQta = dailyQta * d;
+      const dailyQta = dailyQtaFor(dayIndex);
+      cumulativeQta += dailyQta;
       stmts.push(
         c.env.DB.prepare(
           `INSERT OR IGNORE INTO staking_daily_accruals

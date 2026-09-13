@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { inFixedWindow, pegQtaUsd } from '../../shared/qta-peg';
 import type { AppEnv } from '../index';
 import { authMiddleware, adminMiddleware } from '../middleware/auth';
 import { createNotification } from './notifications';
@@ -25,12 +26,9 @@ import {
 //   Binary MATCH BONUS QTA payouts (via recomputeBinaryFromStaking /
 //   rollStakeUpBinary) must convert bonus USD → QTA at this fixed price, exactly
 //   like staking dividends. Outside the window, fall back to the live price.
-const ADMIN_FIXED_QTA_USD = 6 / 1450; // $0.00413793
-const ADMIN_FIXED_WIN_START_MS = Date.parse('2026-09-01T00:00:00+09:00');
-const ADMIN_FIXED_WIN_END_MS = Date.parse('2026-09-12T00:00:00+09:00'); // exclusive (through 09-11 KST)
-function adminInFixedWindow(nowMs: number): boolean {
-  return nowMs >= ADMIN_FIXED_WIN_START_MS && nowMs < ADMIN_FIXED_WIN_END_MS;
-}
+// Peg schedule: src/shared/qta-peg.ts (6원 09-01~11, 10원 09-14~ 당분간).
+function adminInFixedWindow(nowMs: number): boolean { return inFixedWindow(nowMs); }
+function adminFixedQtaUsd(): number { return pegQtaUsd(Date.now()) ?? 0; }
 
 // Small helper: look up an email by user id, returning null on any failure.
 async function lookupEmail(db: any, userId: string): Promise<string | null> {
@@ -2670,7 +2668,7 @@ app.post('/binary/recompute', async (c) => {
     } catch { /* ignore */ }
     if (!(qtaPrice > 0)) qtaPrice = 0.00357142857;
     // ★ During the fixed window, match-bonus QTA converts at the 6원 peg.
-    if (adminInFixedWindow(Date.now())) qtaPrice = ADMIN_FIXED_QTA_USD;
+    if (adminInFixedWindow(Date.now())) qtaPrice = adminFixedQtaUsd();
 
     const report = await recomputeBinaryFromStaking(c.env.DB, qtaPrice);
 
@@ -2739,7 +2737,7 @@ app.post('/staking-positions/delete', async (c) => {
     } catch { /* ignore */ }
     if (!(qtaPrice > 0)) qtaPrice = 0.00357142857;
     // ★ During the fixed window, match-bonus QTA converts at the 6원 peg.
-    if (adminInFixedWindow(Date.now())) qtaPrice = ADMIN_FIXED_QTA_USD;
+    if (adminInFixedWindow(Date.now())) qtaPrice = adminFixedQtaUsd();
     recompute = await recomputeBinaryFromStaking(db, qtaPrice);
     recompute.qta_price = qtaPrice;
   } catch (e: any) {
@@ -2912,7 +2910,7 @@ app.post('/twap/:id/cancel', async (c) => {
 // ============================================================================
 async function qtaPriceUsd(db: any): Promise<number> {
   // ★ During the fixed window, match-bonus QTA converts at the 6원 peg.
-  if (adminInFixedWindow(Date.now())) return ADMIN_FIXED_QTA_USD;
+  if (adminInFixedWindow(Date.now())) return adminFixedQtaUsd();
   try {
     const row = await db.prepare(`SELECT price_usd FROM coins WHERE symbol = 'QTA'`).first<{ price_usd: number }>();
     const p = Number(row?.price_usd || 0);

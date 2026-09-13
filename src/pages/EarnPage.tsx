@@ -15,13 +15,9 @@ import { X, Lock, Loader2, Star, Crown, ShieldCheck, Gift, TrendingUp, Wallet, A
 //   6 ÷ 1,450 = $0.00413793 per QTA. Withdrawal conversion MUST match the
 //   server (which values/converts at this fixed peg during the window), so the
 //   UI never shows a different number than what actually settles. Outside the
-//   window we fall back to the live price passed in from the page.
-const FIXED_QTA_USD = 6 / 1450;                                  // = $0.00413793.../QTA
-const FIXED_WIN_START = Date.parse('2026-09-01T00:00:00+09:00');
-const FIXED_WIN_END   = Date.parse('2026-09-12T00:00:00+09:00'); // exclusive (through 09-11 KST — extended +1 day)
-function inFixedWindow(nowMs: number): boolean {
-  return nowMs >= FIXED_WIN_START && nowMs < FIXED_WIN_END;
-}
+// Peg schedule (6원 09-01~11, 10원 09-14~): src/shared/qta-peg.ts
+import { inFixedWindow, pegQtaUsd, pegQtaKrw } from '../shared/qta-peg';
+const fixedQtaUsdNow = () => pegQtaUsd(Date.now()) ?? 0;
 
 // ★ OWNER RULE (2026-09-03): 배당·매칭으로 쌓인 코인의 청구는 매주 금요일(KST)
 //   오전 10시~오후 4시에만 가능. UI에서 버튼 안내/비활성 표시에 사용한다.
@@ -1372,7 +1368,7 @@ function WithdrawDividendModal({ qtaBalance, qtaPrice, usdtPrice, onClose, onDon
   //   ($0.00413793, USDT = 1.0) so the displayed "You Receive" EXACTLY matches
   //   what the server settles. Outside the window use the live prices.
   const fixedWin = inFixedWindow(Date.now());
-  const effQtaPrice = fixedWin ? FIXED_QTA_USD : qtaPrice;   // QTA price used for conversion
+  const effQtaPrice = fixedWin ? fixedQtaUsdNow() : qtaPrice;   // QTA price used for conversion
   const effUsdtPrice = fixedWin ? 1 : (usdtPrice > 0 ? usdtPrice : 1);
 
   // ★★★ PERMANENT OWNER ORDER (2026-09-12): max KRW 50,000 (≈ $34.48) per
@@ -1476,7 +1472,7 @@ function WithdrawDividendModal({ qtaBalance, qtaPrice, usdtPrice, onClose, onDon
             </div>
             <p className="text-[11px] text-exchange-text-third mt-1.5">
               {payoutCoin === 'USDT'
-                ? `${t('earn.payoutUsdtNote')} · 1 QTA = $${effQtaPrice.toFixed(5)}${fixedWin ? ' (고정 6원 / 1,450원)' : ''}`
+                ? `${t('earn.payoutUsdtNote')} · 1 QTA = $${effQtaPrice.toFixed(5)}${fixedWin ? ` (fixed KRW ${pegQtaKrw(Date.now())} / 1,450)` : ''}`
                 : t('earn.payoutQtaNote')}
             </p>
           </div>
