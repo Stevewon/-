@@ -24,21 +24,9 @@ type Step = 'form' | 'confirm' | 'done';
 //   staking screen (6 ÷ 1,450 = $0.00413793/QTA, USDT pegged $1.0). This keeps
 //   the QTA count identical across both screens so users never see two prices.
 //   Outside the window the live coins.price_usd is used. The server
-//   (wallet.ts) applies the identical peg, so the UI matches what settles.
-const WM_FIXED_QTA_USD = 6 / 1450;                                   // $0.00413793
-const WM_FIXED_WIN_START = Date.parse('2026-09-01T00:00:00+09:00');
-const WM_FIXED_WIN_END   = Date.parse('2026-09-12T00:00:00+09:00');  // exclusive (through 09-11 KST)
-function wmInFixedWindow(nowMs: number): boolean {
-  return nowMs >= WM_FIXED_WIN_START && nowMs < WM_FIXED_WIN_END;
-}
-// Effective USD unit price applying the 6원 peg to QTA / $1.0 to USDT in-window.
-function wmEffPriceUsd(symbol: string, liveUsd: number): number {
-  if (!wmInFixedWindow(Date.now())) return liveUsd;
-  const s = String(symbol || '').toUpperCase();
-  if (s === 'QTA') return WM_FIXED_QTA_USD;
-  if (s === 'USDT') return 1;
-  return liveUsd;
-}
+// Peg schedule (6원 09-01~11, 10원 09-14~): src/shared/qta-peg.ts
+import { effPriceUsd as wmEffPriceUsdShared, inFixedWindow as wmInFixedWindow, pegQtaKrw as wmPegKrw } from '../../shared/qta-peg';
+function wmEffPriceUsd(symbol: string, livePriceUsd: number): number { return wmEffPriceUsdShared(symbol, livePriceUsd, Date.now()); }
 
 export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: Props) {
   const { t } = useI18n();
@@ -388,7 +376,7 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
                 {(() => {
                   const fixed = wmInFixedWindow(Date.now());
                   const note = fixed ? t('wallet.payoutNoteFixed') : t('wallet.payoutNote');
-                  const suffix = fixed ? ' (고정 6원 / 1,450원)' : '';
+                  const suffix = fixed ? ` (fixed KRW ${wmPegKrw(Date.now())} / 1,450)` : '';
                   return payoutCoin === 'QTA'
                     ? `${note} · 1 QTA ≈ $${qtaPriceUsd.toFixed(5)}${suffix}`
                     : `${note} · 1 USDT ≈ $${usdtPriceUsd.toFixed(4)}${suffix}`;
@@ -571,7 +559,7 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
                 <div className="flex justify-between text-[10px] text-exchange-text-third">
                   <span>{t('wallet.convertedFrom')}</span>
                   <span className="tabular-nums">
-                    {formatAmount(receiveAmount)} {coin} @ {wmInFixedWindow(Date.now()) ? '고정 6원' : 'live price'}
+                    {formatAmount(receiveAmount)} {coin} @ {wmInFixedWindow(Date.now()) ? `fixed KRW ${wmPegKrw(Date.now())}` : 'live price'}
                   </span>
                 </div>
               )}

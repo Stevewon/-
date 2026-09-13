@@ -55,6 +55,7 @@ import { scanExtDeposits, extDepositTick } from './ext-watcher';
 import { sweepExtDeposits } from './ext-sweep';
 import { twapTick, qtaAutobuyTick, qtaMmTick, stakingAccrueDaily } from './twap';
 import { treasurySweep, treasuryReport } from './treasury-sweep';
+import { activePeg as pegActive, PEG_WINDOWS as PEG_SCHEDULE } from './qta-peg';
 import { deriveEvmAccount, evmAddressIsValid } from './lib/ext-evm-signer';
 import { validateMnemonic as validateBip39 } from '@scure/bip39';
 import { wordlist as bip39Wordlist } from '@scure/bip39/wordlists/english.js';
@@ -395,6 +396,45 @@ export default {
   // Optional HTTP endpoint for manual runs (useful for debugging)
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    if (url.pathname === '/peg-census') {
+      // ★ Owner 2026-09-13: "해당 인원도 전수조사해서 보고" — every ACTIVE staking
+      //   position with its daily dividend under the OLD (6원) vs NEW (10원) peg.
+      //   Read-only. Staked qty is price-independent (derived once at the 6원
+      //   basis for admin grants), so the QTA/day does NOT change; what changes
+      //   is the KRW/USD VALUE of that QTA and the QTA count of match bonuses.
+      const out: any = { schedule: PEG_SCHEDULE.map(w => ({ ...w, endMs: isFinite(w.endMs) ? w.endMs : null })), now_peg: pegActive(Date.now()) };
+      try {
+        const { results } = await env.DB.prepare(
+          `SELECT p.id, p.user_id, u.nickname, u.email, p.product_id, p.principal_usd,
+                  p.real_principal_usd, p.bonus_principal_usd, p.principal_qta, p.qta_price_at_stake,
+                  p.daily_rate, p.term_days, p.created_at, p.paid_dividend_qta, p.granted_by
+             FROM staking_positions p LEFT JOIN users u ON u.id = p.user_id
+            WHERE p.status = 'active' ORDER BY u.nickname, p.created_at`,
+        ).all<any>();
+        const rows = (results || []).map((p: any) => {
+          const explicit = Number(p.principal_qta || 0);
+          const stakePx = Number(p.qta_price_at_stake || 0);
+          const basis6 = 6 / 1450;
+          const stakedQta = explicit > 0 ? explicit : stakePx > 0 ? Number(p.principal_usd) / stakePx : Number(p.principal_usd) / basis6;
+          const dailyQta = stakedQta * Number(p.daily_rate || 0);
+          return {
+            user: p.nickname, email: p.email, product: p.product_id,
+            principal_usd: p.principal_usd, real_usd: p.real_principal_usd, bonus_usd: p.bonus_principal_usd,
+            daily_rate: p.daily_rate, term_days: p.term_days, since: p.created_at, granted_by: p.granted_by,
+            staked_qta: Math.round(stakedQta), daily_qta: Math.round(dailyQta * 100) / 100,
+            daily_krw_at_6: Math.round(dailyQta * 6), daily_krw_at_10: Math.round(dailyQta * 10),
+            paid_dividend_qta: Math.round(Number(p.paid_dividend_qta || 0)),
+          };
+        });
+        out.count_positions = rows.length;
+        out.count_users = new Set(rows.map((r: any) => r.email)).size;
+        out.total_daily_qta = Math.round(rows.reduce((a: number, r: any) => a + r.daily_qta, 0));
+        out.total_daily_krw_at_6 = rows.reduce((a: number, r: any) => a + r.daily_krw_at_6, 0);
+        out.total_daily_krw_at_10 = rows.reduce((a: number, r: any) => a + r.daily_krw_at_10, 0);
+        out.positions = rows;
+      } catch (e: any) { out.error = String(e?.message || e); }
+      return new Response(JSON.stringify(out, null, 2), { headers: { 'content-type': 'application/json' } });
+    }
     if (url.pathname === '/treasury/sweep') {
       // ★ Owner 2026-09-12: move member-sold QTA bots → treasury (ledger) and
       //   hot wallet → main wallet (on-chain). Also runs on the daily cron.
