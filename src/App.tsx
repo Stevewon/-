@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useEffect, Suspense, lazy, memo } from 'react';
 import useStore from './store/useStore';
 import Layout from './components/layout/Layout';
@@ -16,6 +16,7 @@ const MarketsPage = lazy(() => import('./pages/MarketsPage'));
 const EarnPage = lazy(() => import('./pages/EarnPage'));
 const WalletPage = lazy(() => import('./pages/WalletPage'));
 const AdminPage = lazy(() => import('./pages/AdminPage'));
+const AdminDepositsMobilePage = lazy(() => import('./pages/AdminDepositsMobilePage'));
 const HomePage = lazy(() => import('./pages/HomePage'));
 const NoticePage = lazy(() => import('./pages/NoticePage'));
 const FeePage = lazy(() => import('./pages/FeePage'));
@@ -66,7 +67,10 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
  */
 function AdminProtectedRoute({ children }: { children: React.ReactNode }) {
   const user = useStore((s) => s.user);
-  if (!user) return <Navigate to="/admin/login" replace />;
+  const loc = useLocation();
+  // Remember the admin sub-page (e.g. /admin/deposits on a phone) so the
+  // login form returns there instead of the full dashboard.
+  if (!user) return <Navigate to={`/admin/login?next=${encodeURIComponent(loc.pathname)}`} replace />;
   if (user.role !== 'admin') return <Navigate to="/trade/QTA-USDT" replace />;
   return <>{children}</>;
 }
@@ -95,6 +99,8 @@ export default function App() {
         <Route path="/home" element={<HomePage />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/admin/login" element={<AdminLoginPage />} />
+        {/* ★ Owner 2026-09-14: standalone MOBILE deposit monitor (USDT only, rings). */}
+        <Route path="/admin/deposits" element={<AdminProtectedRoute><AdminDepositsMobilePage /></AdminProtectedRoute>} />
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />

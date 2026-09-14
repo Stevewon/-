@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { Eye, EyeOff, ShieldCheck, AlertCircle } from 'lucide-react';
 import useStore from '../store/useStore';
 import { useI18n } from '../i18n';
@@ -42,11 +42,17 @@ export default function AdminLoginPage() {
   const [capsOn, setCapsOn] = useState(false);
 
   // Auto-redirect if already an admin.
+  const location = useLocation();
+  // ?next=/admin/deposits → land on the mobile deposit monitor after login.
+  const nextPath = (() => {
+    const q = new URLSearchParams(location.search).get('next') || '';
+    return q.startsWith('/admin') ? q : '/admin';
+  })();
   useEffect(() => {
     if (user?.role === 'admin') {
-      navigate('/admin', { replace: true });
+      navigate(nextPath, { replace: true });
     }
-  }, [user, navigate]);
+  }, [user, navigate, nextPath]);
 
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
   const canSubmit =
@@ -88,7 +94,7 @@ export default function AdminLoginPage() {
 
       setAuth(u, res.data.token);
       localStorage.setItem('quantaex_admin_last_email', email);
-      navigate('/admin', { replace: true });
+      navigate(nextPath, { replace: true });
     } catch (err: any) {
       const data = err.response?.data;
       if (data?.requires_2fa) {
