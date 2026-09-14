@@ -35,10 +35,18 @@ export interface QtaDayPlan {
   date: string;
   /** Intraday oscillation centre (USD). */
   center: number;
-  /** Half-band around centre in percent (e.g. 2.5 => ±2.5%). */
+  /** Half-band around centre in percent (e.g. 2.5 => ±2.5%). Derived from high/low when those are given. */
   band_pct: number;
   /** Target close price (USD) at close_end. */
   close: number;
+  /** ★ Admin OHLC controls (USD). `open` = where the day should START (ramp
+   *  origin; if omitted the live last price is used). `high`/`low` = HARD
+   *  ceiling/floor once the ramp has delivered the price into range — no
+   *  oscillation tick, dump, close glide or carry ever prints outside
+   *  [low, high]. When present they also define the oscillation band. */
+  open?: number | null;
+  high?: number | null;
+  low?: number | null;
   /** KST 'HH:MM' when the glide toward `close` begins. */
   close_start: string;
   /** KST 'HH:MM' when the price must be AT `close` (then held to 24:00). */
@@ -144,6 +152,9 @@ export const DEFAULT_PLAN: Omit<QtaDayPlan, 'start_ms' | 'start_price'> = {
   center: 0.0090,
   band_pct: 3.0,
   close: 0.0085,
+  open: null,          // ramp from the live last price
+  high: 0.00930,       // hard ceiling (≈ centre +3.3%)
+  low: 0.00840,        // hard floor (below the 0.0085 close)
   close_start: '22:30',
   close_end: '23:55',
   ramp_minutes: 300,   // 0.0078 → 0.0090 (+15%) over 5h, red candles mixed in
@@ -182,16 +193,34 @@ export function normalizePlan(input: any, nowMs: number, lastPrice: number): Qta
   const close = num(input?.close, center);
   if (!(center > 0)) throw new Error('center must be > 0');
   if (!(close > 0)) throw new Error('close must be > 0');
-  const band_pct = Math.min(30, Math.max(0.2, num(input?.band_pct, 2.5)));
+  const open = num(input?.open, 0) > 0 ? Number(input.open) : null;
+  let high = num(input?.high, 0) > 0 ? Number(input.high) : null;
+  let low = num(input?.low, 0) > 0 ? Number(input.low) : null;
+  let band_pct = Math.min(30, Math.max(0.2, num(input?.band_pct, 2.5)));
+  if (high != null || low != null) {
+    // Derive the oscillation band from the tighter of the two distances so
+    // the walk stays comfortably inside [low, high]; hard clamps do the rest.
+    const upPct = high != null ? ((high - center) / center) * 100 : Infinity;
+    const dnPct = low != null ? ((center - low) / center) * 100 : Infinity;
+    const b = Math.min(upPct, dnPct);
+    if (!(b > 0)) throw new Error('high must be above centre and low below centre');
+    band_pct = Math.min(30, Math.max(0.2, b));
+    if (high != null && close > high) throw new Error('close cannot exceed high');
+    if (low != null && close < low) throw new Error('close cannot be below low');
+  }
   const carry_band_pct = Math.min(10, Math.max(0.1, num(input?.carry_band_pct, 1.0)));
   const ramp_minutes = Math.min(600, Math.max(1, num(input?.ramp_minutes, 90)));
   const close_start = /^\d{1,2}:\d{2}$/.test(String(input?.close_start || '')) ? String(input.close_start) : '23:00';
   const close_end = /^\d{1,2}:\d{2}$/.test(String(input?.close_end || '')) ? String(input.close_end) : '23:55';
   if (kstTimeMs(date, close_end) <= kstTimeMs(date, close_start)) throw new Error('close_end must be after close_start');
   const start_ms = num(input?.start_ms, 0) > 0 ? Number(input.start_ms) : nowMs;
-  const start_price = num(input?.start_price, 0) > 0 ? Number(input.start_price) : (lastPrice > 0 ? lastPrice : center);
+  // Ramp origin: explicit `open` wins; else the stored start_price; else the live last price.
+  const start_price = open != null ? open
+    : num(input?.start_price, 0) > 0 ? Number(input.start_price)
+    : (lastPrice > 0 ? lastPrice : center);
   return {
     date, center, band_pct, close, close_start, close_end, ramp_minutes, carry_band_pct,
+    open, high, low,
     start_ms, start_price,
     created_by: input?.created_by ? String(input.created_by) : undefined,
     created_at: input?.created_at ? String(input.created_at) : new Date(nowMs).toISOString(),
@@ -221,10 +250,11 @@ export function planPhase(plan: QtaDayPlan, nowMs: number): PlanPhase {
 export function planEnvelope(plan: QtaDayPlan): { lo: number; hi: number } {
   const band = Math.max(plan.band_pct, plan.carry_band_pct) / 100;
   const pts = [plan.center, plan.close, plan.start_price].filter((v) => v > 0);
-  return {
-    lo: Math.min(...pts) * (1 - band),
-    hi: Math.max(...pts) * (1 + band),
-  };
+  let lo = Math.min(...pts) * (1 - band);
+  let hi = Math.max(...pts) * (1 + band);
+  if (plan.low && plan.low > 0) lo = Math.min(lo, plan.low);
+  if (plan.high && plan.high > 0) hi = Math.max(hi, plan.high);
+  return { lo, hi };
 }
 
 /**
@@ -240,6 +270,30 @@ export function planStep(
   nowMs: number,
   rnd: number = Math.random(),
   tickMs: number = 60_000,
+): PlanStep | null {
+  const raw = planStepRaw(plan, last, nowMs, rnd, tickMs);
+  if (!raw) return null;
+  // ★ Admin HARD floor / ceiling: nothing prints outside [low, high] — except
+  //   during the RAMP, which by design travels from Open (often yesterday's
+  //   close, outside today's range) up/down into the range.
+  if (raw.phase === 'ramp') return raw;
+  const hardLo = plan.low && plan.low > 0 ? plan.low : 0;
+  const hardHi = plan.high && plan.high > 0 ? plan.high : Number.POSITIVE_INFINITY;
+  if (raw.mid < hardLo) raw.mid = hardLo * (1 + (rnd * 0.0008)); // sit on the floor with a wobble
+  if (raw.mid > hardHi) raw.mid = hardHi * (1 - (rnd * 0.0008));
+  if (raw.mid > hardHi) raw.mid = hardHi;
+  if (raw.mid < hardLo) raw.mid = hardLo;
+  raw.lo = Math.max(raw.lo, hardLo);
+  raw.hi = Math.min(raw.hi, hardHi);
+  return raw;
+}
+
+function planStepRaw(
+  plan: QtaDayPlan,
+  last: number,
+  nowMs: number,
+  rnd: number,
+  tickMs: number,
 ): PlanStep | null {
   const phase = planPhase(plan, nowMs);
   if (phase === 'inactive') return null;
