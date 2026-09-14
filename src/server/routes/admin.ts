@@ -8,6 +8,7 @@ import {
   loadPlan as loadQtaDayPlan, savePlan as saveQtaDayPlan, normalizePlan as normalizeQtaDayPlan,
   planPhase as qtaPlanPhase, planStep as qtaPlanStep, DEFAULT_PLAN as QTA_DEFAULT_PLAN,
   kstDateString,
+  loadSchedule as loadQtaSchedule, saveSchedule as saveQtaSchedule, normalizeTemplate as normalizeQtaTemplate,
 } from '../lib/qta-day-plan';
 import { computeBalanceBreakdown } from '../lib/balance-breakdown';
 import { recomputeBinaryFromStaking, rollStakeUpBinary, placeInBinaryTree, assignBinaryLeg } from '../lib/binary-matching';
@@ -1511,6 +1512,63 @@ app.put('/coins/QTA/day-plan', async (c) => {
   await saveQtaDayPlan(db, plan);
   await logAdminAction(c, { action: 'coin.day_plan', targetType: 'coin', targetId: 'QTA', payload: { ...plan } });
   return c.json({ message: 'Day plan saved', plan, phase: qtaPlanPhase(plan, now) });
+});
+
+// ★ MULTI-DAY SCHEDULE (owner 2026-09-14): plan templates keyed by KST date.
+//   GET    /coins/QTA/day-plan/schedule            → { schedule: {date: tpl}, kst_today }
+//   PUT    /coins/QTA/day-plan/schedule            → { items: [{date, open?, center, high?, low?, close, close_start?, close_end?, ramp_minutes?, carry_band_pct?}, ...] }
+//                                                     upserts each item (validated). If an item's date is TODAY it also
+//                                                     replaces the live plan immediately (same as PUT /day-plan).
+//   DELETE /coins/QTA/day-plan/schedule?date=YYYY-MM-DD  (or no date = clear all future entries)
+app.get('/coins/QTA/day-plan/schedule', async (c) => {
+  const sched = await loadQtaSchedule(c.env.DB);
+  return c.json({ schedule: sched, kst_today: kstDateString(Date.now()) });
+});
+
+app.put('/coins/QTA/day-plan/schedule', async (c) => {
+  const db = c.env.DB;
+  const admin = c.get('user') as { id: string; email: string };
+  const body = await c.req.json().catch(() => ({}));
+  const items: any[] = Array.isArray(body?.items) ? body.items : (body?.date ? [body] : []);
+  if (!items.length) return c.json({ error: 'items[] required' }, 400);
+  const sched = await loadQtaSchedule(db);
+  const now = Date.now();
+  const today = kstDateString(now);
+  const saved: string[] = [];
+  const errors: Record<string, string> = {};
+  let liveUpdated: any = null;
+  for (const it of items) {
+    const date = String(it?.date || '');
+    try {
+      const tpl = normalizeQtaTemplate({ ...it, created_by: admin?.email || admin?.id }, date);
+      if (date < today) throw new Error('date is in the past (KST)');
+      sched[date] = tpl;
+      saved.push(date);
+      if (date === today) {
+        // Apply to the live plan right away so the admin doesn't wait for midnight.
+        const last = await qtaLastPrice(db);
+        const plan = normalizeQtaDayPlan({ ...tpl, date, start_ms: now, start_price: tpl.open || last }, now, last);
+        await saveQtaDayPlan(db, plan);
+        liveUpdated = plan;
+      }
+    } catch (e: any) {
+      errors[date || '?'] = String(e?.message || e);
+    }
+  }
+  await saveQtaSchedule(db, sched);
+  await logAdminAction(c, { action: 'coin.day_plan_schedule', targetType: 'coin', targetId: 'QTA', payload: { saved, errors } });
+  return c.json({ message: 'Schedule saved', saved, errors, live_plan: liveUpdated, schedule: sched });
+});
+
+app.delete('/coins/QTA/day-plan/schedule', async (c) => {
+  const db = c.env.DB;
+  const date = c.req.query('date') || '';
+  const sched = await loadQtaSchedule(db);
+  if (date) delete sched[date];
+  else for (const k of Object.keys(sched)) delete sched[k];
+  await saveQtaSchedule(db, sched);
+  await logAdminAction(c, { action: 'coin.day_plan_schedule_delete', targetType: 'coin', targetId: 'QTA', payload: { date: date || 'ALL' } });
+  return c.json({ message: 'Schedule entry removed', schedule: sched });
 });
 
 app.delete('/coins/QTA/day-plan', async (c) => {

@@ -442,6 +442,46 @@ export async function savePlan(DB: D1Database, plan: QtaDayPlan | { cleared: tru
   ).bind(PLAN_KEY, JSON.stringify(plan)).run();
 }
 
+// ---------------------------------------------------------------------------
+// ★ MULTI-DAY SCHEDULE (owner 2026-09-14): "오늘부터 1주일간 이런 식으로".
+//   Admin stores one plan TEMPLATE per future KST date under SCHEDULE_KEY
+//   (JSON map date → template, no start_ms/start_price). At 00:00 KST of that
+//   date the MM tick promotes the template into the live plan (PLAN_KEY),
+//   anchoring the ramp at the live last price (or the template's `open`).
+//   Priority when a day begins:  schedule[date]  >  DEFAULT_PLAN  >  carry.
+// ---------------------------------------------------------------------------
+export const SCHEDULE_KEY = 'qta_day_plan_schedule';
+export type PlanTemplate = Omit<QtaDayPlan, 'start_ms' | 'start_price' | 'cleared'>;
+
+export async function loadSchedule(DB: D1Database): Promise<Record<string, PlanTemplate>> {
+  try {
+    const row = await DB.prepare('SELECT value FROM system_state WHERE key = ?')
+      .bind(SCHEDULE_KEY).first<{ value: string }>();
+    if (!row?.value) return {};
+    const parsed = JSON.parse(row.value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export async function saveSchedule(DB: D1Database, sched: Record<string, PlanTemplate>): Promise<void> {
+  await DB.prepare(
+    `INSERT INTO system_state (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`
+  ).bind(SCHEDULE_KEY, JSON.stringify(sched)).run();
+}
+
+/** Validate a template for `date` (throws on bad input). Returns a clean template. */
+export function normalizeTemplate(input: any, date: string): PlanTemplate {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('date must be YYYY-MM-DD');
+  // Reuse normalizePlan for validation; strip the runtime anchors.
+  const full = normalizePlan({ ...input, date, start_ms: 1, start_price: input?.open || input?.center }, kstDayStartMs(date), Number(input?.open || input?.center || 0));
+  const { start_ms, start_price, cleared, ...tpl } = full as any;
+  void start_ms; void start_price; void cleared;
+  return tpl as PlanTemplate;
+}
+
 /**
  * Resolve the EFFECTIVE plan for the MM tick:
  *   • the built-in DEFAULT_PLAN, once its date has arrived (KST), supersedes
@@ -457,14 +497,29 @@ export async function resolveEffectivePlan(
 ): Promise<QtaDayPlan | null> {
   const stored = await loadPlan(DB);
   const today = kstDateString(nowMs);
-  const defaultDue = DEFAULT_PLAN.date <= today;
   const storedDate = String((stored as any)?.date || '');
+
+  // 1) Admin SCHEDULE for today (highest priority). Promote once per day:
+  //    only when the live plan is for an OLDER date (or missing).
+  if (!stored || storedDate < today) {
+    const sched = await loadSchedule(DB);
+    const tpl = sched[today];
+    if (tpl) {
+      const seeded = normalizePlan({ ...tpl, date: today, created_by: tpl.created_by || 'admin-schedule' }, nowMs, lastPrice);
+      try { await savePlan(DB, seeded); } catch { /* best-effort */ }
+      return seeded;
+    }
+  }
+
+  // 2) Built-in DEFAULT_PLAN, once due, supersedes an OLDER stored plan.
+  const defaultDue = DEFAULT_PLAN.date <= today;
   const defaultNewer = defaultDue && (!stored || storedDate < DEFAULT_PLAN.date);
   if (defaultNewer) {
     const seeded = normalizePlan({ ...DEFAULT_PLAN }, nowMs, lastPrice);
     try { await savePlan(DB, seeded); } catch { /* best-effort */ }
     return seeded;
   }
+  // 3) Stored plan (today's, or yesterday's carrying over).
   if (stored) return stored.cleared ? null : stored;
   return null;
 }

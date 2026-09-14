@@ -1669,6 +1669,7 @@ function CoinsTab({ t }: any) {
   return (
     <div className="space-y-3">
     <QtaDayPlanPanel t={t} />
+    <QtaDayPlanSchedule t={t} />
     <div className="card overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
@@ -1887,6 +1888,174 @@ function QtaDayPlanPanel({ t }: any) {
           </div>
           <div className="text-[10px] text-exchange-text-third">
             All prices in USD (KRW shown at 1,450). Ramp from Open (or the live price) to Centre over Ramp minutes; oscillate between Low and High with seller dumps / recoveries; glide to Close between the two times; hold to 24:00 KST; then carry at Close ±carry% until a new plan is applied. Low / High are never breached.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// QTA Day Plan SCHEDULE — owner 2026-09-14: "오늘부터 1주일간 이런 식으로".
+// One row per KST date (today + N days). Each row = Open / Centre / High / Low /
+// Close (USD) + close window + ramp. Saved rows are promoted to the live plan at
+// 00:00 KST of their date (today's row applies immediately).
+// ============================================================================
+function QtaDayPlanSchedule({ t }: any) {
+  const [sched, setSched] = useState<Record<string, any>>({});
+  const [today, setToday] = useState<string>('');
+  const [days, setDays] = useState<number>(7);
+  const [rows, setRows] = useState<any[]>([]);
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [result, setResult] = useState<any>(null);
+
+  const addDays = (d: string, n: number) => {
+    const ms = Date.parse(`${d}T00:00:00+09:00`) + n * 86_400_000;
+    return new Date(ms + 9 * 3600_000).toISOString().slice(0, 10);
+  };
+  const dow = (d: string) => ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date(Date.parse(`${d}T00:00:00+09:00`) + 9 * 3600_000).getUTCDay()];
+
+  const load = async () => {
+    try {
+      const res = await api.get('/admin/coins/QTA/day-plan/schedule');
+      setSched(res.data?.schedule || {});
+      setToday(res.data?.kst_today || '');
+    } catch { /* silent */ }
+  };
+  useEffect(() => { load(); }, []);
+
+  // Build the editable grid from today for `days` days, prefilled from saved schedule.
+  useEffect(() => {
+    if (!today) return;
+    const list: any[] = [];
+    for (let i = 0; i < days; i++) {
+      const d = addDays(today, i);
+      const p = sched[d];
+      list.push({
+        date: d, saved: !!p,
+        open: p?.open != null ? String(p.open) : '',
+        center: p ? String(p.center) : '',
+        high: p?.high != null ? String(p.high) : '',
+        low: p?.low != null ? String(p.low) : '',
+        close: p ? String(p.close) : '',
+        close_start: p?.close_start || '22:30', close_end: p?.close_end || '23:55',
+        ramp_minutes: p ? String(p.ramp_minutes) : '300',
+      });
+    }
+    setRows(list);
+  }, [today, days, sched]);
+
+  const set = (i: number, k: string, v: string) => setRows(r => r.map((row, j) => (j === i ? { ...row, [k]: v } : row)));
+  const copyDown = (i: number) => {
+    if (i === 0) return;
+    const src = rows[i - 1];
+    setRows(r => r.map((row, j) => (j === i ? { ...row, open: '', center: src.center, high: src.high, low: src.low, close: src.close, close_start: src.close_start, close_end: src.close_end, ramp_minutes: src.ramp_minutes } : row)));
+  };
+  const fillAllFromFirst = () => {
+    const src = rows[0]; if (!src) return;
+    setRows(r => r.map((row, j) => (j === 0 ? row : { ...row, open: '', center: src.center, high: src.high, low: src.low, close: src.close, close_start: src.close_start, close_end: src.close_end, ramp_minutes: src.ramp_minutes })));
+  };
+  // Chain: each day's Open = previous day's Close (so the ramp starts where yesterday ended).
+  const chainOpens = () => {
+    setRows(r => r.map((row, j) => (j === 0 ? row : { ...row, open: r[j - 1].close || row.open })));
+  };
+
+  const n = (v: any) => (v === '' || v == null ? undefined : Number(v));
+  const save = async () => {
+    const items = rows.filter(r => r.center && r.close).map(r => ({
+      date: r.date, open: n(r.open), center: n(r.center), high: n(r.high), low: n(r.low), close: n(r.close),
+      close_start: r.close_start, close_end: r.close_end, ramp_minutes: n(r.ramp_minutes),
+    }));
+    if (!items.length) { showToast('error', t('common.error'), 'Fill Centre and Close on at least one row'); return; }
+    setSaving(true);
+    try {
+      const res = await api.put('/admin/coins/QTA/day-plan/schedule', { items });
+      setResult(res.data);
+      const errs = Object.keys(res.data?.errors || {});
+      showToast(errs.length ? 'error' : 'success', errs.length ? 'Saved with errors' : t('common.save'),
+        `${(res.data?.saved || []).length} day(s) saved${errs.length ? `, ${errs.length} rejected` : ''}`);
+      await load();
+    } catch (e: any) {
+      showToast('error', t('common.error'), e.response?.data?.error || 'Failed');
+    } finally { setSaving(false); }
+  };
+  const removeDay = async (d: string) => {
+    if (!confirm(`Remove the scheduled plan for ${d}?`)) return;
+    try { await api.delete(`/admin/coins/QTA/day-plan/schedule?date=${d}`); await load(); } catch { /* */ }
+  };
+
+  const krw = (v: string) => (v ? `₩${(Number(v) * 1450).toFixed(2)}` : '');
+  const cell = (i: number, k: string, w = 'w-24', type = 'number') => (
+    <td className="px-1 py-1 align-top">
+      <input type={type} step="any" value={rows[i][k]} onChange={e => set(i, k, e.target.value)} className={`input-field !py-0.5 text-[11px] ${w}`} />
+      {type === 'number' && rows[i][k] ? <div className="text-[9px] text-exchange-text-third tabular-nums">{krw(rows[i][k])}</div> : null}
+    </td>
+  );
+  const savedDates = Object.keys(sched).sort();
+
+  return (
+    <div className="card p-3 space-y-2">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-2 text-sm flex-wrap">
+          <span className="font-semibold text-exchange-yellow">QTA Day Plan Schedule</span>
+          <span className="text-xs text-exchange-text-secondary">
+            {savedDates.length ? `${savedDates.length} day(s) scheduled: ${savedDates[0]} → ${savedDates[savedDates.length - 1]}` : 'no future days scheduled'}
+          </span>
+        </div>
+        <div className="flex items-center gap-1">
+          <select value={days} onChange={e => setDays(Number(e.target.value))} className="input-field !py-1 text-[11px] w-24">
+            {[3, 5, 7, 10, 14].map(d => <option key={d} value={d}>{d} days</option>)}
+          </select>
+          <button onClick={() => setOpen(!open)} className="text-[11px] px-2 py-1 rounded bg-exchange-hover text-exchange-text-secondary border border-exchange-border">{open ? 'Hide' : 'Edit week'}</button>
+        </div>
+      </div>
+      {open && (
+        <div className="space-y-2 pt-1 border-t border-exchange-border">
+          <div className="flex items-center gap-2 flex-wrap text-[11px]">
+            <button onClick={fillAllFromFirst} className="px-2 py-1 rounded bg-exchange-hover border border-exchange-border text-exchange-text-secondary">Copy row 1 to all</button>
+            <button onClick={chainOpens} className="px-2 py-1 rounded bg-exchange-hover border border-exchange-border text-exchange-text-secondary">Chain opens (Open = previous Close)</button>
+            <span className="text-exchange-text-third">All prices USD (KRW at 1,450 shown below each). Rows with Centre + Close are saved; today's row applies immediately, others at 00:00 KST.</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="text-[11px]">
+              <thead>
+                <tr className="text-exchange-text-third">
+                  <th className="px-1 py-1 text-left">Date</th>
+                  <th className="px-1 py-1 text-left">Open $</th>
+                  <th className="px-1 py-1 text-left">Centre $</th>
+                  <th className="px-1 py-1 text-left">High $</th>
+                  <th className="px-1 py-1 text-left">Low $</th>
+                  <th className="px-1 py-1 text-left">Close $</th>
+                  <th className="px-1 py-1 text-left">Close from</th>
+                  <th className="px-1 py-1 text-left">Close at</th>
+                  <th className="px-1 py-1 text-left">Ramp min</th>
+                  <th className="px-1 py-1"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr key={r.date} className={`border-t border-exchange-border/40 ${r.saved ? 'bg-exchange-buy/5' : ''}`}>
+                    <td className="px-1 py-1 whitespace-nowrap align-top">
+                      <div className="tabular-nums">{r.date}</div>
+                      <div className="text-[9px] text-exchange-text-third">{dow(r.date)}{i === 0 ? ' · today' : ''}{r.saved ? ' · saved' : ''}</div>
+                    </td>
+                    {cell(i, 'open')}{cell(i, 'center')}{cell(i, 'high')}{cell(i, 'low')}{cell(i, 'close')}
+                    {cell(i, 'close_start', 'w-16', 'text')}{cell(i, 'close_end', 'w-16', 'text')}{cell(i, 'ramp_minutes', 'w-16')}
+                    <td className="px-1 py-1 whitespace-nowrap align-top">
+                      {i > 0 && <button onClick={() => copyDown(i)} title="Copy previous row" className="px-1.5 py-0.5 rounded bg-exchange-hover text-exchange-text-third">↓</button>}
+                      {r.saved && <button onClick={() => removeDay(r.date)} title="Remove saved day" className="ml-1 px-1.5 py-0.5 rounded bg-exchange-sell/15 text-exchange-sell">×</button>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex items-center gap-2">
+            <button disabled={saving} onClick={save} className="text-xs px-3 py-1.5 rounded bg-exchange-buy/20 text-exchange-buy font-medium">Save schedule</button>
+            {result?.errors && Object.keys(result.errors).length > 0 && (
+              <span className="text-[11px] text-exchange-sell">{Object.entries(result.errors).map(([d, e]) => `${d}: ${e}`).join(' · ')}</span>
+            )}
           </div>
         </div>
       )}
