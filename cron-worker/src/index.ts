@@ -523,10 +523,24 @@ export default {
     }
     if (url.pathname === '/ext/tick') {
       // Manual external-deposit confirmation/credit tick.
-      const result = await extDepositTick(env as any);
-      return new Response(JSON.stringify(result), {
-        headers: { 'content-type': 'application/json' },
-      });
+      try {
+        const result = await extDepositTick(env as any);
+        return new Response(JSON.stringify(result), { headers: { 'content-type': 'application/json' } });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ ok: false, error: String(e?.message || e), stack: String(e?.stack || '').slice(0, 800) }), {
+          status: 500, headers: { 'content-type': 'application/json' },
+        });
+      }
+    }
+    if (url.pathname === '/ext/pending') {
+      // Read-only: what is sitting in ext_deposits right now (debug the auto-credit path).
+      const { results } = await env.DB.prepare(
+        `SELECT d.id, d.user_id, u.nickname, u.email, d.coin_symbol, d.amount, d.status, d.confirmations, d.required_confs,
+                d.block_height, d.address, d.tx_hash, d.created_at, d.updated_at, d.credited_at, d.approved_by
+           FROM ext_deposits d LEFT JOIN users u ON u.id = d.user_id
+          ORDER BY d.created_at DESC LIMIT 30`
+      ).all<any>();
+      return new Response(JSON.stringify({ rows: results || [] }, null, 2), { headers: { 'content-type': 'application/json' } });
     }
     if (url.pathname === '/ext/sweep') {
       // Manual external-deposit sweep (gas-fund → forward to hot wallet).

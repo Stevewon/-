@@ -383,7 +383,16 @@ export async function extDepositTick(env: ExtWatcherEnv): Promise<{
     if (stmts.length > 0) {
       const CHUNK = 30;
       for (let i = 0; i < stmts.length; i += CHUNK) {
-        await env.DB.batch(stmts.slice(i, i + CHUNK));
+        try {
+          await env.DB.batch(stmts.slice(i, i + CHUNK));
+        } catch (e) {
+          // Never let one bad statement abort the whole tick: fall back to
+          // running the chunk statement-by-statement so the credit still lands.
+          console.error('[ext-tick] batch failed, retrying statements individually:', (e as any)?.message || e);
+          for (const st of stmts.slice(i, i + CHUNK)) {
+            try { await st.run(); } catch (e2) { console.error('[ext-tick] stmt failed:', (e2 as any)?.message || e2); }
+          }
+        }
       }
     }
   }
