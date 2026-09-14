@@ -189,7 +189,8 @@ QTA/USDT 마켓에만 적용. 회사(마켓메이커) = **mm-bot-a / mm-bot-b** 
 - **모든 자동반영 건에 4중 기록**: ① `ext_deposits`(회원ID·입금주소·보낸지갑 from·Tx·블록·금액) ② `deposits` 장부(`ext:bep20:<tx>`) → 회원 지갑 내역/wallet-debug 표시 ③ 회원 앱 알림 "Deposit Credited" ④ **Audit 탭** `ext_deposit.auto_credit` (admin_id `system:ext-watcher`, payload에 닉네임·이메일·금액·From·To·Tx·블록).
 - **관리자 화면**: Deposits 탭 → On-chain: 기본 '입금 완료(자동)' 목록, 열 = 회원(닉네임·이메일·ID) / 금액 / 네트워크 / **From → 입금주소** / Tx / 컨펌 / 상태(자동 반영). '승인 대기(구)' 탭은 이전 규칙 잔여 건 수동 처리용.
 - **★ 입금 소리 알림 (2026-09-14)**: 관리자 화면 상단 헤더 **Deposit bell** — 자동반영된 입금이 생기면 10초 내 **띵동 차임 + 음성 "띵동, 테더가 입금되었습니다 (닉네임, 금액)"** + 토스트(회원·금액·From) + 탭이 뒤에 있으면 브라우저 알림. 브라우저 정책상 최초 1회 벨을 클릭해 소리를 켜야 하며(빨간 점멸 → 초록 ON), 이후 유지. 관리자 콘솔 전용이므로 음성은 한국어.
-- **코드**: `cron-worker/src/ext-watcher.ts` extDepositTick, `src/server/routes/admin.ts` GET /ext-deposits(from_address) · GET /ext-deposits/recent, `AdminPage.tsx` Deposits On-chain, `components/admin/DepositBell.tsx`.
+- **★ 모바일 입금 모니터 (2026-09-14)**: **`https://www.quantaex.io/admin/deposits`** — 관리자 로그인 후 테더 입금만 보이는 한 화면(소리 켜기 타일 / 오늘 건수·USDT 합계 / 최근 자동반영 목록: 닉네임·이메일·금액·From·Tx·시각). 10초 폴링, 새 입금마다 띵동+음성+진동+토스트+브라우저 알림. 소리 켜면 화면 꺼짐 방지(Wake Lock). 홈화면에 추가해 쓰면 됨. 로그인 페이지는 `?next=`로 되돌아옴.
+- **코드**: `cron-worker/src/ext-watcher.ts` extDepositTick, `src/server/routes/admin.ts` GET /ext-deposits(from_address) · GET /ext-deposits/recent, `pages/AdminDepositsMobilePage.tsx`, `AdminPage.tsx` Deposits On-chain, `components/admin/DepositBell.tsx`.
 
 ---
 
@@ -209,3 +210,4 @@ QTA/USDT 마켓에만 적용. 회사(마켓메이커) = **mm-bot-a / mm-bot-b** 
 - 2026-09-14: **Day Plan 다중 날짜 스케줄** — 날짜별 템플릿 저장, 00:00 KST 자동 승격, 관리자 주간 표 UI + API(GET/PUT/DELETE /admin/coins/QTA/day-plan/schedule).
 - 2026-09-14: **10번 신설 — USDT 입금 자동승인 + 입금자 4중 식별 기록.** 관리자 승인 게이트(08-29) 폐지.
 - 2026-09-14: **관리자 입금 벨** — 자동반영 입금 시 띵동 + 한국어 음성 + 토스트 + 브라우저 알림 (헤더 Deposit bell, 최초 1회 클릭 활성).
+- 2026-09-14: **모바일 입금 모니터 /admin/deposits** — 테더 입금 전용 단일 화면, 띵동/음성/진동/알림, Wake Lock.
