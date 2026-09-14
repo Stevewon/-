@@ -1069,7 +1069,7 @@ function DepositsTab({ t, onUpdate }: any) {
   const isManual = status === 'manual';
   const isOnchain = status === 'onchain';
   // On-chain approval queue state.
-  const [onchainStatus, setOnchainStatus] = useState('awaiting_approval');
+  const [onchainStatus, setOnchainStatus] = useState('credited');
   const [awaitingCount, setAwaitingCount] = useState(0);
   const [busyId, setBusyId] = useState<string | null>(null);
 
@@ -1206,14 +1206,14 @@ function DepositsTab({ t, onUpdate }: any) {
       {isOnchain && (
         <div>
           <div className="mb-3 rounded-lg border border-exchange-border bg-exchange-card px-4 py-3 text-[11px] text-exchange-text-secondary leading-relaxed">
-            사용자의 온체인 USDT 입금은 <b className="text-exchange-yellow">자동으로 잔고에 반영되지 않습니다.</b> 메인지갑에 실제 입금된 것을 확인하신 뒤 <b className="text-exchange-buy">승인</b>을 누르셔야 사용자 잔고에 반영되어 매수가 가능합니다. (회사·관리자 계정은 자동 반영 예외)
+            온체인 USDT 입금은 <b className="text-exchange-buy">컨펌 완료 시 자동 승인·자동 반영</b>됩니다 (2026-09-14 오너 지시). 누가 입금했는지는 <b className="text-exchange-yellow">회원 전용 입금주소</b>로 확정되며, 각 건마다 회원·금액·보낸 지갑(From)·Tx·블록이 아래 표와 Audit 탭(<code>ext_deposit.auto_credit</code>)에 기록됩니다. 승인 대기 탭은 과거 잔여 건 처리용입니다.
           </div>
           <div className="flex items-center gap-1 mb-3 bg-exchange-card rounded-lg border border-exchange-border p-1 w-fit flex-wrap">
             {[
-              ['awaiting_approval', '승인 대기'],
-              ['credited', '승인됨'],
-              ['rejected', '거부됨'],
+              ['credited', '입금 완료(자동)'],
               ['confirming', '컨펌 중'],
+              ['awaiting_approval', '승인 대기(구)'],
+              ['rejected', '거부됨'],
               ['all', '전체'],
             ].map(([s, label]) => (
               <button key={s} onClick={() => setOnchainStatus(s)} className={`px-3 py-1 text-xs rounded-md ${onchainStatus === s ? 'bg-exchange-hover text-exchange-yellow' : 'text-exchange-text-secondary'}`}>
@@ -1225,10 +1225,11 @@ function DepositsTab({ t, onUpdate }: any) {
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-xs text-exchange-text-third border-b border-exchange-border">
-                  <th className="text-left px-3 py-2.5">회원</th>
+                  <th className="text-left px-3 py-2.5">회원 (입금자)</th>
                   <th className="text-left px-3 py-2.5">{t('admin.coin')}</th>
                   <th className="text-right px-3 py-2.5">{t('admin.amount')}</th>
                   <th className="text-left px-3 py-2.5">{t('admin.network')}</th>
+                  <th className="text-left px-3 py-2.5">From → 입금주소</th>
                   <th className="text-left px-3 py-2.5">Tx</th>
                   <th className="text-center px-3 py-2.5">컨펌</th>
                   <th className="text-left px-3 py-2.5">{t('admin.status')}</th>
@@ -1238,16 +1239,21 @@ function DepositsTab({ t, onUpdate }: any) {
               </thead>
               <tbody>
                 {list.length === 0 ? (
-                  <tr><td colSpan={9} className="px-3 py-8 text-center text-exchange-text-third text-xs">{t('admin.noData')}</td></tr>
+                  <tr><td colSpan={10} className="px-3 py-8 text-center text-exchange-text-third text-xs">{t('admin.noData')}</td></tr>
                 ) : list.map(d => (
                   <tr key={d.id} className="border-b border-exchange-border/50 hover:bg-exchange-hover/30">
                     <td className="px-3 py-2 text-xs">
-                      <div>{d.nickname || '-'}</div>
+                      <div className="font-medium">{d.nickname || '-'}</div>
                       <div className="text-[10px] text-exchange-text-third">{d.email}</div>
+                      <div className="text-[9px] text-exchange-text-third font-mono" title={d.user_id}>{String(d.user_id || '').slice(0, 8)}</div>
                     </td>
                     <td className="px-3 py-2 text-xs font-medium">{d.coin_symbol}</td>
                     <td className="px-3 py-2 text-right text-xs tabular-nums text-exchange-buy">+{formatPrice(d.amount)}</td>
                     <td className="px-3 py-2 text-[11px] uppercase">{d.network || '-'}</td>
+                    <td className="px-3 py-2 text-[10px] font-mono text-exchange-text-secondary">
+                      <div title={d.from_address || ''}>{d.from_address ? `${d.from_address.slice(0, 8)}…${d.from_address.slice(-6)}` : '-'}</div>
+                      <div className="text-exchange-text-third" title={d.address}>→ {d.address ? `${d.address.slice(0, 8)}…${d.address.slice(-6)}` : '-'}</div>
+                    </td>
                     <td className="px-3 py-2 text-[11px] text-exchange-text-secondary font-mono" title={d.tx_hash}>
                       {(d.tx_hash || '').slice(0, 12)}{d.tx_hash && d.tx_hash.length > 12 ? '…' : ''}
                     </td>
@@ -1259,7 +1265,7 @@ function DepositsTab({ t, onUpdate }: any) {
                         d.status === 'rejected' ? 'bg-exchange-text-third/15 text-exchange-text-third' :
                         'bg-exchange-yellow/15 text-exchange-yellow'
                       }`}>
-                        {d.status === 'awaiting_approval' ? '승인 대기' : d.status === 'credited' ? '승인됨' : d.status === 'rejected' ? '거부됨' : d.status}
+                        {d.status === 'awaiting_approval' ? '승인 대기' : d.status === 'credited' ? (d.approved_by === 'auto' ? '자동 반영' : '승인됨') : d.status === 'rejected' ? '거부됨' : d.status}
                       </span>
                     </td>
                     <td className="px-3 py-2 text-[11px] text-exchange-text-third">{timeAgo(d.created_at, t)}</td>

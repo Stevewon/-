@@ -180,6 +180,18 @@ QTA/USDT 마켓에만 적용. 회사(마켓메이커) = **mm-bot-a / mm-bot-b** 
 
 ---
 
+## 10. 테더(USDT) 입금 자동승인 + 입금자 식별 (2026-09-14 지상명령)
+
+> "테더 입금은 자동승인제로 변경한다. 누가 입금했는지 확실히 알 수 있도록 반드시 조치하고!"
+
+- **자동승인**: 온체인 USDT(BEP-20) 입금이 필요 컨펌(BSC 15)에 도달하면 **관리자 승인 없이 즉시 회원 지갑에 반영**. 2026-08-29의 "관리자 승인 필수" 규칙은 폐지. (`ext_deposits.approved_by = 'auto'`)
+- **입금자 식별 — 구조적으로 확정**: 회원마다 **전용 입금주소**(HD 파생, `ext_addresses.user_id`)가 있으므로 "어느 주소로 들어왔나 = 누가 입금했나". 회원 주장이 아닌 주소 소유로 판별.
+- **모든 자동반영 건에 4중 기록**: ① `ext_deposits`(회원ID·입금주소·보낸지갑 from·Tx·블록·금액) ② `deposits` 장부(`ext:bep20:<tx>`) → 회원 지갑 내역/wallet-debug 표시 ③ 회원 앱 알림 "Deposit Credited" ④ **Audit 탭** `ext_deposit.auto_credit` (admin_id `system:ext-watcher`, payload에 닉네임·이메일·금액·From·To·Tx·블록).
+- **관리자 화면**: Deposits 탭 → On-chain: 기본 '입금 완료(자동)' 목록, 열 = 회원(닉네임·이메일·ID) / 금액 / 네트워크 / **From → 입금주소** / Tx / 컨펌 / 상태(자동 반영). '승인 대기(구)' 탭은 이전 규칙 잔여 건 수동 처리용.
+- **코드**: `cron-worker/src/ext-watcher.ts` extDepositTick, `src/server/routes/admin.ts` GET /ext-deposits(from_address), `AdminPage.tsx` Deposits On-chain.
+
+---
+
 ## 변경 이력
 - 2026-08-31: 최초 작성. 관리자 인정 스테이킹(총금액 데일리·매칭 / 실입금 반환), 데일리 KST 자정 기준, 매칭 5단계 1회성 규칙 못박음.
 - 2026-09-04: **바이너리 규칙 근본 정정.** ① 좌우 볼륨은 무한대(하부 실적 전부 반영, 이전 볼륨 2× 하드캡·드롭 폐기). ② 매칭수당 총 한도 = 본인 몸값 × 2(USD 누계, 좌우 통합). ③ 데일리와 매칭 200% 한도는 별개. 전체 라인 볼륨 재산정(namim 좌 $2,000→$6,000 등), 매칭 지급 총액 불변(268,250 QTA).
@@ -194,3 +206,4 @@ QTA/USDT 마켓에만 적용. 회사(마켓메이커) = **mm-bot-a / mm-bot-b** 
 - 2026-09-13: **9번 신설 — 수당 고정단가 6원→10원(09-14~ 당분간).** 공용 peg 스케줄 모듈 도입, 데일리 수당은 날짜별 단가로 개별 합산, 매칭/청구/지갑 환산 일괄 적용. peg-census 엔드포인트.
 - 2026-09-14: **Day Plan 관리자 OHLC 컨트롤** — Open/Centre/High/Low/Close 달러 입력, High/Low 하드 클램프, 등락폭 자동 산출. 월요일 기본 플랜에 H 0.0093 / L 0.0084 명시.
 - 2026-09-14: **Day Plan 다중 날짜 스케줄** — 날짜별 템플릿 저장, 00:00 KST 자동 승격, 관리자 주간 표 UI + API(GET/PUT/DELETE /admin/coins/QTA/day-plan/schedule).
+- 2026-09-14: **10번 신설 — USDT 입금 자동승인 + 입금자 4중 식별 기록.** 관리자 승인 게이트(08-29) 폐지.

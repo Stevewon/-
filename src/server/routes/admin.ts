@@ -1125,14 +1125,18 @@ app.delete('/deposits/manual/:id', async (c) => {
 // GET /admin/ext-deposits?status=awaiting_approval|credited|rejected|confirming|detected|all
 app.get('/ext-deposits', async (c) => {
   const db = c.env.DB;
-  const status = (c.req.query('status') || 'awaiting_approval').trim();
+  // ★ 2026-09-14: USDT deposits auto-credit, so the default view is the
+  //   CREDITED ledger (who deposited what, from where). raw_meta.from is
+  //   surfaced as from_address for identity.
+  const status = (c.req.query('status') || 'credited').trim();
   const limit = Math.min(parseInt(c.req.query('limit') || '200'), 500);
 
   let sql = `
     SELECT d.id, d.user_id, d.chain, d.network, d.coin_symbol, d.address,
            d.tx_hash, d.block_height, d.amount, d.confirmations, d.required_confs,
            d.status, d.credited_at, d.approved_by, d.approved_at, d.rejected_reason,
-           d.created_at, u.email, u.nickname
+           d.created_at, u.email, u.nickname,
+           json_extract(d.raw_meta, '$.from') AS from_address
       FROM ext_deposits d
       LEFT JOIN users u ON u.id = d.user_id
   `;
