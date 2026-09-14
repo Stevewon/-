@@ -1164,6 +1164,27 @@ app.get('/ext-deposits', async (c) => {
   }
 });
 
+// GET /admin/ext-deposits/recent?since=<ISO> — lightweight poll for the admin
+// deposit BELL (owner 2026-09-14: "테더 입금 들어오면 어드민에서 소리나게").
+// Returns credited on-chain deposits newer than `since` (max 20) + server now.
+app.get('/ext-deposits/recent', async (c) => {
+  const db = c.env.DB;
+  const since = String(c.req.query('since') || '').trim();
+  const sinceIso = /^\d{4}-\d{2}-\d{2}T/.test(since) ? since : new Date(Date.now() - 60_000).toISOString();
+  try {
+    const { results } = await db.prepare(
+      `SELECT d.id, d.user_id, d.coin_symbol, d.amount, d.network, d.tx_hash, d.credited_at, d.approved_by,
+              u.email, u.nickname, json_extract(d.raw_meta, '$.from') AS from_address
+         FROM ext_deposits d LEFT JOIN users u ON u.id = d.user_id
+        WHERE d.status = 'credited' AND d.credited_at > ?
+        ORDER BY d.credited_at ASC LIMIT 20`
+    ).bind(sinceIso).all<any>();
+    return c.json({ now: new Date().toISOString(), rows: results || [] });
+  } catch {
+    return c.json({ now: new Date().toISOString(), rows: [] });
+  }
+});
+
 // POST /admin/ext-deposits/:id/approve — credit the user's wallet, mark credited.
 app.post('/ext-deposits/:id/approve', async (c) => {
   const db = c.env.DB;
