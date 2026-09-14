@@ -1770,8 +1770,12 @@ function QtaDayPlanPanel({ t }: any) {
   const [info, setInfo] = useState<any>(null);
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  // ★ Owner 2026-09-14: admin controls in USD — Open / Centre / High / Low /
+  //   Close + times. High/Low are HARD ceiling/floor for the whole day and
+  //   also define the oscillation range (band derived server-side).
   const [form, setForm] = useState<any>({
-    date: '', center: '', band_pct: '2.5', close: '', close_start: '23:00', close_end: '23:55', ramp_minutes: '90', carry_band_pct: '1',
+    date: '', open: '', center: '', high: '', low: '', close: '',
+    close_start: '22:30', close_end: '23:55', ramp_minutes: '300', carry_band_pct: '1',
   });
 
   const load = async () => {
@@ -1780,25 +1784,32 @@ function QtaDayPlanPanel({ t }: any) {
       setInfo(res.data);
       const p = res.data?.plan || res.data?.default_plan;
       if (p) {
+        const c = Number(p.center || 0);
+        const b = Number(p.band_pct || 0) / 100;
         setForm({
           date: res.data?.plan?.date || res.data?.kst_today || '',
-          center: String(p.center ?? ''), band_pct: String(p.band_pct ?? 2.5), close: String(p.close ?? ''),
-          close_start: p.close_start || '23:00', close_end: p.close_end || '23:55',
-          ramp_minutes: String(p.ramp_minutes ?? 90), carry_band_pct: String(p.carry_band_pct ?? 1),
+          open: p.open != null ? String(p.open) : '',
+          center: String(p.center ?? ''),
+          high: p.high != null ? String(p.high) : (c ? String(+(c * (1 + b)).toFixed(6)) : ''),
+          low: p.low != null ? String(p.low) : (c ? String(+(c * (1 - b)).toFixed(6)) : ''),
+          close: String(p.close ?? ''),
+          close_start: p.close_start || '22:30', close_end: p.close_end || '23:55',
+          ramp_minutes: String(p.ramp_minutes ?? 300), carry_band_pct: String(p.carry_band_pct ?? 1),
         });
       }
     } catch { /* silent */ }
   };
   useEffect(() => { load(); const id = setInterval(load, 30_000); return () => clearInterval(id); }, []);
 
+  const n = (v: any) => (v === '' || v == null ? undefined : Number(v));
   const save = async () => {
     setSaving(true);
     try {
       await api.put('/admin/coins/QTA/day-plan', {
         date: form.date || undefined,
-        center: Number(form.center), band_pct: Number(form.band_pct), close: Number(form.close),
+        open: n(form.open), center: n(form.center), high: n(form.high), low: n(form.low), close: n(form.close),
         close_start: form.close_start, close_end: form.close_end,
-        ramp_minutes: Number(form.ramp_minutes), carry_band_pct: Number(form.carry_band_pct),
+        ramp_minutes: n(form.ramp_minutes), carry_band_pct: n(form.carry_band_pct),
       });
       showToast('success', t('common.save'), 'QTA day plan saved');
       await load();
@@ -1822,23 +1833,31 @@ function QtaDayPlanPanel({ t }: any) {
   const plan = info?.plan;
   const phase = info?.phase || 'inactive';
   const phaseColor = phase === 'inactive' ? 'text-exchange-text-third' : phase === 'close' || phase === 'hold' ? 'text-exchange-sell' : 'text-exchange-buy';
-  const F = (k: string, label: string, w = 'w-28', type = 'text') => (
+  const krw = (v: any) => (v ? `₩${(Number(v) * 1450).toFixed(2)}` : '');
+  const F = (k: string, label: string, w = 'w-28', type = 'number', hint?: string) => (
     <label className="text-xs">
-      <div className="text-exchange-text-third mb-1">{label}</div>
+      <div className="text-exchange-text-third mb-1">{label}{hint ? <span className="ml-1 text-[10px] opacity-70">{hint}</span> : null}</div>
       <input type={type} step="any" value={form[k]} onChange={e => setForm({ ...form, [k]: e.target.value })} className={`input-field !py-1 text-xs ${w}`} />
+      {type === 'number' && form[k] ? <div className="text-[10px] text-exchange-text-third mt-0.5 tabular-nums">{krw(form[k])}</div> : null}
     </label>
   );
 
   return (
     <div className="card p-3 space-y-2">
       <div className="flex items-center justify-between gap-2 flex-wrap">
-        <div className="flex items-center gap-2 text-sm">
+        <div className="flex items-center gap-2 text-sm flex-wrap">
           <span className="font-semibold text-exchange-yellow">QTA Day Plan</span>
           <span className={`text-xs px-2 py-0.5 rounded bg-exchange-hover ${phaseColor}`}>phase: {phase}</span>
           {plan ? (
             <span className="text-xs text-exchange-text-secondary tabular-nums">
-              {plan.date} KST &middot; centre ${plan.center} &plusmn;{plan.band_pct}% &middot; close ${plan.close} @ {plan.close_start}&ndash;{plan.close_end}
-              {info?.preview_mid ? ` · next mid ≈ $${Number(info.preview_mid).toFixed(6)}` : ''}
+              {plan.date} KST
+              {plan.open ? ` · O $${plan.open}` : ''}
+              {` · C $${plan.center}`}
+              {plan.high ? ` · H $${plan.high}` : ` · ±${plan.band_pct}%`}
+              {plan.low ? ` · L $${plan.low}` : ''}
+              {` · Close $${plan.close} @ ${plan.close_start}–${plan.close_end}`}
+              {info?.preview_mid ? ` · next ≈ $${Number(info.preview_mid).toFixed(6)}` : ''}
+              {info?.last_price ? ` · last $${Number(info.last_price).toFixed(6)}` : ''}
             </span>
           ) : (
             <span className="text-xs text-exchange-text-third">{info?.cleared ? 'cleared (managed random walk)' : 'no plan stored'}</span>
@@ -1850,18 +1869,24 @@ function QtaDayPlanPanel({ t }: any) {
         </div>
       </div>
       {open && (
-        <div className="flex flex-wrap items-end gap-3 pt-1 border-t border-exchange-border">
-          {F('date', 'Date (KST)', 'w-32', 'date')}
-          {F('center', 'Centre ($)', 'w-28', 'number')}
-          {F('band_pct', 'Band (±%)', 'w-20', 'number')}
-          {F('close', 'Close ($)', 'w-28', 'number')}
-          {F('close_start', 'Close from (KST)', 'w-24')}
-          {F('close_end', 'Close at (KST)', 'w-24')}
-          {F('ramp_minutes', 'Ramp (min)', 'w-20', 'number')}
-          {F('carry_band_pct', 'Carry (±%)', 'w-20', 'number')}
-          <button disabled={saving} onClick={save} className="text-xs px-3 py-1.5 rounded bg-exchange-buy/20 text-exchange-buy font-medium">Apply plan</button>
-          <div className="text-[10px] text-exchange-text-third basis-full">
-            Ramp from the last price to the centre, oscillate inside the band, glide to the close between the two times, hold to 24:00 KST, then carry at the close (±carry) until a new plan is applied.
+        <div className="space-y-2 pt-1 border-t border-exchange-border">
+          <div className="flex flex-wrap items-start gap-3">
+            {F('date', 'Date (KST)', 'w-32', 'date')}
+            {F('open', 'Open ($)', 'w-28', 'number', 'blank = live price')}
+            {F('center', 'Centre ($)', 'w-28', 'number', 'intraday level')}
+            {F('high', 'High ($)', 'w-28', 'number', 'hard ceiling')}
+            {F('low', 'Low ($)', 'w-28', 'number', 'hard floor')}
+            {F('close', 'Close ($)', 'w-28', 'number')}
+          </div>
+          <div className="flex flex-wrap items-end gap-3">
+            {F('close_start', 'Close from (KST)', 'w-24', 'text')}
+            {F('close_end', 'Close at (KST)', 'w-24', 'text')}
+            {F('ramp_minutes', 'Ramp (min)', 'w-20', 'number', 'open → centre')}
+            {F('carry_band_pct', 'Carry (±%)', 'w-20', 'number', 'after 24:00')}
+            <button disabled={saving} onClick={save} className="text-xs px-3 py-1.5 rounded bg-exchange-buy/20 text-exchange-buy font-medium">Apply plan</button>
+          </div>
+          <div className="text-[10px] text-exchange-text-third">
+            All prices in USD (KRW shown at 1,450). Ramp from Open (or the live price) to Centre over Ramp minutes; oscillate between Low and High with seller dumps / recoveries; glide to Close between the two times; hold to 24:00 KST; then carry at Close ±carry% until a new plan is applied. Low / High are never breached.
           </div>
         </div>
       )}
