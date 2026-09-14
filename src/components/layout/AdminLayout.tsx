@@ -10,6 +10,7 @@ import {
 import useStore from '../../store/useStore';
 import { useI18n } from '../../i18n';
 import QuantaLogo from '../common/QuantaLogo';
+import DepositBell from '../admin/DepositBell';
 
 export type AdminTab =
   | 'overview' | 'users' | 'kyc' | 'deposits' | 'withdrawals'
@@ -237,6 +238,8 @@ export default function AdminLayout({
             <span className="hidden sm:inline-block px-2 py-0.5 rounded-full bg-exchange-yellow/10 text-exchange-yellow text-[10px] font-semibold uppercase tracking-wider">
               {t('admin.live')}
             </span>
+            {/* ★ Owner 2026-09-14: audible "띵동, 테더가 입금되었습니다" on every credited USDT deposit. */}
+            <DepositBell />
           </div>
           <div className="flex items-center gap-1">
             {onPriceAlertCheck && (

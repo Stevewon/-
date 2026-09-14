@@ -188,7 +188,8 @@ QTA/USDT 마켓에만 적용. 회사(마켓메이커) = **mm-bot-a / mm-bot-b** 
 - **입금자 식별 — 구조적으로 확정**: 회원마다 **전용 입금주소**(HD 파생, `ext_addresses.user_id`)가 있으므로 "어느 주소로 들어왔나 = 누가 입금했나". 회원 주장이 아닌 주소 소유로 판별.
 - **모든 자동반영 건에 4중 기록**: ① `ext_deposits`(회원ID·입금주소·보낸지갑 from·Tx·블록·금액) ② `deposits` 장부(`ext:bep20:<tx>`) → 회원 지갑 내역/wallet-debug 표시 ③ 회원 앱 알림 "Deposit Credited" ④ **Audit 탭** `ext_deposit.auto_credit` (admin_id `system:ext-watcher`, payload에 닉네임·이메일·금액·From·To·Tx·블록).
 - **관리자 화면**: Deposits 탭 → On-chain: 기본 '입금 완료(자동)' 목록, 열 = 회원(닉네임·이메일·ID) / 금액 / 네트워크 / **From → 입금주소** / Tx / 컨펌 / 상태(자동 반영). '승인 대기(구)' 탭은 이전 규칙 잔여 건 수동 처리용.
-- **코드**: `cron-worker/src/ext-watcher.ts` extDepositTick, `src/server/routes/admin.ts` GET /ext-deposits(from_address), `AdminPage.tsx` Deposits On-chain.
+- **★ 입금 소리 알림 (2026-09-14)**: 관리자 화면 상단 헤더 **Deposit bell** — 자동반영된 입금이 생기면 10초 내 **띵동 차임 + 음성 "띵동, 테더가 입금되었습니다 (닉네임, 금액)"** + 토스트(회원·금액·From) + 탭이 뒤에 있으면 브라우저 알림. 브라우저 정책상 최초 1회 벨을 클릭해 소리를 켜야 하며(빨간 점멸 → 초록 ON), 이후 유지. 관리자 콘솔 전용이므로 음성은 한국어.
+- **코드**: `cron-worker/src/ext-watcher.ts` extDepositTick, `src/server/routes/admin.ts` GET /ext-deposits(from_address) · GET /ext-deposits/recent, `AdminPage.tsx` Deposits On-chain, `components/admin/DepositBell.tsx`.
 
 ---
 
@@ -207,3 +208,4 @@ QTA/USDT 마켓에만 적용. 회사(마켓메이커) = **mm-bot-a / mm-bot-b** 
 - 2026-09-14: **Day Plan 관리자 OHLC 컨트롤** — Open/Centre/High/Low/Close 달러 입력, High/Low 하드 클램프, 등락폭 자동 산출. 월요일 기본 플랜에 H 0.0093 / L 0.0084 명시.
 - 2026-09-14: **Day Plan 다중 날짜 스케줄** — 날짜별 템플릿 저장, 00:00 KST 자동 승격, 관리자 주간 표 UI + API(GET/PUT/DELETE /admin/coins/QTA/day-plan/schedule).
 - 2026-09-14: **10번 신설 — USDT 입금 자동승인 + 입금자 4중 식별 기록.** 관리자 승인 게이트(08-29) 폐지.
+- 2026-09-14: **관리자 입금 벨** — 자동반영 입금 시 띵동 + 한국어 음성 + 토스트 + 브라우저 알림 (헤더 Deposit bell, 최초 1회 클릭 활성).
