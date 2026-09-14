@@ -117,6 +117,7 @@ QTA/USDT 마켓에만 적용. 회사(마켓메이커) = **mm-bot-a / mm-bot-b** 
 - **저장 위치**: `system_state.key = 'qta_day_plan'` (JSON). 관리자 Clear 시 tombstone(`{cleared:true}`)이 남아 기본 플랜이 다시 심어지지 않음.
 - **코드 기본값**(배포 즉시 적용, DB 입력 불필요): `DEFAULT_PLAN` = 2026-09-10 / 중심 0.006 / ±2.5% / 마감 0.0058 / 23:00→23:55 / 램프 90분 / 캐리 ±1% — `src/server/lib/qta-day-plan.ts`.
 - **관리자 API/UI**: `GET/PUT/DELETE /api/admin/coins/QTA/day-plan`, 관리자 → Coins 탭 상단 "QTA Day Plan" 패널.
+- **★ 다중 날짜 스케줄 (2026-09-14)**: 관리자 → Coins → "QTA Day Plan Schedule" → Edit week: 오늘부터 3~14일 표에 날짜별 O/C/H/L/Close·마감시각·램프 입력 후 Save. 저장된 날은 **그 날 00:00 KST에 자동 승격**(오늘 날짜는 즉시 적용). 우선순위: 스케줄 > 코드 기본 플랜 > 전날 carry. 저장 위치 `system_state.qta_day_plan_schedule`. 'Copy row 1 to all', 'Chain opens(시가=전날 종가)' 보조 버튼.
 - **★ 관리자 OHLC 입력 (2026-09-14)**: 달러 기준 **Open(시가, 비우면 현재가) / Centre(중심) / High(최고가, 하드 상한) / Low(최저가, 하드 하한) / Close(종가)** + 마감 시작·도달 시각 + 램프 분. High/Low를 주면 등락폭(band)은 자동 산출되고, 램프가 범위에 진입한 뒤에는 어떤 틱(진동·덤프·마감·캐리)도 [Low, High] 밖으로 안 나감. 입력마다 원화(1,450) 환산 표시.
 - **연관 규칙 조정**:
   - 플랜 활성 중 `coins.price_usd`(헤더 시세) 클램프는 관리형 밴드가 아니라 **플랜 엔벨로프**(중심가·마감가·시작가의 min/max ± band) 사용 — 옛 상한(0.004998)에 못 박히지 않게.
@@ -192,3 +193,4 @@ QTA/USDT 마켓에만 적용. 회사(마켓메이커) = **mm-bot-a / mm-bot-b** 
 - 2026-09-12: **8번 신설 — 회원 매도 QTA 회수 루틴.** 봇→트레저리 장부 이체(A) + 핫월렛→메인지갑 온체인(B) 일일 스윕, treasury/sweep·report 엔드포인트.
 - 2026-09-13: **9번 신설 — 수당 고정단가 6원→10원(09-14~ 당분간).** 공용 peg 스케줄 모듈 도입, 데일리 수당은 날짜별 단가로 개별 합산, 매칭/청구/지갑 환산 일괄 적용. peg-census 엔드포인트.
 - 2026-09-14: **Day Plan 관리자 OHLC 컨트롤** — Open/Centre/High/Low/Close 달러 입력, High/Low 하드 클램프, 등락폭 자동 산출. 월요일 기본 플랜에 H 0.0093 / L 0.0084 명시.
+- 2026-09-14: **Day Plan 다중 날짜 스케줄** — 날짜별 템플릿 저장, 00:00 KST 자동 승격, 관리자 주간 표 UI + API(GET/PUT/DELETE /admin/coins/QTA/day-plan/schedule).
