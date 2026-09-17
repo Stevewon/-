@@ -404,12 +404,21 @@ export default {
         out.live_plan = live?.value ? JSON.parse(live.value) : null; out.live_updated_at = live?.updated_at ?? null;
         const sch = await env.DB.prepare("SELECT value, updated_at FROM system_state WHERE key = 'qta_day_plan_schedule'").first<any>();
         out.schedule = sch?.value ? JSON.parse(sch.value) : {}; out.schedule_updated_at = sch?.updated_at ?? null;
+        // Production admin_audit_logs was created by migration 0007 (no
+        // admin_email / ip / ua columns; 0009 never ran). Add them idempotently
+        // so the Pages logAdminAction() inserts stop failing silently.
+        for (const col of ['admin_email TEXT', 'ip_address TEXT', 'user_agent TEXT']) {
+          try { await env.DB.prepare(`ALTER TABLE admin_audit_logs ADD COLUMN ${col}`).run(); } catch { /* exists */ }
+        }
         const { results } = await env.DB.prepare(
-          `SELECT admin_id, admin_email, action, payload, created_at FROM admin_audit_logs
-            WHERE action IN ('coin.day_plan','coin.day_plan_clear','coin.day_plan_schedule','coin.day_plan_schedule_delete','coin.price_policy')
-            ORDER BY created_at DESC LIMIT 20`,
+          `SELECT a.admin_id, a.action, a.payload, a.created_at, u.email AS admin_email
+             FROM admin_audit_logs a LEFT JOIN users u ON u.id = a.admin_id
+            WHERE a.action IN ('coin.day_plan','coin.day_plan_clear','coin.day_plan_schedule','coin.day_plan_schedule_delete','coin.price_policy')
+            ORDER BY a.created_at DESC LIMIT 20`,
         ).all<any>();
         out.audit = (results || []).map((r: any) => ({ ...r, payload: (() => { try { return JSON.parse(r.payload); } catch { return r.payload; } })() }));
+        const cnt = await env.DB.prepare('SELECT COUNT(*) n, MAX(created_at) latest FROM admin_audit_logs').first<any>();
+        out.audit_total = cnt;
         const coin = await env.DB.prepare("SELECT price_usd, price_mode, price_center, price_band_pct, price_bias FROM coins WHERE symbol='QTA'").first<any>();
         out.coin_policy = coin;
       } catch (e: any) { out.error = String(e?.message || e); }
