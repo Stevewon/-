@@ -396,6 +396,25 @@ export default {
   // Optional HTTP endpoint for manual runs (useful for debugging)
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    if (url.pathname === '/plan-report') {
+      // Read-only: live QTA day plan + future schedule + who changed it (audit).
+      const out: any = {};
+      try {
+        const live = await env.DB.prepare("SELECT value, updated_at FROM system_state WHERE key = 'qta_day_plan'").first<any>();
+        out.live_plan = live?.value ? JSON.parse(live.value) : null; out.live_updated_at = live?.updated_at ?? null;
+        const sch = await env.DB.prepare("SELECT value, updated_at FROM system_state WHERE key = 'qta_day_plan_schedule'").first<any>();
+        out.schedule = sch?.value ? JSON.parse(sch.value) : {}; out.schedule_updated_at = sch?.updated_at ?? null;
+        const { results } = await env.DB.prepare(
+          `SELECT admin_id, admin_email, action, payload, created_at FROM admin_audit_logs
+            WHERE action IN ('coin.day_plan','coin.day_plan_clear','coin.day_plan_schedule','coin.day_plan_schedule_delete','coin.price_policy')
+            ORDER BY created_at DESC LIMIT 20`,
+        ).all<any>();
+        out.audit = (results || []).map((r: any) => ({ ...r, payload: (() => { try { return JSON.parse(r.payload); } catch { return r.payload; } })() }));
+        const coin = await env.DB.prepare("SELECT price_usd, price_mode, price_center, price_band_pct, price_bias FROM coins WHERE symbol='QTA'").first<any>();
+        out.coin_policy = coin;
+      } catch (e: any) { out.error = String(e?.message || e); }
+      return new Response(JSON.stringify(out, null, 2), { headers: { 'content-type': 'application/json' } });
+    }
     if (url.pathname === '/peg-census') {
       // ★ Owner 2026-09-13: "해당 인원도 전수조사해서 보고" — every ACTIVE staking
       //   position with its daily dividend under the OLD (6원) vs NEW (10원) peg.
