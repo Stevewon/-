@@ -138,29 +138,25 @@ export function dumpEvent(nowMs: number, tickMs: number = 60_000, salt = 0): Dum
   return null;
 }
 
-// ★ OWNER INSTRUCTION 2026-09-14 (KST, Monday):
-//   "월요일은 어제와 같이 하되 0.0090으로 해서 0.0085로 끝내. 같은 로직으로."
-//   (09-13 Sun: rally to 0.0080 → close 0.0078 — same shape.)
-// Built-in default so the plan is live the moment this deploys — no DB write
-// needed. Because the date is in the FUTURE relative to deploy, today's stored
-// 09-13 plan keeps running (hold → carry at 0.0078) until 00:00 KST Monday,
-// when resolveEffectivePlan() sees the newer default and seeds it — ramping
-// from the live last price (≈0.0078) to 0.0090. Admin can still override /
-// clear for the day via /api/admin/coins/QTA/day-plan.
-export const DEFAULT_PLAN: Omit<QtaDayPlan, 'start_ms' | 'start_price'> = {
-  date: '2026-09-14',
-  center: 0.0090,
-  band_pct: 3.0,
-  close: 0.0085,
-  open: null,          // ramp from the live last price
-  high: 0.00930,       // hard ceiling (≈ centre +3.3%)
-  low: 0.00840,        // hard floor (below the 0.0085 close)
-  close_start: '22:30',
-  close_end: '23:55',
-  ramp_minutes: 300,   // 0.0078 → 0.0090 (+15%) over 5h, red candles mixed in
-  carry_band_pct: 1.0,
-  created_by: 'owner-rule-2026-09-14',
+// ★ OWNER INSTRUCTION 2026-09-17 (Thu, 12:10 KST):
+//   "오늘은 저녁 11시 59분에 0.0091로 끝내고, 내일은 0.0086, 일요일은 0.0092,
+//    월요일은 0.0102로 끝내. 가장 자연스럽게, 오르내리게."
+//   Multi-day BUILT-IN schedule (KST dates). Each day: ramp from the live last
+//   price into the day's range, oscillate between Low/High with seller dumps
+//   and recoveries, glide to Close from close_start, land at 23:59, hold.
+//   Saturday 09-19 was NOT specified → keeps Friday's close (0.0086) as its
+//   close with a wider intraday range so the tape still breathes.
+//   Admin schedule (system_state.qta_day_plan_schedule) always wins over these.
+type DefaultTpl = Omit<QtaDayPlan, 'start_ms' | 'start_price'>;
+export const DEFAULT_SCHEDULE: Record<string, DefaultTpl> = {
+  '2026-09-17': { date: '2026-09-17', open: null, center: 0.0089, high: 0.00925, low: 0.0086, band_pct: 3.0, close: 0.0091, close_start: '21:30', close_end: '23:59', ramp_minutes: 240, carry_band_pct: 1.0, created_by: 'owner-rule-2026-09-17' },
+  '2026-09-18': { date: '2026-09-18', open: null, center: 0.0088, high: 0.00930, low: 0.0084, band_pct: 3.0, close: 0.0086, close_start: '22:00', close_end: '23:59', ramp_minutes: 300, carry_band_pct: 1.0, created_by: 'owner-rule-2026-09-17' },
+  '2026-09-19': { date: '2026-09-19', open: null, center: 0.0087, high: 0.00900, low: 0.0083, band_pct: 3.0, close: 0.0086, close_start: '22:00', close_end: '23:59', ramp_minutes: 240, carry_band_pct: 1.0, created_by: 'owner-rule-2026-09-17 (Sat fill: keep Fri close)' },
+  '2026-09-20': { date: '2026-09-20', open: null, center: 0.0090, high: 0.00940, low: 0.0086, band_pct: 3.0, close: 0.0092, close_start: '22:00', close_end: '23:59', ramp_minutes: 300, carry_band_pct: 1.0, created_by: 'owner-rule-2026-09-17' },
+  '2026-09-21': { date: '2026-09-21', open: null, center: 0.0100, high: 0.01040, low: 0.0095, band_pct: 3.0, close: 0.0102, close_start: '22:00', close_end: '23:59', ramp_minutes: 300, carry_band_pct: 1.0, created_by: 'owner-rule-2026-09-17' },
 };
+// Back-compat: the single "default plan" = today's (or the latest past) entry.
+export const DEFAULT_PLAN: DefaultTpl = DEFAULT_SCHEDULE['2026-09-17'];
 
 // ---------------------------------------------------------------------------
 // KST helpers
@@ -325,8 +321,12 @@ function planStepRaw(
       mid *= 1 + noise * 0.005; // ±0.5% — red candles appear regularly on the way up
       // Never run past the centre band during the ramp.
       const hiCap = plan.center * (1 + band * 0.6);
-      const loCap = Math.min(cur, plan.center) * (1 - band);
+      let loCap = Math.min(cur, plan.center) * (1 - band);
+      // If the ramp already starts INSIDE the admin range, honour Low/High as
+      // the floor/ceiling right away (only an out-of-range Open may sit outside).
+      if (plan.low && plan.low > 0 && cur >= plan.low) loCap = Math.max(loCap, plan.low);
       if (mid > hiCap) mid = hiCap;
+      if (plan.high && plan.high > 0 && cur <= plan.high && mid > plan.high) mid = plan.high;
       if (mid < loCap) mid = loCap;
       return { phase, mid, lo: Math.min(mid, plan.center) * (1 - band), hi: Math.max(mid, plan.center) * (1 + band), anchor: plan.center };
     }
@@ -511,13 +511,15 @@ export async function resolveEffectivePlan(
     }
   }
 
-  // 2) Built-in DEFAULT_PLAN, once due, supersedes an OLDER stored plan.
-  const defaultDue = DEFAULT_PLAN.date <= today;
-  const defaultNewer = defaultDue && (!stored || storedDate < DEFAULT_PLAN.date);
-  if (defaultNewer) {
-    const seeded = normalizePlan({ ...DEFAULT_PLAN }, nowMs, lastPrice);
-    try { await savePlan(DB, seeded); } catch { /* best-effort */ }
-    return seeded;
+  // 2) Built-in DEFAULT_SCHEDULE for today (owner's standing instructions
+  //    baked into code), promoted once when the live plan is OLDER than today.
+  if (!stored || storedDate < today) {
+    const tpl = DEFAULT_SCHEDULE[today];
+    if (tpl) {
+      const seeded = normalizePlan({ ...tpl }, nowMs, lastPrice);
+      try { await savePlan(DB, seeded); } catch { /* best-effort */ }
+      return seeded;
+    }
   }
   // 3) Stored plan (today's, or yesterday's carrying over).
   if (stored) return stored.cleared ? null : stored;
