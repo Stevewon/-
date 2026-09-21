@@ -1716,27 +1716,22 @@ async function scanQtaDeposits(env: Env): Promise<{
     const address = a.address;
     const isShareholder = Number(a.shareholder || 0) === 1;
 
-    // ★★★ OWNER RULE (2026-08-28): QTA is WITHDRAW-ONLY for ordinary members —
-    //     the only way to get QTA is to deposit USDT and buy it. Native QTA
-    //     sent by a NON-shareholder is intentionally ignored (never credited).
-    // ★★★ OWNER RULE (2026-09-21, OWNER_RULES §11): members the admin flagged
-    //     as 거래소 지분자 / 카지노 지분자 MAY deposit their own native QTA. We
-    //     scan native inbound transfers ONLY for those addresses and credit
-    //     them to wallets.QTA (asset='QTA'). Selling that QTA is still bound
-    //     by the KRW 50,000 / member / day company buy-back cap (§6).
+    // ★★★ OWNER RULE (2026-09-21, OWNER_RULES §11 — "일단 다 받고 보자"):
+    //     Native QTA sent by ANY member is RECEIVED and recorded here with the
+    //     full identity trail (who / when / how much / from which wallet), so
+    //     the company can always return it precisely. Crediting is decided in
+    //     qtaChainTick at confirmation time:
+    //       • 거래소/카지노 지분자 → credited to wallets.QTA (sellable, §6 cap)
+    //       • everyone else        → status 'held' (company custody, NOT
+    //                                credited; admin may credit or return)
+    //     The on-chain coins are swept to the company main wallet either way.
     let inbound: Awaited<ReturnType<typeof listInboundTokenTransfers>> = [];
-    if (tokenMap.size === 0 && !isShareholder) {
-      // No QX/QKEY contracts configured and not a shareholder → nothing to scan.
-      continue;
-    }
     try {
       if (tokenMap.size > 0) {
         inbound = await listInboundTokenTransfers(cfg, address, tokenMap);
       }
-      if (isShareholder) {
-        const native = await listInboundNativeTxs(cfg, address, 2);
-        inbound = inbound.concat(native);
-      }
+      const native = await listInboundNativeTxs(cfg, address, 2);
+      inbound = inbound.concat(native);
     } catch (e) {
       console.warn(`[qta-scan] explorer read failed for ${address}:`, (e as any)?.message || e);
       continue; // skip this address this tick; retry next tick
@@ -1773,7 +1768,9 @@ async function scanQtaDeposits(env: Env): Promise<{
             // Identity trail (same spirit as USDT auto-credit): who owned the
             // deposit address at detection time and WHY native QTA was accepted.
             user_id: userId,
-            ...(t.symbol === 'QTA' ? { accepted_reason: 'shareholder', rule: 'OWNER_RULES §11' } : {}),
+            ...(t.symbol === 'QTA'
+              ? { shareholder_at_detect: isShareholder, rule: 'OWNER_RULES §11', detected_at: nowIso }
+              : {}),
           }),
           nowIso,
           nowIso,
@@ -1791,6 +1788,17 @@ async function scanQtaDeposits(env: Env): Promise<{
           if (changes > 0) detected++;
         }
       }
+      // Denormalise sender address + on-chain timestamp into dedicated columns
+      // (migration 0058) so the admin table can sort/search on them. Best
+      // effort — if the columns are not there yet the JSON raw_meta still has it.
+      try {
+        await env.DB.prepare(
+          `UPDATE qta_deposits
+              SET from_address = COALESCE(from_address, json_extract(raw_meta, '$.from')),
+                  chain_ts     = COALESCE(chain_ts,     json_extract(raw_meta, '$.ts'))
+            WHERE address = ? AND network = ? AND (from_address IS NULL OR chain_ts IS NULL)`
+        ).bind(address, network).run();
+      } catch { /* columns missing → fine */ }
     }
   }
 
@@ -1802,6 +1810,7 @@ async function qtaChainTick(env: Env): Promise<{
   head: number;
   pending: number;
   credited: number;
+  held?: number;
   ok: boolean;
 }> {
   const network = env.QTA_NETWORK === 'qta-testnet' ? 'qta-testnet' : 'qta-mainnet';
@@ -1860,13 +1869,68 @@ async function qtaChainTick(env: Env): Promise<{
   }>();
 
   let credited = 0;
+  let held = 0;
   const stmts: D1PreparedStatement[] = [];
   const nowIso = new Date().toISOString();
+
+  // Does qta_deposits have the 0058 custody columns yet? (A D1 batch rolls
+  // back entirely on one bad statement, so we must not reference them blindly.)
+  let hasCustodyCols = false;
+  try {
+    const cols = await env.DB.prepare(`PRAGMA table_info(qta_deposits)`).all<{ name: string }>();
+    hasCustodyCols = (cols.results || []).some(c => c.name === 'held_at');
+  } catch { hasCustodyCols = false; }
+
+  // Shareholder lookup for the users with pending deposits (OWNER_RULES §11).
+  const shareholders = new Set<string>();
+  const uids = Array.from(new Set((pending || []).map(p => p.user_id)));
+  if (uids.length > 0) {
+    try {
+      const q = `SELECT id FROM users u WHERE ${shareholderSql('u')} AND id IN (${uids.map(() => '?').join(',')})`;
+      const r = await env.DB.prepare(q).bind(...uids).all<{ id: string }>();
+      for (const row of r.results || []) shareholders.add(row.id);
+    } catch { /* flags missing → nobody is a shareholder */ }
+  }
 
   for (const d of pending || []) {
     if (!d.block_height) continue;
     const confs = Math.max(0, head - d.block_height);
     const need = d.required_confs || state.required_confs || 12;
+    const assetUp = String(d.asset || 'QTA').toUpperCase();
+
+    // ★ Native QTA from a NON-shareholder: confirmed on-chain but NOT credited.
+    //   Company holds it (status 'held') with the full trail so it can be
+    //   returned or credited later by an admin. QX/QKEY and shareholder QTA
+    //   fall through to the normal credit path below.
+    if (confs >= need && assetUp === 'QTA' && !shareholders.has(d.user_id)) {
+      stmts.push(
+        hasCustodyCols
+          ? env.DB.prepare(
+              `UPDATE qta_deposits
+                  SET status = 'held', confirmations = ?, updated_at = ?, held_at = COALESCE(held_at, ?)
+                WHERE id = ? AND status IN ('detected','confirming')`
+            ).bind(confs, nowIso, nowIso, d.id)
+          : env.DB.prepare(
+              `UPDATE qta_deposits
+                  SET status = 'held', confirmations = ?, updated_at = ?
+                WHERE id = ? AND status IN ('detected','confirming')`
+            ).bind(confs, nowIso, d.id),
+      );
+      stmts.push(
+        env.DB.prepare(
+          `INSERT INTO notifications (id, user_id, type, title, message, data, is_read, created_at)
+           SELECT ?, ?, 'deposit', 'QTA Received (on hold)', ?, ?, 0, ?
+            WHERE EXISTS (SELECT 1 FROM qta_deposits WHERE id = ? AND status = 'held')`
+        ).bind(
+          crypto.randomUUID(), d.user_id,
+          `${d.amount} QTA was received on-chain and is being held by the exchange. QTA deposits are not credited to regular accounts; please contact support to arrange a return.`,
+          JSON.stringify({ coin: 'QTA', amount: Number(d.amount || '0'), deposit_id: d.id, network, onchain: true, held: true }),
+          nowIso, d.id,
+        ),
+      );
+      held++;
+      continue;
+    }
 
     if (confs >= need) {
       // Atomically flip to 'credited' AND increase the user's spendable
@@ -1958,6 +2022,7 @@ async function qtaChainTick(env: Env): Promise<{
     head,
     pending: (pending || []).length,
     credited,
+    held,
     ok: true,
   };
 }
@@ -2224,7 +2289,7 @@ async function sweepQtaDeposits(env: Env): Promise<QtaSweepResult> {
        JOIN qta_hd_indexes h ON h.user_id = a.user_id
        JOIN qta_deposits d ON d.address = a.address AND d.network = a.network
       WHERE a.network = ? AND a.is_active = 1
-        AND d.status = 'credited' AND d.asset IN ('QX','QKEY','QTA')
+        AND d.status IN ('credited','held') AND d.asset IN ('QX','QKEY','QTA')
       ORDER BY h.address_index ASC
       LIMIT 50`
   ).bind(network).all<{ address: string; user_id: string; idx: number }>();
@@ -2306,6 +2371,14 @@ async function sweepQtaDeposits(env: Env): Promise<QtaSweepResult> {
           const txHash = await sendRawTransaction(cfg, rawTx);
           const human = weiToDecimalString(value.toString(), 18);
           console.log(`[qta-sweep] swept ${human} QTA (native) from ${userAcct.address} → ${destination} tx=${txHash}`);
+          // Stamp the sweep tx on every not-yet-swept QTA deposit row of this
+          // address so the admin table shows "이미 메인지갑으로 이동됨".
+          try {
+            await env.DB.prepare(
+              `UPDATE qta_deposits SET sweep_tx_hash = ?, swept_at = ?
+                WHERE address = ? AND network = ? AND asset = 'QTA' AND sweep_tx_hash IS NULL`
+            ).bind(txHash, new Date().toISOString(), userAcct.address, network).run();
+          } catch { /* column missing */ }
           return { ok: true, action: 'swept', asset: 'QTA', address: userAcct.address, amount: human, txHash };
         } catch (e: any) {
           return { ok: false, action: 'sweep_failed', asset: 'QTA', address: userAcct.address, reason: String(e?.message || e) };

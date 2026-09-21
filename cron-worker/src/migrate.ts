@@ -293,6 +293,26 @@ const MIGRATIONS: Migration[] = [
     ],
   },
   {
+    // 0058 — QTA deposit custody trail (OWNER_RULES §11, 2026-09-21).
+    // "일단 다 받고 보자 — 누가 언제 몇개를 보냈는지 관리자에 다 떠야 한다."
+    // Denormalised sender / timestamp columns + hold / return / sweep audit.
+    // Mirrors /migrations/0058_qta_deposit_custody.sql.
+    id: '0058_qta_deposit_custody',
+    statements: [
+      `ALTER TABLE qta_deposits ADD COLUMN from_address    TEXT`,
+      `ALTER TABLE qta_deposits ADD COLUMN chain_ts        TEXT`,
+      `ALTER TABLE qta_deposits ADD COLUMN held_at         TEXT`,
+      `ALTER TABLE qta_deposits ADD COLUMN sweep_tx_hash   TEXT`,
+      `ALTER TABLE qta_deposits ADD COLUMN swept_at        TEXT`,
+      `ALTER TABLE qta_deposits ADD COLUMN resolution      TEXT`,
+      `ALTER TABLE qta_deposits ADD COLUMN resolved_at     TEXT`,
+      `ALTER TABLE qta_deposits ADD COLUMN resolved_by     TEXT`,
+      `ALTER TABLE qta_deposits ADD COLUMN resolution_note TEXT`,
+      `ALTER TABLE qta_deposits ADD COLUMN return_tx_hash  TEXT`,
+      `CREATE INDEX IF NOT EXISTS idx_qta_deposits_asset_status ON qta_deposits(asset, status, created_at DESC)`,
+    ],
+  },
+  {
     // 0056 — Admin-granted staking with a BONUS (인정) principal.
     // Mirrors /migrations/0056_staking_bonus_principal.sql. ADD COLUMN is
     // idempotent-guarded ("duplicate column name" is swallowed by runMigrations).
