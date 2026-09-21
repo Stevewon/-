@@ -145,6 +145,7 @@ export default function WalletPage() {
       case 'completed': return <CheckCircle2 size={14} className="text-exchange-buy" />;
       case 'pending': return <Clock size={14} className="text-exchange-yellow" />;
       case 'on_hold': return <Clock size={14} className="text-exchange-yellow" />;
+      case 'returning': return <Clock size={14} className="text-blue-400" />;
       case 'returned': return <CheckCircle2 size={14} className="text-blue-400" />;
       case 'failed':
       case 'rejected':
@@ -162,6 +163,7 @@ export default function WalletPage() {
       // OWNER_RULES §11 — native QTA received from a non-shareholder is held
       // by the exchange (not credited) until an admin credits or returns it.
       on_hold: 'On hold (exchange)',
+      returning: 'Returning to sender',
       returned: 'Returned',
     };
     return map[status] || status;

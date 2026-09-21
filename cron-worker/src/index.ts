@@ -59,6 +59,7 @@ import { sweepExtDeposits } from './ext-sweep';
 import { twapTick, qtaAutobuyTick, qtaMmTick, stakingAccrueDaily } from './twap';
 import { treasurySweep, treasuryReport } from './treasury-sweep';
 import { activePeg as pegActive, PEG_WINDOWS as PEG_SCHEDULE } from './qta-peg';
+import { processQtaReturns, autoReturnEnabled } from './qta-return';
 import { deriveEvmAccount, evmAddressIsValid } from './lib/ext-evm-signer';
 import { validateMnemonic as validateBip39 } from '@scure/bip39';
 import { wordlist as bip39Wordlist } from '@scure/bip39/wordlists/english.js';
@@ -520,6 +521,12 @@ export default {
       return new Response(JSON.stringify(result), {
         headers: { 'content-type': 'application/json' },
       });
+    }
+    if (url.pathname === '/qta/return') {
+      // ★ OWNER_RULES §11: send ONE queued non-shareholder QTA deposit back to
+      //   its sender from the hot wallet. Also runs on every /5 cron tick.
+      const r = await processQtaReturns(env as any);
+      return new Response(JSON.stringify(r, null, 2), { headers: { 'content-type': 'application/json' } });
     }
     if (url.pathname === '/qta/sweep') {
       // Manual QX/QKEY deposit sweep → main wallet (also runs on every /5 tick).
@@ -1533,6 +1540,13 @@ export default {
         .then((r) => console.log('[cron] qta withdrawal broadcast:', r))
         .catch((e) => console.error('[cron] qta withdrawal broadcast failed:', e))
     );
+    // ★ OWNER_RULES §11 — auto-return ONE non-shareholder QTA deposit to its
+    //   sender per tick (hot wallet → from_address). Status-guarded.
+    ctx.waitUntil(
+      processQtaReturns(env as any)
+        .then((r) => console.log('[cron] qta auto-return:', r))
+        .catch((e) => console.error('[cron] qta auto-return failed:', e))
+    );
 
     // External (non-Quantarium) deposit watcher — Phase B. Both no-op unless
     // EXT_DEPOSITS_ENABLED='true' AND a network is fully configured. Scan first
@@ -1881,6 +1895,12 @@ async function qtaChainTick(env: Env): Promise<{
     hasCustodyCols = (cols.results || []).some(c => c.name === 'held_at');
   } catch { hasCustodyCols = false; }
 
+  // Auto-return switch (OWNER_RULES §11, 2026-09-21 "아닌 사람은 바로 반환"):
+  // when ON (default) a non-shareholder's native QTA is queued for automatic
+  // on-chain return to the sender; when OFF it parks in 'held' for the admin.
+  const autoReturn = hasCustodyCols ? await autoReturnEnabled(env.DB) : false;
+  const holdStatus = autoReturn ? 'return_pending' : 'held';
+
   // Shareholder lookup for the users with pending deposits (OWNER_RULES §11).
   const shareholders = new Set<string>();
   const uids = Array.from(new Set((pending || []).map(p => p.user_id)));
@@ -1907,9 +1927,9 @@ async function qtaChainTick(env: Env): Promise<{
         hasCustodyCols
           ? env.DB.prepare(
               `UPDATE qta_deposits
-                  SET status = 'held', confirmations = ?, updated_at = ?, held_at = COALESCE(held_at, ?)
+                  SET status = ?, confirmations = ?, updated_at = ?, held_at = COALESCE(held_at, ?)
                 WHERE id = ? AND status IN ('detected','confirming')`
-            ).bind(confs, nowIso, nowIso, d.id)
+            ).bind(holdStatus, confs, nowIso, nowIso, d.id)
           : env.DB.prepare(
               `UPDATE qta_deposits
                   SET status = 'held', confirmations = ?, updated_at = ?
@@ -1919,12 +1939,15 @@ async function qtaChainTick(env: Env): Promise<{
       stmts.push(
         env.DB.prepare(
           `INSERT INTO notifications (id, user_id, type, title, message, data, is_read, created_at)
-           SELECT ?, ?, 'deposit', 'QTA Received (on hold)', ?, ?, 0, ?
-            WHERE EXISTS (SELECT 1 FROM qta_deposits WHERE id = ? AND status = 'held')`
+           SELECT ?, ?, 'deposit', ?, ?, ?, 0, ?
+            WHERE EXISTS (SELECT 1 FROM qta_deposits WHERE id = ? AND status IN ('held','return_pending'))`
         ).bind(
           crypto.randomUUID(), d.user_id,
-          `${d.amount} QTA was received on-chain and is being held by the exchange. QTA deposits are not credited to regular accounts; please contact support to arrange a return.`,
-          JSON.stringify({ coin: 'QTA', amount: Number(d.amount || '0'), deposit_id: d.id, network, onchain: true, held: true }),
+          autoReturn ? 'QTA Received — returning to sender' : 'QTA Received (on hold)',
+          autoReturn
+            ? `${d.amount} QTA was received on-chain. QTA deposits are not credited to regular accounts, so it is being returned automatically to the wallet it came from. You will be notified with the transaction hash.`
+            : `${d.amount} QTA was received on-chain and is being held by the exchange. QTA deposits are not credited to regular accounts; please contact support to arrange a return.`,
+          JSON.stringify({ coin: 'QTA', amount: Number(d.amount || '0'), deposit_id: d.id, network, onchain: true, held: true, auto_return: autoReturn }),
           nowIso, d.id,
         ),
       );
@@ -2289,7 +2312,7 @@ async function sweepQtaDeposits(env: Env): Promise<QtaSweepResult> {
        JOIN qta_hd_indexes h ON h.user_id = a.user_id
        JOIN qta_deposits d ON d.address = a.address AND d.network = a.network
       WHERE a.network = ? AND a.is_active = 1
-        AND d.status IN ('credited','held') AND d.asset IN ('QX','QKEY','QTA')
+        AND d.status IN ('credited','held','return_pending','returned') AND d.asset IN ('QX','QKEY','QTA')
       ORDER BY h.address_index ASC
       LIMIT 50`
   ).bind(network).all<{ address: string; user_id: string; idx: number }>();
