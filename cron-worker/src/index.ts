@@ -37,11 +37,14 @@ import {
   type EvmRpcConfig,
 } from './lib/qta-evm';
 import {
-  // listInboundNativeTxs intentionally NOT imported: QTA is withdraw-only, so
-  // native QTA deposits are never scanned/credited (owner rule 2026-08-28).
+  // listInboundNativeTxs: native QTA deposits are scanned ONLY for members the
+  // admin flagged as 거래소/카지노 지분자 (OWNER_RULES §11, 2026-09-21). For
+  // everyone else QTA stays withdraw-only (owner rule 2026-08-28).
+  listInboundNativeTxs,
   listInboundTokenTransfers,
   type ExplorerConfig,
 } from './lib/qta-explorer';
+import { shareholderSql } from './shareholder';
 // Standard Ethereum BIP-32/BIP-44 (secp256k1) derivation — used ONLY by the
 // /qta/env-check diagnostic to test whether the Quantarium wallet app derives
 // addresses the standard EVM way (m/44'/60'/0'/0/i) rather than our SPHINCS+ HD.
@@ -1675,13 +1678,30 @@ async function scanQtaDeposits(env: Env): Promise<{
     });
   }
 
-  // Load active per-user deposit addresses on this network.
-  const { results: addrs } = await env.DB.prepare(
-    `SELECT user_id, address
-     FROM qta_addresses
-     WHERE network = ? AND is_active = 1
-     LIMIT ?`
-  ).bind(network, DEPOSIT_SCAN_ADDRESS_LIMIT).all<{ user_id: string; address: string }>();
+  // Load active per-user deposit addresses on this network, together with the
+  // owner's shareholder flags (drives whether NATIVE QTA is credited).
+  let addrs: Array<{ user_id: string; address: string; shareholder: number }> | undefined;
+  try {
+    const r = await env.DB.prepare(
+      `SELECT a.user_id, a.address,
+              CASE WHEN ${shareholderSql('u')} THEN 1 ELSE 0 END AS shareholder
+       FROM qta_addresses a
+       LEFT JOIN users u ON u.id = a.user_id
+       WHERE a.network = ? AND a.is_active = 1
+       LIMIT ?`
+    ).bind(network, DEPOSIT_SCAN_ADDRESS_LIMIT).all<{ user_id: string; address: string; shareholder: number }>();
+    addrs = r.results;
+  } catch {
+    // Flag columns missing (migration 0051 not applied yet) → fall back to the
+    // legacy query; nobody is a shareholder until the migration lands.
+    const r = await env.DB.prepare(
+      `SELECT user_id, address, 0 AS shareholder
+       FROM qta_addresses
+       WHERE network = ? AND is_active = 1
+       LIMIT ?`
+    ).bind(network, DEPOSIT_SCAN_ADDRESS_LIMIT).all<{ user_id: string; address: string; shareholder: number }>();
+    addrs = r.results;
+  }
 
   if (!addrs || addrs.length === 0) {
     return { ok: true, addresses: 0, detected: 0 };
@@ -1694,19 +1714,29 @@ async function scanQtaDeposits(env: Env): Promise<{
   for (const a of addrs) {
     const userId = a.user_id;
     const address = a.address;
+    const isShareholder = Number(a.shareholder || 0) === 1;
 
-    // ★★★ OWNER RULE (2026-08-28): QTA is WITHDRAW-ONLY — it can NEVER be
-    //     deposited on-chain (the only way to get QTA is to deposit USDT and
-    //     buy it). So we DELIBERATELY do NOT scan native QTA transfers here;
-    //     we only credit QX / QKEY ERC-20 token deposits. Any native QTA sent
-    //     to a deposit address is intentionally ignored (never credited).
+    // ★★★ OWNER RULE (2026-08-28): QTA is WITHDRAW-ONLY for ordinary members —
+    //     the only way to get QTA is to deposit USDT and buy it. Native QTA
+    //     sent by a NON-shareholder is intentionally ignored (never credited).
+    // ★★★ OWNER RULE (2026-09-21, OWNER_RULES §11): members the admin flagged
+    //     as 거래소 지분자 / 카지노 지분자 MAY deposit their own native QTA. We
+    //     scan native inbound transfers ONLY for those addresses and credit
+    //     them to wallets.QTA (asset='QTA'). Selling that QTA is still bound
+    //     by the KRW 50,000 / member / day company buy-back cap (§6).
     let inbound: Awaited<ReturnType<typeof listInboundTokenTransfers>> = [];
-    if (tokenMap.size === 0) {
-      // No QX/QKEY contracts configured → nothing depositable to scan.
+    if (tokenMap.size === 0 && !isShareholder) {
+      // No QX/QKEY contracts configured and not a shareholder → nothing to scan.
       continue;
     }
     try {
-      inbound = await listInboundTokenTransfers(cfg, address, tokenMap);
+      if (tokenMap.size > 0) {
+        inbound = await listInboundTokenTransfers(cfg, address, tokenMap);
+      }
+      if (isShareholder) {
+        const native = await listInboundNativeTxs(cfg, address, 2);
+        inbound = inbound.concat(native);
+      }
     } catch (e) {
       console.warn(`[qta-scan] explorer read failed for ${address}:`, (e as any)?.message || e);
       continue; // skip this address this tick; retry next tick
@@ -1738,7 +1768,13 @@ async function scanQtaDeposits(env: Env): Promise<{
           t.symbol,
           requiredConfs,
           network,
-          JSON.stringify({ from: t.from, symbol: t.symbol, contract: t.tokenContract, ts: t.timestamp }),
+          JSON.stringify({
+            from: t.from, symbol: t.symbol, contract: t.tokenContract, ts: t.timestamp,
+            // Identity trail (same spirit as USDT auto-credit): who owned the
+            // deposit address at detection time and WHY native QTA was accepted.
+            user_id: userId,
+            ...(t.symbol === 'QTA' ? { accepted_reason: 'shareholder', rule: 'OWNER_RULES §11' } : {}),
+          }),
           nowIso,
           nowIso,
         ),
@@ -1864,6 +1900,21 @@ async function qtaChainTick(env: Env): Promise<{
                  WHERE id = ? AND status IN ('detected','confirming')
                )`
           ).bind(amt, d.user_id, asset, d.id),
+        );
+      }
+      // Member notification (guarded by the same status EXISTS → at most once).
+      if (amt > 0) {
+        stmts.push(
+          env.DB.prepare(
+            `INSERT INTO notifications (id, user_id, type, title, message, data, is_read, created_at)
+             SELECT ?, ?, 'deposit', 'Deposit Credited', ?, ?, 0, ?
+              WHERE EXISTS (SELECT 1 FROM qta_deposits WHERE id = ? AND status IN ('detected','confirming'))`
+          ).bind(
+            crypto.randomUUID(), d.user_id,
+            `+${d.amount} ${asset} confirmed on the Quantarium chain and credited to your wallet.`,
+            JSON.stringify({ coin: asset, amount: amt, deposit_id: d.id, network, onchain: true, auto: true }),
+            nowIso, d.id,
+          ),
         );
       }
       // Flip status AFTER the guarded credit (statements in a D1 batch run
@@ -2173,7 +2224,7 @@ async function sweepQtaDeposits(env: Env): Promise<QtaSweepResult> {
        JOIN qta_hd_indexes h ON h.user_id = a.user_id
        JOIN qta_deposits d ON d.address = a.address AND d.network = a.network
       WHERE a.network = ? AND a.is_active = 1
-        AND d.status = 'credited' AND d.asset IN ('QX','QKEY')
+        AND d.status = 'credited' AND d.asset IN ('QX','QKEY','QTA')
       ORDER BY h.address_index ASC
       LIMIT 50`
   ).bind(network).all<{ address: string; user_id: string; idx: number }>();
@@ -2229,7 +2280,39 @@ async function sweepQtaDeposits(env: Env): Promise<QtaSweepResult> {
 
     // Pick the first token with a non-zero balance to move THIS tick.
     const moving = tokens.find(t => (t.symbol === 'QX' ? qxBal : qkeyBal) > 0n);
-    if (!moving) continue; // no token balance here — try next candidate
+    if (!moving) {
+      // ── NATIVE QTA sweep (OWNER_RULES §11 + §8) ─────────────────────────
+      // Shareholder-deposited native QTA sits in the per-user address. Once
+      // no token is left to move, forward the native balance (minus the gas
+      // for this one transfer) to the company main wallet so member-deposited
+      // QTA lands in treasury like everything else. Dust below 0.01 QTA is
+      // left alone (not worth a tx).
+      const nativeSendCost = fees.maxFeePerGas * nativeGasLimit;
+      const nativeMin = 10n ** 16n; // 0.01 QTA
+      if (nativeBal > nativeSendCost + nativeMin) {
+        const value = nativeBal - nativeSendCost;
+        try {
+          const userNonce = await getNonce(cfg, userAcct.address);
+          const { rawTx } = signSphincsTx(
+            {
+              chainId, nonce: userNonce,
+              maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
+              maxFeePerGas: fees.maxFeePerGas,
+              gasLimit: nativeGasLimit,
+              to: destination, value, data: '0x',
+            },
+            userAcct.publicKey, userAcct.secretKey,
+          );
+          const txHash = await sendRawTransaction(cfg, rawTx);
+          const human = weiToDecimalString(value.toString(), 18);
+          console.log(`[qta-sweep] swept ${human} QTA (native) from ${userAcct.address} → ${destination} tx=${txHash}`);
+          return { ok: true, action: 'swept', asset: 'QTA', address: userAcct.address, amount: human, txHash };
+        } catch (e: any) {
+          return { ok: false, action: 'sweep_failed', asset: 'QTA', address: userAcct.address, reason: String(e?.message || e) };
+        }
+      }
+      continue; // nothing to move here — try next candidate
+    }
 
     const tokenBal = moving.symbol === 'QX' ? qxBal : qkeyBal;
 

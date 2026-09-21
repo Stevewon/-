@@ -6,7 +6,7 @@ import {
   Coins, Send, ArrowDownToLine, Megaphone, Wallet, Hash, Bell,
   FileText, Receipt, Server, Database, HardDrive,
   Shield, AlertTriangle, Zap, Plus, Trash2,
-  Repeat, ArrowRightLeft, Pause, Play, TrendingDown,
+  Repeat, ArrowRightLeft, Pause, Play, TrendingDown, Building2, Dices,
 } from 'lucide-react';
 import useStore from '../store/useStore';
 import { useI18n } from '../i18n';
@@ -556,6 +556,25 @@ function UsersTab({ t, onUpdate }: any) {
     }
   };
 
+  // ★ OWNER_RULES §11 — 거래소 지분자 / 카지노 지분자 toggle (admin decides).
+  //   Shareholders may deposit their own native QTA; deposited QTA can be
+  //   sold up to KRW 50,000 per day (§6 cap, unchanged).
+  const setShareholder = async (u: any, kind: 'exchange' | 'casino') => {
+    const cur = kind === 'exchange' ? !!u.fee_exempt_exchange_holder : !!u.fee_exempt_casino_holder;
+    const label = kind === 'exchange' ? '거래소 지분자' : '카지노 지분자';
+    const msg = cur
+      ? `${u.email}\n${label} 지정을 해제할까요?\n(해제 후 QTA 입금은 다시 차단됩니다)`
+      : `${u.email}\n${label}로 지정할까요?\n\n• 본인 보유 QTA 온체인 입금 허용\n• 입금 QTA 매도: 하루 최대 5만원 (§6 규정 동일 적용)`;
+    if (!confirm(msg)) return;
+    try {
+      const res = await api.post(`/admin/users/${u.id}/shareholder`, { [kind]: !cur });
+      showToast('success', t('common.save'), `${label}: ${res.data?.[kind] ? 'ON' : 'OFF'}`);
+      load(); onUpdate?.();
+    } catch (e: any) {
+      showToast('error', t('common.error'), e.response?.data?.error || 'Update failed');
+    }
+  };
+
   const deleteUser = async (u: any) => {
     const answer = prompt(
       `⚠️ 회원 영구 삭제\n\n` +
@@ -630,13 +649,14 @@ function UsersTab({ t, onUpdate }: any) {
               <th className="text-center px-3 py-2.5">2FA</th>
               <th className="text-center px-3 py-2.5">{t('admin.active')}</th>
               <th className="text-right px-3 py-2.5">{t('fee.holding')}</th>
+              <th className="text-center px-3 py-2.5" title="거래소 지분자 / 카지노 지분자 (QTA 입금 허용)">지분자</th>
               <th className="text-left px-3 py-2.5">{t('admin.joined')}</th>
               <th className="text-right px-3 py-2.5">{t('admin.actions')}</th>
             </tr>
           </thead>
           <tbody>
             {users.length === 0 ? (
-              <tr><td colSpan={9} className="px-3 py-8 text-center text-exchange-text-third text-xs">{t('admin.noData')}</td></tr>
+              <tr><td colSpan={10} className="px-3 py-8 text-center text-exchange-text-third text-xs">{t('admin.noData')}</td></tr>
             ) : users.map(u => (
               <tr key={u.id} className="border-b border-exchange-border/50 hover:bg-exchange-hover/30">
                 <td className="px-3 py-2 text-xs">{u.email}</td>
@@ -666,6 +686,24 @@ function UsersTab({ t, onUpdate }: any) {
                 </td>
                 <td className="px-3 py-2 text-right">
                   <FeeTierCell holding={Number(u.qx_balance || 0)} />
+                </td>
+                <td className="px-3 py-2 text-center">
+                  <div className="inline-flex items-center gap-1">
+                    <button
+                      onClick={() => setShareholder(u, 'exchange')}
+                      className={`inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded border transition-colors ${u.fee_exempt_exchange_holder ? 'bg-exchange-yellow/20 text-exchange-yellow border-exchange-yellow/40' : 'bg-exchange-input text-exchange-text-third border-transparent hover:border-exchange-border'}`}
+                      title={u.fee_exempt_exchange_holder ? '거래소 지분자 (ON) — 클릭하여 해제' : '거래소 지분자로 지정'}
+                    >
+                      <Building2 size={10} /> 거래소
+                    </button>
+                    <button
+                      onClick={() => setShareholder(u, 'casino')}
+                      className={`inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded border transition-colors ${u.fee_exempt_casino_holder ? 'bg-purple-500/20 text-purple-300 border-purple-400/40' : 'bg-exchange-input text-exchange-text-third border-transparent hover:border-exchange-border'}`}
+                      title={u.fee_exempt_casino_holder ? '카지노 지분자 (ON) — 클릭하여 해제' : '카지노 지분자로 지정'}
+                    >
+                      <Dices size={10} /> 카지노
+                    </button>
+                  </div>
                 </td>
                 <td className="px-3 py-2 text-[11px] text-exchange-text-third">{timeAgo(u.created_at, t)}</td>
                 <td className="px-3 py-2 text-right">
@@ -787,6 +825,66 @@ function FeeTierInfoPanel({ holding, t }: any) {
   );
 }
 
+// ============================================================================
+// ★ OWNER_RULES §11 (2026-09-21) — 거래소 지분자 / 카지노 지분자 panel.
+// Admin decides who is a shareholder. Shareholders may deposit their own
+// native QTA on-chain; deposited QTA can be sold up to KRW 50,000 per day
+// (the §6 company buy-back cap applies to everyone, unchanged).
+// ============================================================================
+function ShareholderPanel({ user, onChanged, t }: any) {
+  const [busy, setBusy] = useState<'exchange' | 'casino' | null>(null);
+  const ex = !!user.fee_exempt_exchange_holder;
+  const ca = !!user.fee_exempt_casino_holder;
+  const toggle = async (kind: 'exchange' | 'casino') => {
+    const cur = kind === 'exchange' ? ex : ca;
+    const label = kind === 'exchange' ? '거래소 지분자' : '카지노 지분자';
+    if (!confirm(cur ? `${label} 지정을 해제할까요?` : `${label}로 지정할까요?\n\n• 본인 보유 QTA 온체인 입금 허용\n• 입금 QTA 매도: 하루 최대 5만원 (§6 동일 적용)`)) return;
+    setBusy(kind);
+    try {
+      const res = await api.post(`/admin/users/${user.id}/shareholder`, { [kind]: !cur });
+      onChanged?.({ exchange: !!res.data?.exchange, casino: !!res.data?.casino });
+      showToast('success', t('common.save'), `${label}: ${res.data?.[kind] ? 'ON' : 'OFF'}`);
+    } catch (e: any) {
+      showToast('error', t('common.error'), e.response?.data?.error || 'Update failed');
+    } finally {
+      setBusy(null);
+    }
+  };
+  const Btn = ({ kind, on, icon: Icon, label }: any) => (
+    <button
+      type="button"
+      disabled={busy !== null}
+      onClick={() => toggle(kind)}
+      className={`flex items-center justify-between gap-2 px-3 py-2 rounded-lg border text-xs transition-colors disabled:opacity-50 ${
+        on
+          ? kind === 'exchange'
+            ? 'bg-exchange-yellow/15 border-exchange-yellow/40 text-exchange-yellow'
+            : 'bg-purple-500/15 border-purple-400/40 text-purple-300'
+          : 'bg-exchange-hover/30 border-exchange-border text-exchange-text-secondary hover:border-exchange-text-third'
+      }`}
+    >
+      <span className="inline-flex items-center gap-1.5"><Icon size={13} /> {label}</span>
+      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${on ? 'bg-black/30' : 'bg-exchange-input'}`}>{on ? 'ON' : 'OFF'}</span>
+    </button>
+  );
+  return (
+    <div className="border-t border-exchange-border/50 pt-3">
+      <h4 className="text-xs font-semibold text-exchange-text-secondary mb-2 flex items-center gap-1.5">
+        <Crown size={12} /> 지분자 지정 <span className="text-[10px] text-exchange-text-third font-normal">· OWNER_RULES §11</span>
+      </h4>
+      <div className="grid grid-cols-2 gap-2">
+        <Btn kind="exchange" on={ex} icon={Building2} label="거래소 지분자" />
+        <Btn kind="casino" on={ca} icon={Dices} label="카지노 지분자" />
+      </div>
+      <p className="text-[10px] text-exchange-text-third mt-2 leading-relaxed">
+        지분자로 지정된 회원은 <b className="text-exchange-text-secondary">본인 보유 QTA를 온체인으로 입금</b>할 수 있습니다 (일반 회원 QTA 입금 불가 규정의 예외).
+        입금된 QTA는 회사 매입 한도 <b className="text-exchange-text-secondary">하루 최대 5만원(34.48 USDT)</b> 내에서 매도 가능합니다 (§6 규정 동일).
+        {(ex || ca) && <span className="text-exchange-buy"> · 현재 QTA 입금 허용 상태</span>}
+      </p>
+    </div>
+  );
+}
+
 function UserDetailModal({ detail, onClose, t }: any) {
   const { wallets, recentOrders, logins } = detail;
   const [user, setUser] = useState<any>(detail.user);
@@ -829,6 +927,8 @@ function UserDetailModal({ detail, onClose, t }: any) {
               </div>
             </div>
           )}
+
+          <ShareholderPanel user={user} onChanged={(f: any) => setUser({ ...user, fee_exempt_exchange_holder: f.exchange ? 1 : 0, fee_exempt_casino_holder: f.casino ? 1 : 0 })} t={t} />
 
           <FeeTierInfoPanel holding={Number(user.qx_balance || 0)} t={t} />
 

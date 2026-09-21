@@ -209,10 +209,16 @@ app.get('/users', async (c) => {
   // qx_balance = combined QX + QKEY held on the exchange (available + locked).
   // This drives the fee-tier schedule (owner rule 2026-08-28), so the admin
   // roster shows the amount that decides each member's trading/withdrawal fee.
-  const { results } = await db.prepare(`
+  // Shareholder flags (OWNER_RULES §11) are selected via a helper so the
+  // roster still loads if migration 0051 has not landed yet (fallback = 0).
+  const listSql = (withFlags: boolean) => `
     SELECT u.id, u.email, u.nickname, u.role, u.kyc_status, u.is_active,
            u.two_factor_enabled, u.created_at, u.kyc_submitted_at,
-           COALESCE(qx.qx, 0)                        AS qx_balance
+           COALESCE(qx.qx, 0)                        AS qx_balance,
+           ${withFlags
+             ? `COALESCE(u.fee_exempt_exchange_holder, 0) AS fee_exempt_exchange_holder,
+                COALESCE(u.fee_exempt_casino_holder, 0)   AS fee_exempt_casino_holder`
+             : `0 AS fee_exempt_exchange_holder, 0 AS fee_exempt_casino_holder`}
     FROM users u
     LEFT JOIN (
       SELECT user_id, SUM(available + locked) AS qx
@@ -221,7 +227,13 @@ app.get('/users', async (c) => {
     ${where}
     ORDER BY u.created_at DESC
     LIMIT ? OFFSET ?
-  `).bind(...params, limit, offset).all();
+  `;
+  let results: any[] | undefined;
+  try {
+    results = (await db.prepare(listSql(true)).bind(...params, limit, offset).all()).results;
+  } catch {
+    results = (await db.prepare(listSql(false)).bind(...params, limit, offset).all()).results;
+  }
 
   return c.json({ total: totalRow?.cnt || 0, rows: results });
 });
@@ -239,6 +251,19 @@ app.get('/users/:id', async (c) => {
     FROM users WHERE id = ?
   `).bind(id).first<any>();
   if (!u) return c.json({ error: 'User not found' }, 404);
+
+  // Shareholder flags (OWNER_RULES §11) — tolerate missing columns.
+  try {
+    const f = await db.prepare(
+      `SELECT COALESCE(fee_exempt_exchange_holder,0) AS ex, COALESCE(fee_exempt_casino_holder,0) AS ca
+         FROM users WHERE id = ?`
+    ).bind(id).first<{ ex: number; ca: number }>();
+    u.fee_exempt_exchange_holder = Number(f?.ex || 0);
+    u.fee_exempt_casino_holder = Number(f?.ca || 0);
+  } catch {
+    u.fee_exempt_exchange_holder = 0;
+    u.fee_exempt_casino_holder = 0;
+  }
 
   // Live QX + QKEY holding — drives the fee-tier schedule (owner rule 2026-08-28).
   const qxRow = await db.prepare(
@@ -365,6 +390,63 @@ app.post('/users/:id/role', async (c) => {
 // (POST /users/:id/fee-exemption) and the ROYAL/DIAMOND/GOLD/SILVER tier
 // system have been REMOVED. Trading & withdrawal fees are now decided solely
 // by the member's combined QX+QKEY holding (see src/server/utils/fees.ts).
+
+// ★ OWNER RULE (2026-09-21, OWNER_RULES §11) — 거래소 지분자 / 카지노 지분자.
+// The admin decides who is a shareholder. The two flags (users.
+// fee_exempt_exchange_holder / fee_exempt_casino_holder, migration 0051) are
+// re-purposed as SHAREHOLDER flags. They do NOT affect fees any more; what
+// they unlock is:
+//   • native QTA on-chain DEPOSIT is accepted + credited for that member
+//     (everyone else: QTA stays withdraw-only, rule 2026-08-28)
+//   • the deposited QTA can then be SOLD under the standard company buy-back
+//     cap of KRW 50,000 per member per KST day (§6, unchanged)
+// POST /users/:id/shareholder  { exchange?: boolean, casino?: boolean }
+app.post('/users/:id/shareholder', async (c) => {
+  const db = c.env.DB;
+  const u = await db.prepare('SELECT id, email FROM users WHERE id = ?').bind(c.req.param('id')).first<any>();
+  if (!u) return c.json({ error: 'User not found' }, 404);
+  let body: any = {};
+  try { body = await c.req.json(); } catch { /* empty */ }
+  const hasEx = typeof body?.exchange === 'boolean' || body?.exchange === 0 || body?.exchange === 1;
+  const hasCa = typeof body?.casino === 'boolean' || body?.casino === 0 || body?.casino === 1;
+  if (!hasEx && !hasCa) return c.json({ error: 'Provide exchange and/or casino boolean' }, 400);
+
+  // Self-bootstrap the columns (migration 0051 may not have been applied).
+  for (const col of ['fee_exempt_exchange_holder', 'fee_exempt_casino_holder']) {
+    try { await db.prepare(`ALTER TABLE users ADD COLUMN ${col} INTEGER DEFAULT 0`).run(); } catch { /* exists */ }
+  }
+
+  const sets: string[] = [];
+  const binds: any[] = [];
+  if (hasEx) { sets.push('fee_exempt_exchange_holder = ?'); binds.push(body.exchange ? 1 : 0); }
+  if (hasCa) { sets.push('fee_exempt_casino_holder = ?');   binds.push(body.casino ? 1 : 0); }
+  sets.push("updated_at = datetime('now')");
+  binds.push(u.id);
+  await db.prepare(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`).bind(...binds).run();
+
+  const row = await db.prepare(
+    `SELECT COALESCE(fee_exempt_exchange_holder,0) AS exchange, COALESCE(fee_exempt_casino_holder,0) AS casino
+       FROM users WHERE id = ?`
+  ).bind(u.id).first<{ exchange: number; casino: number }>();
+  const flags = { exchange: Number(row?.exchange || 0) === 1, casino: Number(row?.casino || 0) === 1 };
+
+  await logAdminAction(c, {
+    action: 'user.set_shareholder',
+    targetType: 'user',
+    targetId: u.id,
+    payload: { email: u.email, ...flags, rule: 'OWNER_RULES §11' },
+  });
+  try {
+    if (flags.exchange || flags.casino) {
+      await createNotification(db, u.id, {
+        type: 'system',
+        title: 'Shareholder status enabled',
+        message: 'You may now deposit your own QTA on-chain. Deposited QTA can be sold up to KRW 50,000 per day.',
+      });
+    }
+  } catch { /* non-fatal */ }
+  return c.json({ ok: true, user_id: u.id, ...flags });
+});
 
 // Reset 2FA (emergency)
 app.post('/users/:id/reset-2fa', async (c) => {

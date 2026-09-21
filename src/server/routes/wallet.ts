@@ -698,11 +698,42 @@ app.get('/history/deposits', authMiddleware, async (c) => {
     extResults = [];
   }
 
+  //   (3) `qta_deposits` — Quantarium-chain on-chain deposits (QX / QKEY, and
+  //       native QTA for admin-flagged shareholders — OWNER_RULES §11).
+  let qtaResults: any[] = [];
+  try {
+    const q = await c.env.DB.prepare(
+      `SELECT
+         id,
+         COALESCE(asset, 'QTA')       AS coin_symbol,
+         CAST(amount AS REAL)         AS amount,
+         tx_hash,
+         network,
+         address,
+         CASE
+           WHEN status = 'credited' THEN 'completed'
+           WHEN status IN ('detected','confirming') THEN 'pending'
+           ELSE status
+         END                          AS status,
+         confirmations,
+         required_confs,
+         created_at,
+         'quantarium'                 AS source
+       FROM qta_deposits
+       WHERE user_id = ?
+       ORDER BY created_at DESC
+       LIMIT 50`
+    ).bind(user.id).all();
+    qtaResults = q.results || [];
+  } catch {
+    qtaResults = [];
+  }
+
   const { results: baseResults } = await c.env.DB.prepare(
     "SELECT *, 'internal' AS source FROM deposits WHERE user_id = ? ORDER BY created_at DESC LIMIT 50"
   ).bind(user.id).all();
 
-  const merged = [...(baseResults || []), ...extResults].sort((a: any, b: any) => {
+  const merged = [...(baseResults || []), ...extResults, ...qtaResults].sort((a: any, b: any) => {
     const ta = String(a.created_at || '');
     const tb = String(b.created_at || '');
     return tb.localeCompare(ta);

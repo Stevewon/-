@@ -458,6 +458,7 @@ const ko = {
   'wallet.depositLoginRequired': '로그인 세션이 만료되었습니다. 입금 주소를 받으려면 다시 로그인해주세요.',
   'wallet.warnBelowMin': '{min} {coin} \ubbf8\ub9cc \uc785\uae08\uc740 \uc785\uae08 \ucc98\ub9ac\ub418\uc9c0 \uc54a\uc2b5\ub2c8\ub2e4.',
   'wallet.qtaWithdrawOnly': 'QTA\ub294 \ucd9c\uae08\ub9cc \uac00\ub2a5\ud569\ub2c8\ub2e4. QTA\ub294 \uac70\ub798\uc18c\uc5d0 USDT(\ud14c\ub354)\ub97c \uc785\uae08\ud55c \ub4a4 \ub9e4\uc218\ud558\uc5ec \ubcf4\uc720\ud560 \uc218 \uc788\uc73c\uba70, \uc9c1\uc811 \uc785\uae08\uc740 \ubd88\uac00\ub2a5\ud569\ub2c8\ub2e4. \uc785\uae08\uc740 QX \ub610\ub294 QKEY\ub9cc \uac00\ub2a5\ud569\ub2c8\ub2e4.',
+  'wallet.qtaShareholderDeposit': '지분자로 등록된 회원이므로 보유하신 QTA를 이 주소로 입금할 수 있습니다. 입금된 QTA는 하루 최대 50,000원(약 34.48 USDT)까지 거래소에서 매도 가능합니다. QTA는 Quantarium 네트워크로만 전송하세요.',
   'wallet.testDeposit': '\ubaa8\uc758 \uc785\uae08',
   'wallet.demo': '\ub370\ubaa8',
   'wallet.testDepositDesc': '\ub370\ubaa8 \ud658\uacbd\uc5d0\uc11c \uae08\uc561\uc744 \uc785\ub825\ud558\uba74 \uc989\uc2dc \uc785\uae08 \ucc98\ub9ac\ub429\ub2c8\ub2e4.',

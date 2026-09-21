@@ -458,6 +458,7 @@ const en = {
   'wallet.depositLoginRequired': 'Your session has expired. Please sign in again to get your deposit address.',
   'wallet.warnBelowMin': 'Deposits below {min} {coin} will not be credited.',
   'wallet.qtaWithdrawOnly': 'QTA is withdraw-only. QTA cannot be deposited on-chain — obtain it by depositing USDT (Tether) and buying QTA on the exchange. Only QX and QKEY can be deposited.',
+  'wallet.qtaShareholderDeposit': 'You are registered as a shareholder, so you may deposit your own QTA to this address. Deposited QTA can be sold on the exchange up to KRW 50,000 (about 34.48 USDT) per day. Send QTA only on the Quantarium network.',
   'wallet.testDeposit': 'Simulate Deposit',
   'wallet.demo': 'Demo',
   'wallet.testDepositDesc': 'In this demo, enter an amount to instantly credit a deposit.',

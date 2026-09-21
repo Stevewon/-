@@ -1371,6 +1371,23 @@ app.get('/me', authMiddleware, async (c) => {
      FROM users WHERE id = ?`
   ).bind(u.id).first<any>();
 
+  // Shareholder flags (OWNER_RULES §11) — lets the wallet UI offer native QTA
+  // deposit to 거래소/카지노 지분자 only. Tolerates missing columns.
+  if (user) {
+    try {
+      const f = await c.env.DB.prepare(
+        `SELECT COALESCE(fee_exempt_exchange_holder,0) AS ex, COALESCE(fee_exempt_casino_holder,0) AS ca
+           FROM users WHERE id = ?`
+      ).bind(u.id).first<{ ex: number; ca: number }>();
+      user.is_exchange_shareholder = Number(f?.ex || 0) === 1;
+      user.is_casino_shareholder = Number(f?.ca || 0) === 1;
+    } catch {
+      user.is_exchange_shareholder = false;
+      user.is_casino_shareholder = false;
+    }
+    user.can_deposit_qta = Boolean(user.is_exchange_shareholder || user.is_casino_shareholder);
+  }
+
   // Legacy users created before the referral migration won't have a code yet.
   // Allocate one lazily on first /me hit so every account has one.
   if (user && !user.referral_code) {

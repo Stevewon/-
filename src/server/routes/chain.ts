@@ -23,6 +23,7 @@ import { getQtaChainClient, type QtaNetwork } from '../lib/qta-chain';
 import type { AppEnv } from '../index';
 import { logAdminAction } from '../utils/audit';
 import { getFeeExemption } from '../utils/fees';
+import { loadShareholderFlags, isShareholder } from '../../shared/shareholder';
 
 const chain = new Hono<AppEnv>();
 
@@ -92,9 +93,19 @@ chain.post('/qta/deposit-address', authMiddleware, async (c) => {
   // ★★★ OWNER RULE (2026-08-28): QTA is WITHDRAW-ONLY and can NEVER be
   //     deposited on-chain. The only way to get QTA is to deposit USDT and
   //     BUY it on the market. So a QTA deposit request is hard-rejected here.
+  //
+  // ★★★ OWNER RULE (2026-09-21, OWNER_RULES §11): EXCEPTION for members the
+  //     admin flagged as 거래소 지분자 / 카지노 지분자. They MAY deposit their
+  //     own native QTA (the cron scanner credits native QTA only for flagged
+  //     users). Deposited QTA is sellable under the KRW 50,000/day cap (§6).
   let body: any = {};
   try { body = await c.req.json(); } catch { /* empty body ok */ }
-  const asset = normalizeDepositableAsset(body?.asset);
+  const requested = String(body?.asset || '').toUpperCase().trim();
+  let asset: string | null = normalizeDepositableAsset(requested);
+  if (!asset && requested === 'QTA') {
+    const flags = await loadShareholderFlags(c.env.DB as any, user.id);
+    if (isShareholder(flags)) asset = 'QTA';
+  }
   if (!asset) {
     return c.json({
       ok: false,
@@ -154,7 +165,7 @@ chain.get('/qta/deposits', authMiddleware, async (c) => {
   const user = c.get('user') as { id: string };
   const limit = Math.min(parseInt(c.req.query('limit') || '50', 10) || 50, 200);
   const { results } = await c.env.DB.prepare(
-    `SELECT id, address, tx_hash, block_height, amount, confirmations,
+    `SELECT id, address, tx_hash, block_height, amount, asset, confirmations,
             required_confs, status, credited_at, network, created_at
      FROM qta_deposits
      WHERE user_id = ?
@@ -671,7 +682,7 @@ chain.get('/qta/admin/deposits', authMiddleware, adminMiddleware, async (c) => {
   const limit = Math.min(parseInt(c.req.query('limit') || '50', 10) || 50, 200);
 
   let sql = `SELECT d.id, d.user_id, u.email, d.address, d.tx_hash, d.block_height,
-                    d.amount, d.confirmations, d.required_confs, d.status,
+                    d.amount, d.asset, d.confirmations, d.required_confs, d.status,
                     d.credited_at, d.network, d.created_at
              FROM qta_deposits d
              LEFT JOIN users u ON u.id = d.user_id

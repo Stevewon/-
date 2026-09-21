@@ -280,6 +280,19 @@ const MIGRATIONS: Migration[] = [
     ],
   },
   {
+    // 0051 — Shareholder flags (거래소 지분자 / 카지노 지분자). Mirrors
+    // /migrations/0051_fee_exemptions.sql. Re-activated 2026-09-21 for
+    // OWNER_RULES §11 (shareholders may deposit native QTA). ADD COLUMN is
+    // idempotent-guarded ("duplicate column name" is swallowed).
+    id: '0051_fee_exemptions',
+    statements: [
+      `ALTER TABLE users ADD COLUMN fee_exempt_exchange_holder INTEGER DEFAULT 0`,
+      `ALTER TABLE users ADD COLUMN fee_exempt_casino_holder   INTEGER DEFAULT 0`,
+      `ALTER TABLE users ADD COLUMN fee_exempt_qx_trade        INTEGER DEFAULT 0`,
+      `ALTER TABLE users ADD COLUMN fee_exempt_qx_all          INTEGER DEFAULT 0`,
+    ],
+  },
+  {
     // 0056 — Admin-granted staking with a BONUS (인정) principal.
     // Mirrors /migrations/0056_staking_bonus_principal.sql. ADD COLUMN is
     // idempotent-guarded ("duplicate column name" is swallowed by runMigrations).

@@ -458,6 +458,7 @@ const ja = {
   'wallet.depositLoginRequired': 'セッションの有効期限が切れました。入金アドレスを取得するには再度ログインしてください。',
   'wallet.warnBelowMin': '{min} {coin}未満の入金は反映されません。',
   'wallet.qtaWithdrawOnly': 'QTAは出金のみ可能です。QTAはオンチェーンで入金できません。取引所にUSDT（テザー）を入金してQTAを購入することで保有できます。入金はQXまたはQKEYのみ可能です。',
+  'wallet.qtaShareholderDeposit': '株主として登録されているため、保有するQTAをこのアドレスに入金できます。入金したQTAは1日あたり最大50,000ウォン（約34.48 USDT）まで取引所で売却できます。QTAはQuantariumネットワークのみで送金してください。',
   'wallet.testDeposit': '入金をシミュレート',
   'wallet.demo': 'デモ',
   'wallet.testDepositDesc': 'このデモでは、金額を入力すると即時に入金が反映されます。',

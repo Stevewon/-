@@ -13,6 +13,10 @@ export interface User {
   email_verified_at?: string | null;
   avatar_url?: string;
   created_at: string;
+  // OWNER_RULES §11 — admin-assigned shareholder flags (from /auth/me).
+  is_exchange_shareholder?: boolean;
+  is_casino_shareholder?: boolean;
+  can_deposit_qta?: boolean;
 }
 
 export interface LoginHistoryEntry {
