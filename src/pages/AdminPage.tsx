@@ -1169,6 +1169,7 @@ function QtaCustodyLedger({ t, onChanged }: any) {
   const [totals, setTotals] = useState<any[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [autoReturn, setAutoReturn] = useState<boolean>(true);
 
   const load = async () => {
     setLoading(true);
@@ -1176,6 +1177,7 @@ function QtaCustodyLedger({ t, onChanged }: any) {
       const res = await api.get(`/admin/qta-deposits?status=${sub}${q.trim() ? `&q=${encodeURIComponent(q.trim())}` : ''}`);
       setRows(res.data.rows || []);
       setTotals(res.data.totals || []);
+      if (typeof res.data.auto_return === 'boolean') setAutoReturn(res.data.auto_return);
     } catch (e: any) {
       showToast('error', t('common.error'), e.response?.data?.error || 'Load failed');
     } finally { setLoading(false); }
@@ -1192,6 +1194,34 @@ function QtaCustodyLedger({ t, onChanged }: any) {
   };
   const short = (h?: string | null, n = 6) => (h ? `${h.slice(0, n + 2)}…${h.slice(-4)}` : '—');
   const copy = (v: string) => { navigator.clipboard?.writeText(v); showToast('success', '복사됨', v.slice(0, 20) + '…'); };
+
+  const toggleAutoReturn = async () => {
+    const next = !autoReturn;
+    if (!confirm(next
+      ? '자동 반환을 켭니다.\n\n지분자가 아닌 회원이 보낸 QTA는 컨펌 즉시 메인지갑에서 보낸 지갑으로 자동 반환됩니다 (Tx 자동 기록).'
+      : '자동 반환을 끕니다.\n\n지분자가 아닌 회원의 QTA는 "보관 중" 상태로 남고, 관리자가 건별로 반영/반환을 결정합니다.')) return;
+    try {
+      await api.put('/admin/qta-deposits/auto-return', { enabled: next });
+      setAutoReturn(next);
+      showToast('success', t('common.save'), `자동 반환: ${next ? 'ON' : 'OFF'}`);
+    } catch (e: any) {
+      showToast('error', t('common.error'), e.response?.data?.error || 'Update failed');
+    }
+  };
+  const autoReturnOne = async (d: any) => {
+    if (!d.from_address) { showToast('error', t('common.error'), '보낸 지갑 주소를 알 수 없어 자동 반환이 불가합니다. 수동 반환(Tx 입력)을 사용하세요.'); return; }
+    if (!confirm(`${d.email || d.user_id}\n${formatPrice(d.amount)} QTA를 메인지갑에서 보낸 지갑으로 자동 반환합니다.\n\n→ ${d.from_address}\n\n진행할까요?`)) return;
+    setBusyId(d.id);
+    try {
+      const res = await api.post(`/admin/qta-deposits/${d.id}/auto-return`);
+      const w = res.data?.worker;
+      if (w?.action === 'returned' && w?.tx_hash) showToast('success', '반환 송금 완료', `Tx ${String(w.tx_hash).slice(0, 14)}…`);
+      else showToast('success', '반환 대기열 등록', w?.reason ? `워커: ${w.reason} (5분 내 재시도)` : '수 분 내 자동 송금됩니다');
+      load(); onChanged?.();
+    } catch (e: any) {
+      showToast('error', t('common.error'), e.response?.data?.error || '자동 반환 실패');
+    } finally { setBusyId(null); }
+  };
 
   const creditHeld = async (d: any) => {
     const note = prompt(
@@ -1225,6 +1255,7 @@ function QtaCustodyLedger({ t, onChanged }: any) {
   const statusBadge = (d: any) => {
     const map: Record<string, [string, string]> = {
       held: ['보관 중 (미반영)', 'bg-exchange-yellow/15 text-exchange-yellow'],
+      return_pending: [d.return_error ? `반환 송금 중 (재시도 ${d.return_attempts}) ` : '반환 송금 중', 'bg-blue-500/15 text-blue-300'],
       credited: [d.resolution === 'admin_credit' ? '반영 (관리자)' : '반영 (지분자 자동)', 'bg-exchange-buy/15 text-exchange-buy'],
       detected: ['감지', 'bg-exchange-input text-exchange-text-secondary'],
       confirming: [`컨펌 중 ${d.confirmations}/${d.required_confs}`, 'bg-exchange-input text-exchange-text-secondary'],
@@ -1239,13 +1270,21 @@ function QtaCustodyLedger({ t, onChanged }: any) {
     <div>
       <div className="mb-3 rounded-lg border border-exchange-yellow/40 bg-exchange-yellow/[0.06] px-4 py-3 text-[11px] text-exchange-text-secondary leading-relaxed">
         <b className="text-exchange-yellow">오너 지시 (2026-09-21):</b> 회원이 보낸 QTA는 <b className="text-exchange-text">일단 전부 받아</b> 회사 메인지갑으로 모으고, <b className="text-exchange-text">누가·언제·몇 개·어느 지갑에서</b> 보냈는지 여기 전부 표시합니다.
-        <b className="text-exchange-buy"> 지분자</b>(거래소/카지노)는 자동 반영, <b className="text-exchange-yellow">일반 회원</b>은 <b>보관(미반영)</b> 상태로 두며 관리자가 <b>반영</b> 또는 <b>반환</b>을 결정합니다. 반환은 메인지갑에서 보낸 지갑으로 전송 후 Tx 해시를 기록하세요.
+        <b className="text-exchange-buy"> 지분자</b>(거래소/카지노)는 자동 반영, <b className="text-exchange-yellow">일반 회원</b>의 QTA는 {autoReturn ? <><b className="text-blue-300">컨펌 즉시 메인지갑에서 보낸 지갑으로 자동 반환</b>됩니다 (Tx 자동 기록).</> : <><b>보관(미반영)</b> 상태로 두고 관리자가 건별로 <b>반영</b> / <b>자동 반환</b>을 결정합니다.</>}
+        <div className="mt-2 flex items-center gap-3">
+          <button onClick={toggleAutoReturn} className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors ${autoReturn ? 'bg-blue-500/15 border-blue-400/40 text-blue-300' : 'bg-exchange-hover/30 border-exchange-border text-exchange-text-secondary'}`}>
+            <span className={`w-2 h-2 rounded-full ${autoReturn ? 'bg-blue-400 animate-pulse' : 'bg-exchange-text-third'}`} />
+            비지분자 QTA 자동 반환: {autoReturn ? 'ON' : 'OFF'}
+          </button>
+          <span className="text-[10px] text-exchange-text-third">반환 송금은 회사 핫월렛(HD #0)에서 서명·전송되며 5분 주기 크론 + 버튼 클릭 시 즉시 실행</span>
+        </div>
       </div>
 
       {/* Totals */}
       <div className="flex flex-wrap gap-2 mb-3">
         {[
           ['held', '보관 중 (미반영)', 'text-exchange-yellow'],
+          ['return_pending', '반환 송금 중', 'text-blue-300'],
           ['credited', '반영 완료', 'text-exchange-buy'],
           ['confirming', '컨펌 중', 'text-exchange-text-secondary'],
           ['detected', '감지', 'text-exchange-text-secondary'],
@@ -1263,7 +1302,7 @@ function QtaCustodyLedger({ t, onChanged }: any) {
 
       <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
         <div className="flex items-center gap-1 bg-exchange-card rounded-lg border border-exchange-border p-1 w-fit flex-wrap">
-          {([['held', '보관 중'], ['credited', '반영 완료'], ['pending', '컨펌 중'], ['returned', '반환 완료'], ['all', '전체']] as const).map(([s, label]) => (
+          {([['held', '보관·반환 중'], ['credited', '반영 완료'], ['pending', '컨펌 중'], ['returned', '반환 완료'], ['all', '전체']] as const).map(([s, label]) => (
             <button key={s} onClick={() => setSub(s)} className={`px-3 py-1 text-xs rounded-md ${sub === s ? 'bg-exchange-hover text-exchange-yellow' : 'text-exchange-text-secondary'}`}>{label}</button>
           ))}
         </div>
@@ -1336,9 +1375,15 @@ function QtaCustodyLedger({ t, onChanged }: any) {
                   ) : <span className="text-exchange-text-third">대기</span>}
                 </td>
                 <td className="px-3 py-2 text-[11px]">
-                  {d.resolution ? (
+                  {d.status === 'return_pending' ? (
+                    <div className="text-blue-300">
+                      <div>→ {short(d.from_address, 8)}</div>
+                      {d.return_error ? <div className="text-[10px] text-exchange-sell break-all max-w-[220px]">{d.return_error}</div> : <div className="text-[10px] text-exchange-text-third">송금 대기 (최대 5분)</div>}
+                    </div>
+                  ) : d.resolution ? (
                     <>
-                      <div>{d.resolution === 'returned' ? '반환' : '관리자 반영'} · {fmtTs(d.resolved_at)}</div>
+                      <div>{d.resolution === 'returned' ? '반환 (수동 기록)' : d.resolution === 'auto_return' ? '자동 반환 완료' : '관리자 반영'} · {fmtTs(d.resolved_at)}</div>
+                      {d.return_to ? <div className="text-[10px] text-exchange-text-third font-mono">→ {short(d.return_to, 8)}</div> : null}
                       {d.return_tx_hash ? <button onClick={() => copy(d.return_tx_hash)} className="font-mono text-blue-300 hover:underline" title={d.return_tx_hash}>{short(d.return_tx_hash, 6)}</button> : null}
                       {d.resolution_note ? <div className="text-[10px] text-exchange-text-third">{d.resolution_note}</div> : null}
                     </>
@@ -1346,10 +1391,15 @@ function QtaCustodyLedger({ t, onChanged }: any) {
                 </td>
                 <td className="px-3 py-2 text-right">
                   {d.status === 'held' ? (
-                    <div className="flex justify-end gap-1">
-                      <button disabled={busyId === d.id} onClick={() => creditHeld(d)} className="text-[10px] px-2 py-1 rounded bg-exchange-buy/15 text-exchange-buy hover:bg-exchange-buy/25 disabled:opacity-50" title="회원 QTA 지갑에 반영">반영</button>
-                      <button disabled={busyId === d.id} onClick={() => markReturned(d)} className="text-[10px] px-2 py-1 rounded bg-blue-500/15 text-blue-300 hover:bg-blue-500/25 disabled:opacity-50" title="메인지갑에서 반환 후 Tx 기록">반환 기록</button>
+                    <div className="flex flex-col items-end gap-1">
+                      <button disabled={busyId === d.id} onClick={() => autoReturnOne(d)} className="text-[10px] px-2 py-1 rounded bg-blue-500/20 text-blue-200 hover:bg-blue-500/30 disabled:opacity-50 font-semibold whitespace-nowrap" title="메인지갑에서 보낸 지갑으로 자동 송금">⚡ 자동 반환</button>
+                      <div className="flex gap-1">
+                        <button disabled={busyId === d.id} onClick={() => creditHeld(d)} className="text-[10px] px-2 py-1 rounded bg-exchange-buy/15 text-exchange-buy hover:bg-exchange-buy/25 disabled:opacity-50" title="회원 QTA 지갑에 반영">반영</button>
+                        <button disabled={busyId === d.id} onClick={() => markReturned(d)} className="text-[10px] px-2 py-1 rounded bg-exchange-input text-exchange-text-secondary hover:bg-exchange-hover disabled:opacity-50 whitespace-nowrap" title="직접 송금 후 Tx 해시 기록">수동 기록</button>
+                      </div>
                     </div>
+                  ) : d.status === 'return_pending' ? (
+                    <button disabled={busyId === d.id} onClick={() => creditHeld(d)} className="text-[10px] px-2 py-1 rounded bg-exchange-buy/15 text-exchange-buy hover:bg-exchange-buy/25 disabled:opacity-50 whitespace-nowrap" title="반환 대신 회원 지갑에 반영 (송금 전이면 취소됨)">반환 취소 → 반영</button>
                   ) : <span className="text-[10px] text-exchange-text-third">—</span>}
                 </td>
               </tr>

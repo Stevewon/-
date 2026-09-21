@@ -313,6 +313,17 @@ const MIGRATIONS: Migration[] = [
     ],
   },
   {
+    // 0059 — QTA auto-return queue (OWNER_RULES §11, 2026-09-21).
+    // "버튼 한 번으로 메인지갑에서 자동 반환 송금… 아닌 사람은 바로 반환."
+    id: '0059_qta_auto_return',
+    statements: [
+      `ALTER TABLE qta_deposits ADD COLUMN return_to        TEXT`,
+      `ALTER TABLE qta_deposits ADD COLUMN return_attempts  INTEGER DEFAULT 0`,
+      `ALTER TABLE qta_deposits ADD COLUMN return_error     TEXT`,
+      `INSERT OR IGNORE INTO system_state (key, value) VALUES ('qta_auto_return', 'on')`,
+    ],
+  },
+  {
     // 0056 — Admin-granted staking with a BONUS (인정) principal.
     // Mirrors /migrations/0056_staking_bonus_principal.sql. ADD COLUMN is
     // idempotent-guarded ("duplicate column name" is swallowed by runMigrations).

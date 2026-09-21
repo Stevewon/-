@@ -1225,7 +1225,8 @@ const QTA_CUSTODY_COLS_SQL = `
          COALESCE(d.from_address, json_extract(d.raw_meta,'$.from')) AS from_address,
          COALESCE(d.chain_ts,     json_extract(d.raw_meta,'$.ts'))   AS chain_ts,
          d.held_at, d.sweep_tx_hash, d.swept_at,
-         d.resolution, d.resolved_at, d.resolved_by, d.resolution_note, d.return_tx_hash
+         d.resolution, d.resolved_at, d.resolved_by, d.resolution_note, d.return_tx_hash,
+         d.return_to, COALESCE(d.return_attempts,0) AS return_attempts, d.return_error
     FROM qta_deposits d
     LEFT JOIN users u ON u.id = d.user_id`;
 const QTA_CUSTODY_COLS_SQL_LEGACY = `
@@ -1236,7 +1237,8 @@ const QTA_CUSTODY_COLS_SQL_LEGACY = `
          json_extract(d.raw_meta,'$.from') AS from_address,
          json_extract(d.raw_meta,'$.ts')   AS chain_ts,
          NULL AS held_at, NULL AS sweep_tx_hash, NULL AS swept_at,
-         NULL AS resolution, NULL AS resolved_at, NULL AS resolved_by, NULL AS resolution_note, NULL AS return_tx_hash
+         NULL AS resolution, NULL AS resolved_at, NULL AS resolved_by, NULL AS resolution_note, NULL AS return_tx_hash,
+         NULL AS return_to, 0 AS return_attempts, NULL AS return_error
     FROM qta_deposits d
     LEFT JOIN users u ON u.id = d.user_id`;
 
@@ -1251,7 +1253,8 @@ app.get('/qta-deposits', async (c) => {
   const conds: string[] = [];
   const binds: any[] = [];
   if (asset !== 'ALL') { conds.push(`COALESCE(d.asset,'QTA') = ?`); binds.push(asset); }
-  if (status === 'held') conds.push(`d.status = 'held'`);
+  if (status === 'held') conds.push(`d.status IN ('held','return_pending')`);
+  else if (status === 'returning') conds.push(`d.status = 'return_pending'`);
   else if (status === 'credited') conds.push(`d.status = 'credited'`);
   else if (status === 'pending') conds.push(`d.status IN ('detected','confirming')`);
   else if (status === 'returned') conds.push(`d.status = 'returned'`);
@@ -1279,7 +1282,67 @@ app.get('/qta-deposits', async (c) => {
     ).all()).results || [];
   } catch { totals = []; }
 
-  return c.json({ ok: true, rows, totals, count: rows.length });
+  let autoReturn = true;
+  try {
+    const r = await db.prepare(`SELECT value FROM system_state WHERE key = 'qta_auto_return'`).first<{ value: string }>();
+    autoReturn = String(r?.value ?? 'on').toLowerCase() !== 'off';
+  } catch { /* default on */ }
+
+  return c.json({ ok: true, rows, totals, count: rows.length, auto_return: autoReturn });
+});
+
+// PUT /admin/qta-deposits/auto-return  { enabled: boolean }
+// Master switch: ON (default) → non-shareholder QTA is returned to the sender
+// automatically by the cron; OFF → it parks in 'held' for manual decision.
+app.put('/qta-deposits/auto-return', async (c) => {
+  const db = c.env.DB;
+  let body: any = {}; try { body = await c.req.json(); } catch { /* */ }
+  const enabled = Boolean(body?.enabled);
+  await db.prepare(
+    `INSERT INTO system_state (key, value, updated_at) VALUES ('qta_auto_return', ?, datetime('now'))
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`
+  ).bind(enabled ? 'on' : 'off').run();
+  await logAdminAction(c, { action: 'qta_deposit.auto_return_switch', targetType: 'system', targetId: 'qta_auto_return', payload: { enabled } });
+  return c.json({ ok: true, enabled });
+});
+
+// POST /admin/qta-deposits/:id/auto-return
+// One click: queue a HELD deposit for automatic on-chain return to its sender.
+// The cron worker (every 5 min, or immediately via /qta/return) signs the
+// transfer from the hot wallet and records return_tx_hash on the row.
+app.post('/qta-deposits/:id/auto-return', async (c) => {
+  const db = c.env.DB;
+  const admin = c.get('user') as { id: string; email: string };
+  const id = c.req.param('id');
+  const d = await db.prepare(`SELECT * FROM qta_deposits WHERE id = ?`).bind(id).first<any>();
+  if (!d) return c.json({ error: 'Deposit not found' }, 404);
+  if (d.status !== 'held') return c.json({ error: `Deposit is '${d.status}', only 'held' can be auto-returned` }, 400);
+  const to = String(d.from_address || '').trim();
+  if (!/^0x[0-9a-fA-F]{40}$/.test(to)) return c.json({ error: 'Sender wallet (from_address) unknown — use manual return with a tx hash' }, 400);
+  for (const col of ['return_to', 'return_error']) {
+    try { await db.prepare(`ALTER TABLE qta_deposits ADD COLUMN ${col} TEXT`).run(); } catch { /* exists */ }
+  }
+  try { await db.prepare(`ALTER TABLE qta_deposits ADD COLUMN return_attempts INTEGER DEFAULT 0`).run(); } catch { /* exists */ }
+  const now = new Date().toISOString();
+  await db.prepare(
+    `UPDATE qta_deposits SET status = 'return_pending', return_attempts = 0, return_error = NULL, resolution_note = ?, updated_at = ?
+      WHERE id = ? AND status = 'held'`
+  ).bind(`queued by admin ${admin.email}`, now, id).run();
+  await logAdminAction(c, {
+    action: 'qta_deposit.auto_return_queued',
+    targetType: 'user',
+    targetId: d.user_id,
+    payload: { deposit_id: id, amount: d.amount, tx_hash: d.tx_hash, return_to: to, rule: 'OWNER_RULES §11' },
+  });
+  // Kick the cron worker right away so the admin sees the tx within seconds
+  // (best effort — the /5 cron catches it anyway).
+  let kicked: any = null;
+  try {
+    const base = (c.env as any).CRON_WORKER_URL || 'https://quantaex-cron.hbcu00987.workers.dev';
+    const r = await fetch(`${base}/qta/return`, { method: 'GET', signal: AbortSignal.timeout(20_000) });
+    kicked = await r.json().catch(() => null);
+  } catch (e: any) { kicked = { ok: false, reason: String(e?.message || e) }; }
+  return c.json({ ok: true, id, status: 'return_pending', return_to: to, worker: kicked });
 });
 
 // POST /admin/qta-deposits/:id/credit  { note? }
@@ -1293,7 +1356,7 @@ app.post('/qta-deposits/:id/credit', async (c) => {
   let body: any = {}; try { body = await c.req.json(); } catch { /* */ }
   const d = await db.prepare(`SELECT * FROM qta_deposits WHERE id = ?`).bind(id).first<any>();
   if (!d) return c.json({ error: 'Deposit not found' }, 404);
-  if (d.status !== 'held') return c.json({ error: `Deposit is '${d.status}', only 'held' can be credited` }, 400);
+  if (d.status !== 'held' && d.status !== 'return_pending') return c.json({ error: `Deposit is '${d.status}', only 'held' / 'return_pending' can be credited` }, 400);
   const asset = String(d.asset || 'QTA').toUpperCase();
   const amt = Number(d.amount || '0');
   if (!(amt > 0)) return c.json({ error: 'Invalid amount' }, 400);
@@ -1304,8 +1367,8 @@ app.post('/qta-deposits/:id/credit', async (c) => {
   }
   await db.batch([
     db.prepare(`INSERT INTO wallets (user_id, coin_symbol, available, locked) VALUES (?, ?, 0, 0) ON CONFLICT(user_id, coin_symbol) DO NOTHING`).bind(d.user_id, asset),
-    db.prepare(`UPDATE wallets SET available = available + ? WHERE user_id = ? AND coin_symbol = ? AND EXISTS (SELECT 1 FROM qta_deposits WHERE id = ? AND status = 'held')`).bind(amt, d.user_id, asset, id),
-    db.prepare(`UPDATE qta_deposits SET status = 'credited', credited_at = ?, updated_at = ?, resolution = 'admin_credit', resolved_at = ?, resolved_by = ?, resolution_note = ? WHERE id = ? AND status = 'held'`)
+    db.prepare(`UPDATE wallets SET available = available + ? WHERE user_id = ? AND coin_symbol = ? AND EXISTS (SELECT 1 FROM qta_deposits WHERE id = ? AND status IN ('held','return_pending'))`).bind(amt, d.user_id, asset, id),
+    db.prepare(`UPDATE qta_deposits SET status = 'credited', credited_at = ?, updated_at = ?, resolution = 'admin_credit', resolved_at = ?, resolved_by = ?, resolution_note = ? WHERE id = ? AND status IN ('held','return_pending')`)
       .bind(now, now, now, admin.id, String(body?.note || '').slice(0, 500) || null, id),
   ]);
   try {
