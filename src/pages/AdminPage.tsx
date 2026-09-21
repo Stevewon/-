@@ -1153,6 +1153,214 @@ function WithdrawalsTab({ t, onUpdate }: any) {
 // ============================================================================
 // Deposits tab (admin view + manual credit)
 // ============================================================================
+// ============================================================================
+// ★ OWNER_RULES §11 (2026-09-21) — QTA 입금 보관 장부.
+// "일단 다 받고 보자. 단, 언제든 돌려줄 수 있게 누가 언제 몇개를 보냈는지
+//  관리자에 다 떠야 한다."
+// Lists EVERY native QTA that arrived at a member deposit address:
+//   회원 · 보낸 지갑(From) · 온체인 시각 · 수량 · Tx · 컨펌 · 상태 · 스윕 Tx · 처리
+// Status: 보관(held, 비지분자 → 미반영) / 반영(credited, 지분자 또는 관리자 반영)
+//         / 컨펌 중 / 반환 완료(returned).
+// ============================================================================
+function QtaCustodyLedger({ t, onChanged }: any) {
+  const [sub, setSub] = useState<'held' | 'credited' | 'pending' | 'returned' | 'all'>('held');
+  const [q, setQ] = useState('');
+  const [rows, setRows] = useState<any[]>([]);
+  const [totals, setTotals] = useState<any[]>([]);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const res = await api.get(`/admin/qta-deposits?status=${sub}${q.trim() ? `&q=${encodeURIComponent(q.trim())}` : ''}`);
+      setRows(res.data.rows || []);
+      setTotals(res.data.totals || []);
+    } catch (e: any) {
+      showToast('error', t('common.error'), e.response?.data?.error || 'Load failed');
+    } finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, [sub]); // eslint-disable-line
+  useEffect(() => { const id = setInterval(load, 15000); return () => clearInterval(id); }, [sub, q]); // eslint-disable-line
+
+  const tot = (st: string) => totals.find((x: any) => x.status === st) || { n: 0, total: 0 };
+  const fmtTs = (v?: string | null) => {
+    if (!v) return '—';
+    const d = new Date(v);
+    if (isNaN(d.getTime())) return String(v);
+    return d.toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', hour12: false });
+  };
+  const short = (h?: string | null, n = 6) => (h ? `${h.slice(0, n + 2)}…${h.slice(-4)}` : '—');
+  const copy = (v: string) => { navigator.clipboard?.writeText(v); showToast('success', '복사됨', v.slice(0, 20) + '…'); };
+
+  const creditHeld = async (d: any) => {
+    const note = prompt(
+      `${d.email || d.user_id}\n${formatPrice(d.amount)} QTA (보관 중)을 회원 QTA 지갑에 반영하시겠습니까?\n\n반영 후 매도는 6번 규칙(하루 5만원)이 적용됩니다.\n메모(선택):`, '');
+    if (note === null) return;
+    setBusyId(d.id);
+    try {
+      await api.post(`/admin/qta-deposits/${d.id}/credit`, { note });
+      showToast('success', '반영 완료', `+${d.amount} QTA → ${d.email || d.user_id}`);
+      load(); onChanged?.();
+    } catch (e: any) {
+      showToast('error', t('common.error'), e.response?.data?.error || '반영 실패');
+    } finally { setBusyId(null); }
+  };
+  const markReturned = async (d: any) => {
+    const tx = prompt(
+      `${d.email || d.user_id}\n${formatPrice(d.amount)} QTA 반환 처리\n\n보낸 지갑: ${d.from_address || '—'}\n\n메인지갑에서 위 주소로 ${formatPrice(d.amount)} QTA를 전송한 뒤, 그 Tx 해시(0x…64자리)를 입력하세요:`, '');
+    if (tx === null) return;
+    if (!/^0x[0-9a-fA-F]{64}$/.test(tx.trim())) { showToast('error', t('common.error'), 'Tx 해시 형식이 올바르지 않습니다 (0x + 64 hex)'); return; }
+    const note = prompt('메모(선택):', '') ?? '';
+    setBusyId(d.id);
+    try {
+      await api.post(`/admin/qta-deposits/${d.id}/return`, { return_tx_hash: tx.trim(), note });
+      showToast('success', '반환 기록 완료', `${d.amount} QTA → ${short(d.from_address, 8)}`);
+      load(); onChanged?.();
+    } catch (e: any) {
+      showToast('error', t('common.error'), e.response?.data?.error || '반환 기록 실패');
+    } finally { setBusyId(null); }
+  };
+
+  const statusBadge = (d: any) => {
+    const map: Record<string, [string, string]> = {
+      held: ['보관 중 (미반영)', 'bg-exchange-yellow/15 text-exchange-yellow'],
+      credited: [d.resolution === 'admin_credit' ? '반영 (관리자)' : '반영 (지분자 자동)', 'bg-exchange-buy/15 text-exchange-buy'],
+      detected: ['감지', 'bg-exchange-input text-exchange-text-secondary'],
+      confirming: [`컨펌 중 ${d.confirmations}/${d.required_confs}`, 'bg-exchange-input text-exchange-text-secondary'],
+      returned: ['반환 완료', 'bg-blue-500/15 text-blue-300'],
+      orphaned: ['고아 블록', 'bg-exchange-sell/15 text-exchange-sell'],
+    };
+    const [label, cls] = map[d.status] || [d.status, 'bg-exchange-input text-exchange-text-third'];
+    return <span className={`text-[10px] px-1.5 py-0.5 rounded whitespace-nowrap ${cls}`}>{label}</span>;
+  };
+
+  return (
+    <div>
+      <div className="mb-3 rounded-lg border border-exchange-yellow/40 bg-exchange-yellow/[0.06] px-4 py-3 text-[11px] text-exchange-text-secondary leading-relaxed">
+        <b className="text-exchange-yellow">오너 지시 (2026-09-21):</b> 회원이 보낸 QTA는 <b className="text-exchange-text">일단 전부 받아</b> 회사 메인지갑으로 모으고, <b className="text-exchange-text">누가·언제·몇 개·어느 지갑에서</b> 보냈는지 여기 전부 표시합니다.
+        <b className="text-exchange-buy"> 지분자</b>(거래소/카지노)는 자동 반영, <b className="text-exchange-yellow">일반 회원</b>은 <b>보관(미반영)</b> 상태로 두며 관리자가 <b>반영</b> 또는 <b>반환</b>을 결정합니다. 반환은 메인지갑에서 보낸 지갑으로 전송 후 Tx 해시를 기록하세요.
+      </div>
+
+      {/* Totals */}
+      <div className="flex flex-wrap gap-2 mb-3">
+        {[
+          ['held', '보관 중 (미반영)', 'text-exchange-yellow'],
+          ['credited', '반영 완료', 'text-exchange-buy'],
+          ['confirming', '컨펌 중', 'text-exchange-text-secondary'],
+          ['detected', '감지', 'text-exchange-text-secondary'],
+          ['returned', '반환 완료', 'text-blue-300'],
+        ].map(([st, label, cls]) => {
+          const x = tot(st);
+          return (
+            <div key={st} className="bg-exchange-card border border-exchange-border rounded-xl px-4 py-2.5 min-w-[140px]">
+              <div className="text-[10px] text-exchange-text-third">{label} · {x.n}건</div>
+              <div className={`text-[15px] font-extrabold tabular-nums ${cls}`}>{formatPrice(x.total)} <span className="text-[10px] font-normal">QTA</span></div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
+        <div className="flex items-center gap-1 bg-exchange-card rounded-lg border border-exchange-border p-1 w-fit flex-wrap">
+          {([['held', '보관 중'], ['credited', '반영 완료'], ['pending', '컨펌 중'], ['returned', '반환 완료'], ['all', '전체']] as const).map(([s, label]) => (
+            <button key={s} onClick={() => setSub(s)} className={`px-3 py-1 text-xs rounded-md ${sub === s ? 'bg-exchange-hover text-exchange-yellow' : 'text-exchange-text-secondary'}`}>{label}</button>
+          ))}
+        </div>
+        <div className="flex items-center gap-2">
+          <input
+            data-allow-hangul
+            value={q}
+            onChange={e => setQ(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') load(); }}
+            placeholder="이메일 / 닉네임 / 실명 / Tx / 지갑주소"
+            className="input-field text-xs w-64"
+          />
+          <button onClick={load} className="p-1.5 hover:bg-exchange-hover rounded" title="새로고침"><RefreshCw size={13} className={loading ? 'animate-spin' : ''} /></button>
+        </div>
+      </div>
+
+      <div className="card overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-xs text-exchange-text-third border-b border-exchange-border">
+              <th className="text-left px-3 py-2.5">회원 (입금자)</th>
+              <th className="text-left px-3 py-2.5">보낸 지갑 (From)</th>
+              <th className="text-left px-3 py-2.5">온체인 시각 (KST)</th>
+              <th className="text-right px-3 py-2.5">수량 (QTA)</th>
+              <th className="text-left px-3 py-2.5">입금 Tx</th>
+              <th className="text-center px-3 py-2.5">컨펌</th>
+              <th className="text-left px-3 py-2.5">상태</th>
+              <th className="text-left px-3 py-2.5">메인지갑 스윕</th>
+              <th className="text-left px-3 py-2.5">처리 기록</th>
+              <th className="text-right px-3 py-2.5">작업</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 ? (
+              <tr><td colSpan={10} className="px-3 py-8 text-center text-exchange-text-third text-xs">{loading ? '불러오는 중…' : '해당 상태의 QTA 입금이 없습니다'}</td></tr>
+            ) : rows.map(d => (
+              <tr key={d.id} className="border-b border-exchange-border/50 hover:bg-exchange-hover/30 align-top">
+                <td className="px-3 py-2 text-xs">
+                  <div className="font-medium">{d.nickname || '—'} {d.kyc_name ? <span className="text-exchange-text-third">({d.kyc_name})</span> : null}</div>
+                  <div className="text-[10px] text-exchange-text-third">{d.email || d.user_id}</div>
+                  <div className="flex gap-1 mt-0.5">
+                    {d.is_exchange_shareholder ? <span className="text-[9px] px-1 rounded bg-exchange-yellow/20 text-exchange-yellow">거래소 지분자</span> : null}
+                    {d.is_casino_shareholder ? <span className="text-[9px] px-1 rounded bg-purple-500/20 text-purple-300">카지노 지분자</span> : null}
+                    {!d.is_exchange_shareholder && !d.is_casino_shareholder ? <span className="text-[9px] px-1 rounded bg-exchange-input text-exchange-text-third">일반 회원</span> : null}
+                  </div>
+                  <div className="text-[9px] text-exchange-text-third font-mono mt-0.5" title={`입금주소 ${d.address}`}>→ {short(d.address, 6)}</div>
+                </td>
+                <td className="px-3 py-2 text-xs font-mono">
+                  {d.from_address ? (
+                    <button onClick={() => copy(d.from_address)} className="hover:text-exchange-yellow" title={`${d.from_address} (클릭하여 복사)`}>{short(d.from_address, 8)}</button>
+                  ) : '—'}
+                </td>
+                <td className="px-3 py-2 text-[11px] tabular-nums">
+                  <div>{fmtTs(d.chain_ts)}</div>
+                  <div className="text-[10px] text-exchange-text-third">감지 {fmtTs(d.created_at)}</div>
+                </td>
+                <td className="px-3 py-2 text-right font-semibold tabular-nums text-exchange-text">{formatPrice(d.amount)}</td>
+                <td className="px-3 py-2 text-xs font-mono">
+                  <button onClick={() => copy(d.tx_hash)} className="hover:text-exchange-yellow" title={`${d.tx_hash} (클릭하여 복사)`}>{short(d.tx_hash, 8)}</button>
+                  {d.block_height ? <div className="text-[10px] text-exchange-text-third">#{d.block_height}</div> : null}
+                </td>
+                <td className="px-3 py-2 text-center text-[11px] tabular-nums">{d.confirmations}/{d.required_confs}</td>
+                <td className="px-3 py-2">{statusBadge(d)}{d.held_at ? <div className="text-[10px] text-exchange-text-third mt-0.5">보관 {fmtTs(d.held_at)}</div> : null}</td>
+                <td className="px-3 py-2 text-xs font-mono">
+                  {d.sweep_tx_hash ? (
+                    <>
+                      <button onClick={() => copy(d.sweep_tx_hash)} className="text-exchange-buy hover:underline" title={d.sweep_tx_hash}>{short(d.sweep_tx_hash, 6)}</button>
+                      <div className="text-[10px] text-exchange-text-third">{fmtTs(d.swept_at)}</div>
+                    </>
+                  ) : <span className="text-exchange-text-third">대기</span>}
+                </td>
+                <td className="px-3 py-2 text-[11px]">
+                  {d.resolution ? (
+                    <>
+                      <div>{d.resolution === 'returned' ? '반환' : '관리자 반영'} · {fmtTs(d.resolved_at)}</div>
+                      {d.return_tx_hash ? <button onClick={() => copy(d.return_tx_hash)} className="font-mono text-blue-300 hover:underline" title={d.return_tx_hash}>{short(d.return_tx_hash, 6)}</button> : null}
+                      {d.resolution_note ? <div className="text-[10px] text-exchange-text-third">{d.resolution_note}</div> : null}
+                    </>
+                  ) : d.status === 'credited' ? <span className="text-exchange-text-third">자동 · {fmtTs(d.credited_at)}</span> : '—'}
+                </td>
+                <td className="px-3 py-2 text-right">
+                  {d.status === 'held' ? (
+                    <div className="flex justify-end gap-1">
+                      <button disabled={busyId === d.id} onClick={() => creditHeld(d)} className="text-[10px] px-2 py-1 rounded bg-exchange-buy/15 text-exchange-buy hover:bg-exchange-buy/25 disabled:opacity-50" title="회원 QTA 지갑에 반영">반영</button>
+                      <button disabled={busyId === d.id} onClick={() => markReturned(d)} className="text-[10px] px-2 py-1 rounded bg-blue-500/15 text-blue-300 hover:bg-blue-500/25 disabled:opacity-50" title="메인지갑에서 반환 후 Tx 기록">반환 기록</button>
+                    </div>
+                  ) : <span className="text-[10px] text-exchange-text-third">—</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function DepositsTab({ t, onUpdate }: any) {
   // Sprint 5 Phase A1 — default to "pending" so the operator immediately
   // sees the manual-deposit work queue when entering this tab. Tab order
@@ -1168,6 +1376,15 @@ function DepositsTab({ t, onUpdate }: any) {
   const [manualQ, setManualQ] = useState('');
   const isManual = status === 'manual';
   const isOnchain = status === 'onchain';
+  const isQta = status === 'qta';
+  // QTA custody badge count (held = received but not credited).
+  const [qtaHeldCount, setQtaHeldCount] = useState(0);
+  useEffect(() => {
+    api.get('/admin/qta-deposits?status=held&limit=1').then(r => {
+      const held = (r.data?.totals || []).find((x: any) => x.status === 'held');
+      setQtaHeldCount(Number(held?.n || 0));
+    }).catch(() => {});
+  }, [status]);
   // On-chain approval queue state.
   const [onchainStatus, setOnchainStatus] = useState('credited');
   const [awaitingCount, setAwaitingCount] = useState(0);
@@ -1181,6 +1398,9 @@ function DepositsTab({ t, onUpdate }: any) {
         setList(res.data.rows || []);
         setAwaitingCount(Number(res.data.awaiting_count || 0));
         setManualTotals([]);
+      } else if (isQta) {
+        // QTA custody ledger is rendered by its own component; nothing to load here.
+        setList([]); setManualTotals([]);
       } else if (isManual) {
         // Dedicated MANUAL ledger: rows + per-coin running totals (live).
         const url = `/admin/deposits/manual${manualQ.trim() ? `?q=${encodeURIComponent(manualQ.trim())}` : ''}`;
@@ -1255,9 +1475,14 @@ function DepositsTab({ t, onUpdate }: any) {
     <div>
       <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
         <div className="flex items-center gap-1 bg-exchange-card rounded-lg border border-exchange-border p-1 w-fit flex-wrap">
-          {['onchain', 'pending', 'completed', 'rejected', '', 'manual'].map(s => (
+          {['onchain', 'qta', 'pending', 'completed', 'rejected', '', 'manual'].map(s => (
             <button key={s || 'all'} onClick={() => setStatus(s)} className={`px-3 py-1 text-xs rounded-md flex items-center gap-1.5 ${status === s ? 'bg-exchange-hover text-exchange-yellow' : 'text-exchange-text-secondary'}`}>
-              {s === '' ? t('common.all') : s === 'manual' ? t('admin.manualLedger') : s === 'onchain' ? '온체인 승인' : s}
+              {s === '' ? t('common.all') : s === 'manual' ? t('admin.manualLedger') : s === 'onchain' ? '온체인 승인' : s === 'qta' ? 'QTA 입금 보관' : s}
+              {s === 'qta' && qtaHeldCount > 0 && (
+                <span className="bg-exchange-yellow text-black text-[9px] font-bold rounded px-1.5 py-0.5 tabular-nums" title="회사 보관 중(미반영)">
+                  {qtaHeldCount}
+                </span>
+              )}
               {s === 'pending' && pendingCount !== null && pendingCount > 0 && (
                 <span className="bg-exchange-yellow text-black text-[9px] font-bold rounded px-1.5 py-0.5 tabular-nums">
                   {pendingCount}
@@ -1301,6 +1526,9 @@ function DepositsTab({ t, onUpdate }: any) {
           />
         </div>
       )}
+
+      {/* ── QTA on-chain deposit CUSTODY ledger (OWNER_RULES §11) ───────── */}
+      {isQta && <QtaCustodyLedger t={t} onChanged={() => { onUpdate?.(); }} />}
 
       {/* ── ON-CHAIN approval queue ─────────────────────────────────────── */}
       {isOnchain && (
@@ -1397,7 +1625,7 @@ function DepositsTab({ t, onUpdate }: any) {
         </div>
       )}
 
-      {!isOnchain && (
+      {!isOnchain && !isQta && (
       <div className="card overflow-x-auto">
         <table className="w-full text-sm">
           <thead>

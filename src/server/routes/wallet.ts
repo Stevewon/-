@@ -713,6 +713,7 @@ app.get('/history/deposits', authMiddleware, async (c) => {
          CASE
            WHEN status = 'credited' THEN 'completed'
            WHEN status IN ('detected','confirming') THEN 'pending'
+           WHEN status = 'held' THEN 'on_hold'
            ELSE status
          END                          AS status,
          confirmations,

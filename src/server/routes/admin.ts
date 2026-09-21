@@ -1205,6 +1205,164 @@ app.delete('/deposits/manual/:id', async (c) => {
 // ============================================================================
 
 // GET /admin/ext-deposits?status=awaiting_approval|credited|rejected|confirming|detected|all
+// ============================================================================
+// ★ OWNER_RULES §11 (2026-09-21) — QTA on-chain deposit CUSTODY ledger.
+// "일단 다 받고 보자. 단, 언제든 돌려줄 수 있게 누가 언제 몇개를 보냈는지
+//  관리자에 다 떠야 한다."
+// Every native QTA sent to a member deposit address is recorded in
+// qta_deposits (asset='QTA'). Shareholders → 'credited'. Everyone else →
+// 'held' (company custody). This endpoint lists ALL of them with the identity
+// trail (member, sender wallet, on-chain time, amount, tx, sweep tx, resolution)
+// and the two actions let the admin either credit the member later (e.g. after
+// flagging them shareholder) or record an on-chain return.
+// ============================================================================
+const QTA_CUSTODY_COLS_SQL = `
+  SELECT d.id, d.user_id, u.email, u.nickname, u.kyc_name,
+         COALESCE(u.fee_exempt_exchange_holder,0) AS is_exchange_shareholder,
+         COALESCE(u.fee_exempt_casino_holder,0)   AS is_casino_shareholder,
+         d.address, d.tx_hash, d.block_height, d.amount, COALESCE(d.asset,'QTA') AS asset,
+         d.confirmations, d.required_confs, d.status, d.credited_at, d.network, d.created_at, d.updated_at,
+         COALESCE(d.from_address, json_extract(d.raw_meta,'$.from')) AS from_address,
+         COALESCE(d.chain_ts,     json_extract(d.raw_meta,'$.ts'))   AS chain_ts,
+         d.held_at, d.sweep_tx_hash, d.swept_at,
+         d.resolution, d.resolved_at, d.resolved_by, d.resolution_note, d.return_tx_hash
+    FROM qta_deposits d
+    LEFT JOIN users u ON u.id = d.user_id`;
+const QTA_CUSTODY_COLS_SQL_LEGACY = `
+  SELECT d.id, d.user_id, u.email, u.nickname, u.kyc_name,
+         0 AS is_exchange_shareholder, 0 AS is_casino_shareholder,
+         d.address, d.tx_hash, d.block_height, d.amount, COALESCE(d.asset,'QTA') AS asset,
+         d.confirmations, d.required_confs, d.status, d.credited_at, d.network, d.created_at, d.updated_at,
+         json_extract(d.raw_meta,'$.from') AS from_address,
+         json_extract(d.raw_meta,'$.ts')   AS chain_ts,
+         NULL AS held_at, NULL AS sweep_tx_hash, NULL AS swept_at,
+         NULL AS resolution, NULL AS resolved_at, NULL AS resolved_by, NULL AS resolution_note, NULL AS return_tx_hash
+    FROM qta_deposits d
+    LEFT JOIN users u ON u.id = d.user_id`;
+
+// GET /admin/qta-deposits?status=held|credited|pending|returned|all&q=&asset=QTA
+app.get('/qta-deposits', async (c) => {
+  const db = c.env.DB;
+  const status = (c.req.query('status') || 'all').trim();
+  const asset = (c.req.query('asset') || 'QTA').toUpperCase().trim();
+  const q = (c.req.query('q') || '').trim();
+  const limit = Math.min(parseInt(c.req.query('limit') || '200', 10) || 200, 500);
+
+  const conds: string[] = [];
+  const binds: any[] = [];
+  if (asset !== 'ALL') { conds.push(`COALESCE(d.asset,'QTA') = ?`); binds.push(asset); }
+  if (status === 'held') conds.push(`d.status = 'held'`);
+  else if (status === 'credited') conds.push(`d.status = 'credited'`);
+  else if (status === 'pending') conds.push(`d.status IN ('detected','confirming')`);
+  else if (status === 'returned') conds.push(`d.status = 'returned'`);
+  if (q) {
+    conds.push(`(u.email LIKE ? OR u.nickname LIKE ? OR u.kyc_name LIKE ? OR d.tx_hash LIKE ? OR d.address LIKE ? OR json_extract(d.raw_meta,'$.from') LIKE ?)`);
+    const like = `%${q}%`;
+    binds.push(like, like, like, like, like, like);
+  }
+  const where = conds.length ? ` WHERE ${conds.join(' AND ')}` : '';
+  const tail = ` ORDER BY d.created_at DESC LIMIT ?`;
+
+  let rows: any[] = [];
+  try {
+    rows = (await db.prepare(QTA_CUSTODY_COLS_SQL + where + tail).bind(...binds, limit).all()).results || [];
+  } catch {
+    rows = (await db.prepare(QTA_CUSTODY_COLS_SQL_LEGACY + where + tail).bind(...binds, limit).all()).results || [];
+  }
+
+  // Totals per status for the header tiles (QTA only).
+  let totals: any[] = [];
+  try {
+    totals = (await db.prepare(
+      `SELECT status, COUNT(*) AS n, COALESCE(SUM(CAST(amount AS REAL)),0) AS total
+         FROM qta_deposits WHERE COALESCE(asset,'QTA') = 'QTA' GROUP BY status`
+    ).all()).results || [];
+  } catch { totals = []; }
+
+  return c.json({ ok: true, rows, totals, count: rows.length });
+});
+
+// POST /admin/qta-deposits/:id/credit  { note? }
+// Credits a HELD native-QTA deposit to the member's QTA wallet (e.g. the admin
+// decided this member is a shareholder after the fact). Idempotent via the
+// status guard. Sell cap (§6) applies afterwards as usual.
+app.post('/qta-deposits/:id/credit', async (c) => {
+  const db = c.env.DB;
+  const admin = c.get('user') as { id: string; email: string };
+  const id = c.req.param('id');
+  let body: any = {}; try { body = await c.req.json(); } catch { /* */ }
+  const d = await db.prepare(`SELECT * FROM qta_deposits WHERE id = ?`).bind(id).first<any>();
+  if (!d) return c.json({ error: 'Deposit not found' }, 404);
+  if (d.status !== 'held') return c.json({ error: `Deposit is '${d.status}', only 'held' can be credited` }, 400);
+  const asset = String(d.asset || 'QTA').toUpperCase();
+  const amt = Number(d.amount || '0');
+  if (!(amt > 0)) return c.json({ error: 'Invalid amount' }, 400);
+  const now = new Date().toISOString();
+
+  for (const col of ['resolution', 'resolved_at', 'resolved_by', 'resolution_note']) {
+    try { await db.prepare(`ALTER TABLE qta_deposits ADD COLUMN ${col} TEXT`).run(); } catch { /* exists */ }
+  }
+  await db.batch([
+    db.prepare(`INSERT INTO wallets (user_id, coin_symbol, available, locked) VALUES (?, ?, 0, 0) ON CONFLICT(user_id, coin_symbol) DO NOTHING`).bind(d.user_id, asset),
+    db.prepare(`UPDATE wallets SET available = available + ? WHERE user_id = ? AND coin_symbol = ? AND EXISTS (SELECT 1 FROM qta_deposits WHERE id = ? AND status = 'held')`).bind(amt, d.user_id, asset, id),
+    db.prepare(`UPDATE qta_deposits SET status = 'credited', credited_at = ?, updated_at = ?, resolution = 'admin_credit', resolved_at = ?, resolved_by = ?, resolution_note = ? WHERE id = ? AND status = 'held'`)
+      .bind(now, now, now, admin.id, String(body?.note || '').slice(0, 500) || null, id),
+  ]);
+  try {
+    await createNotification(db, d.user_id, {
+      type: 'deposit',
+      title: 'QTA Deposit Credited',
+      message: `+${d.amount} ${asset} (previously on hold) has been credited to your wallet by the exchange.`,
+    });
+  } catch { /* non-fatal */ }
+  await logAdminAction(c, {
+    action: 'qta_deposit.admin_credit',
+    targetType: 'user',
+    targetId: d.user_id,
+    payload: { deposit_id: id, amount: d.amount, asset, tx_hash: d.tx_hash, from: d.from_address, note: body?.note || null, rule: 'OWNER_RULES §11' },
+  });
+  return c.json({ ok: true, id, status: 'credited' });
+});
+
+// POST /admin/qta-deposits/:id/return  { return_tx_hash, note? }
+// Records that the company RETURNED this held QTA on-chain (to the sender
+// wallet, or wherever agreed). This is a LEDGER action — the actual transfer
+// is made by the operator from the main wallet; the tx hash is required so
+// the return is provable.
+app.post('/qta-deposits/:id/return', async (c) => {
+  const db = c.env.DB;
+  const admin = c.get('user') as { id: string; email: string };
+  const id = c.req.param('id');
+  let body: any = {}; try { body = await c.req.json(); } catch { /* */ }
+  const tx = String(body?.return_tx_hash || '').trim();
+  if (!/^0x[0-9a-fA-F]{64}$/.test(tx)) return c.json({ error: 'return_tx_hash (0x + 64 hex) is required' }, 400);
+  const d = await db.prepare(`SELECT * FROM qta_deposits WHERE id = ?`).bind(id).first<any>();
+  if (!d) return c.json({ error: 'Deposit not found' }, 404);
+  if (d.status !== 'held') return c.json({ error: `Deposit is '${d.status}', only 'held' can be returned` }, 400);
+  const now = new Date().toISOString();
+  for (const col of ['resolution', 'resolved_at', 'resolved_by', 'resolution_note', 'return_tx_hash']) {
+    try { await db.prepare(`ALTER TABLE qta_deposits ADD COLUMN ${col} TEXT`).run(); } catch { /* exists */ }
+  }
+  await db.prepare(
+    `UPDATE qta_deposits SET status = 'returned', updated_at = ?, resolution = 'returned', resolved_at = ?, resolved_by = ?, resolution_note = ?, return_tx_hash = ?
+      WHERE id = ? AND status = 'held'`
+  ).bind(now, now, admin.id, String(body?.note || '').slice(0, 500) || null, tx, id).run();
+  try {
+    await createNotification(db, d.user_id, {
+      type: 'deposit',
+      title: 'QTA Returned',
+      message: `${d.amount} QTA that was on hold has been returned on-chain. Tx: ${tx}`,
+    });
+  } catch { /* non-fatal */ }
+  await logAdminAction(c, {
+    action: 'qta_deposit.returned',
+    targetType: 'user',
+    targetId: d.user_id,
+    payload: { deposit_id: id, amount: d.amount, tx_hash: d.tx_hash, from: d.from_address, return_tx_hash: tx, note: body?.note || null, rule: 'OWNER_RULES §11' },
+  });
+  return c.json({ ok: true, id, status: 'returned', return_tx_hash: tx });
+});
+
 app.get('/ext-deposits', async (c) => {
   const db = c.env.DB;
   // ★ 2026-09-14: USDT deposits auto-credit, so the default view is the
