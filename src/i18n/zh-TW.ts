@@ -439,6 +439,7 @@ const zhTW = {
   'wallet.depositLoginRequired': '登入工作階段已過期，請重新登入以取得儲值地址。',
   'wallet.warnBelowMin': '低於 {min} {coin} 的充值將不予入賬。',
   'wallet.qtaWithdrawOnly': 'QTA 僅支援提現。QTA 無法鏈上充值，請向交易所充值 USDT（泰達幣）並購買 QTA 後持有。僅 QX 與 QKEY 可充值。',
+  'wallet.qtaShareholderDeposit': '您已登記為股東，可將自己持有的QTA充值到此地址。充值的QTA每日最多可在交易所賣出50,000韓元（約34.48 USDT）。請僅透過Quantarium網路發送QTA。',
   'wallet.testDeposit': '模擬充值',
   'wallet.demo': '演示',
   'wallet.testDepositDesc': '在本演示中，輸入金額即可即時入賬一筆充值。',

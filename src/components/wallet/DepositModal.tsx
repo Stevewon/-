@@ -50,25 +50,32 @@ export default function DepositModal({ open, onClose, initialCoin = 'USDT' }: Pr
   const [copied, setCopied] = useState<'address' | 'memo' | null>(null);
   const [showTest, setShowTest] = useState(false);
 
+  // ★ OWNER RULE (2026-09-21, OWNER_RULES §11): members the admin flagged as
+  //   exchange / casino shareholders MAY deposit their own native QTA. The
+  //   flag arrives on /auth/me as `can_deposit_qta`. Everyone else: QTA stays
+  //   withdraw-only (rule 2026-08-28).
+  const canDepositQta = Boolean((user as any)?.can_deposit_qta);
+
   useEffect(() => {
     if (open) {
-      // OWNER RULE (2026-08-28): QTA cannot be deposited. If the caller opened
-      // the modal on QTA, fall back to QX (the primary depositable Quantarium
-      // asset) so users never land on a dead deposit screen.
-      setCoin(initialCoin.toUpperCase() === 'QTA' ? 'QX' : initialCoin);
+      // OWNER RULE (2026-08-28): QTA cannot be deposited (unless shareholder).
+      // If the caller opened the modal on QTA, fall back to QX (the primary
+      // depositable Quantarium asset) so users never land on a dead screen.
+      setCoin(initialCoin.toUpperCase() === 'QTA' && !canDepositQta ? 'QX' : initialCoin);
       setTestAmount('');
       setShowTest(false);
     }
-  }, [open, initialCoin]);
+  }, [open, initialCoin, canDepositQta]);
 
   // QTA is WITHDRAW-ONLY — surfaced as an explicit notice if it is ever the
-  // active coin (e.g. only-QTA wallet edge case).
-  const isQtaWithdrawOnly = coin.toUpperCase() === 'QTA';
+  // active coin (e.g. only-QTA wallet edge case). Shareholders are exempt.
+  const isQtaWithdrawOnly = coin.toUpperCase() === 'QTA' && !canDepositQta;
+  const isQtaShareholderDeposit = coin.toUpperCase() === 'QTA' && canDepositQta;
 
   // DEPOSIT ONLY sees networks we actually watch + sweep on-chain (safety
   // whitelist). For USDT that is BEP-20 only — TRC20/ERC20 are hidden so users
   // can't send to an unmonitored address. Withdrawals are unaffected.
-  const networks = useMemo(() => getDepositNetworks(coin), [coin]);
+  const networks = useMemo(() => getDepositNetworks(coin, canDepositQta), [coin, canDepositQta]);
   const network = useMemo(
     () => networks.find(n => n.id === networkId) || networks[0],
     [networks, networkId]
@@ -336,7 +343,7 @@ export default function DepositModal({ open, onClose, initialCoin = 'USDT' }: Pr
                       it on the exchange. Only QX/QKEY (and external coins) can
                       be deposited. */}
                   {wallets
-                    .filter(w => w.coin_symbol.toUpperCase() !== 'QTA')
+                    .filter(w => w.coin_symbol.toUpperCase() !== 'QTA' || canDepositQta)
                     .map(w => (
                       <option key={w.coin_symbol} value={w.coin_symbol}>
                         {w.coin_symbol} — {w.coin_name}
@@ -388,6 +395,19 @@ export default function DepositModal({ open, onClose, initialCoin = 'USDT' }: Pr
                 <AlertTriangle size={18} className="text-exchange-yellow shrink-0 mt-0.5" />
                 <div style={{ fontSize: '13px', lineHeight: 1.6 }}>
                   {t('wallet.qtaWithdrawOnly')}
+                </div>
+              </div>
+            )}
+
+            {/* OWNER_RULES §11: shareholder QTA deposit notice (sell cap). */}
+            {isQtaShareholderDeposit && (
+              <div
+                className="flex items-start gap-2 bg-exchange-buy/10 border border-exchange-buy/40 text-exchange-text"
+                style={{ padding: '14px', borderRadius: '10px', marginBottom: '16px' }}
+              >
+                <Shield size={18} className="text-exchange-buy shrink-0 mt-0.5" />
+                <div style={{ fontSize: '13px', lineHeight: 1.6 }}>
+                  {t('wallet.qtaShareholderDeposit')}
                 </div>
               </div>
             )}

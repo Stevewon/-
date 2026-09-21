@@ -194,6 +194,22 @@ QTA/USDT 마켓에만 적용. 회사(마켓메이커) = **mm-bot-a / mm-bot-b** 
 
 ---
 
+## 11. QTA 입금 허용 — 거래소 지분자 · 카지노 지분자 한정 (2026-09-21 지상명령)
+
+> "QTA 입금을 받아주는 기능을 만들고! 거래소 지분자, 카지노 지분자는 보유한 qta 입금시 하루 5만원 매도가 가능하게 만들어줘! 거래소 지분자와 카지노 지분자는 어드민 관리자가 결정하게 해주고!"
+
+- **원칙 유지**: 일반 회원은 여전히 **QTA 입금 불가(출금 전용, 2026-08-28 규칙)**. USDT를 입금해 시장에서 매수하는 것만 가능. 일반 회원 주소로 들어온 네이티브 QTA는 스캔·반영하지 않음(기존과 동일).
+- **예외 — 지분자**: 관리자가 **거래소 지분자** 또는 **카지노 지분자**로 지정한 회원은 **본인 보유 QTA(네이티브, Quantarium 체인)를 전용 입금주소로 입금**할 수 있고, 필요 컨펌(메인넷 12) 도달 시 **자동으로 QTA 지갑에 반영**된다.
+- **매도 한도**: 입금된 QTA의 매도는 **6번 영구명령(회원당 하루 5만원 = 34.48 USDT 회사 매입 상한)** 그대로 적용. 별도 한도 없음 — 지분자도 하루 5만원까지만 회사가 사준다. 출금은 7번 규칙(하루 1회·5만원) 동일.
+- **결정권**: 지분자 여부는 **어드민 관리자가 결정**. Admin → Users 탭 **"지분자" 열**의 `거래소` / `카지노` 토글, 또는 회원 상세 모달의 **"지분자 지정" 패널**(ON/OFF). 변경 시 Audit(`user.set_shareholder`) 기록 + 회원 앱 알림.
+- **플래그 저장**: `users.fee_exempt_exchange_holder`, `users.fee_exempt_casino_holder` (마이그레이션 0051, cron 자동 적용에 추가). 이 플래그는 **수수료와 무관**(수수료는 QX+QKEY 보유량 기준 유지) — 오직 QTA 입금 허용 여부만 결정.
+- **회원 화면(영문)**: 지분자는 Deposit 모달 코인 목록에 QTA가 나타나고 Quantarium 네트워크 입금주소 + 안내("Deposited QTA can be sold up to KRW 50,000 per day")가 표시. 비지분자는 기존 "QTA is withdraw-only" 안내 유지. 입금 내역(Deposit History)에 Quantarium 체인 입금(QTA/QX/QKEY) 표시.
+- **트레저리 회수**: 지분자가 입금한 네이티브 QTA도 8번 규칙에 따라 스윕 대상 — 토큰(QX/QKEY) 스윕이 끝난 주소의 네이티브 QTA 잔액(가스 제외, 0.01 QTA 이상)을 회사 메인 지갑으로 전송.
+- **식별 기록**: `qta_deposits.raw_meta`에 from 주소·user_id·`accepted_reason: 'shareholder'`·`rule: 'OWNER_RULES §11'` 저장(10번의 입금자 식별 원칙 준수).
+- **코드**: `src/shared/shareholder.ts`(+ `cron-worker/src/shareholder.ts` 복사본), `cron-worker/src/index.ts` scanQtaDeposits(지분자만 `listInboundNativeTxs`) · qtaChainTick(알림) · sweepQtaDeposits(네이티브 스윕), `cron-worker/src/migrate.ts` 0051, `src/server/routes/admin.ts` POST /users/:id/shareholder · GET /users(+플래그), `src/server/routes/auth.ts` /me(`can_deposit_qta`), `src/server/routes/chain.ts` /qta/deposit-address(QTA 지분자 허용), `src/server/routes/wallet.ts` /history/deposits(qta_deposits 병합), `src/components/wallet/DepositModal.tsx`, `src/utils/networks.ts` getDepositNetworks(allowQta), `src/pages/AdminPage.tsx` UsersTab · ShareholderPanel.
+
+---
+
 ## 변경 이력
 - 2026-08-31: 최초 작성. 관리자 인정 스테이킹(총금액 데일리·매칭 / 실입금 반환), 데일리 KST 자정 기준, 매칭 5단계 1회성 규칙 못박음.
 - 2026-09-04: **바이너리 규칙 근본 정정.** ① 좌우 볼륨은 무한대(하부 실적 전부 반영, 이전 볼륨 2× 하드캡·드롭 폐기). ② 매칭수당 총 한도 = 본인 몸값 × 2(USD 누계, 좌우 통합). ③ 데일리와 매칭 200% 한도는 별개. 전체 라인 볼륨 재산정(namim 좌 $2,000→$6,000 등), 매칭 지급 총액 불변(268,250 QTA).
@@ -212,3 +228,4 @@ QTA/USDT 마켓에만 적용. 회사(마켓메이커) = **mm-bot-a / mm-bot-b** 
 - 2026-09-14: **관리자 입금 벨** — 자동반영 입금 시 띵동 + 한국어 음성 + 토스트 + 브라우저 알림 (헤더 Deposit bell, 최초 1회 클릭 활성).
 - 2026-09-14: **모바일 입금 모니터 /admin/deposits** — 테더 입금 전용 단일 화면, 띵동/음성/진동/알림, Wake Lock.
 - 2026-09-17: **4일 마감 지시 코드 내장(DEFAULT_SCHEDULE)** — 목 0.0091 / 금 0.0086 / (토 미지정→0.0086 유지) / 일 0.0092 / 월 0.0102, 모두 23:59 도달. 각 날 램프→진동(덤프/회복)→마감. 어드민 스케줄이 있으면 그것이 우선.
+- 2026-09-21: **11번 신설 — QTA 입금 허용(지분자 한정).** 거래소/카지노 지분자(관리자 지정)만 본인 QTA 네이티브 입금 자동반영, 매도는 6번 5만원 상한 동일 적용. Admin Users 지분자 토글 + 회원 상세 패널, /me can_deposit_qta, Deposit 모달 QTA 노출, 네이티브 QTA 트레저리 스윕, 0051 자동 마이그레이션.
