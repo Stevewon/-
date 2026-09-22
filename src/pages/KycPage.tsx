@@ -25,6 +25,61 @@ export default function KycPage() {
   });
   const [loading, setLoading] = useState(false);
 
+  // ★ OWNER_RULES §13 — dual verification (email + SMS, 6-digit codes).
+  const [phoneCc, setPhoneCc] = useState('+81');
+  const [verify, setVerify] = useState<any>(null);          // status from server
+  const [emailCode, setEmailCode] = useState('');
+  const [smsCode, setSmsCode] = useState('');
+  const [emailSent, setEmailSent] = useState<{ masked: string; cooldown: number } | null>(null);
+  const [smsSent, setSmsSent] = useState<{ masked: string; cooldown: number; dev_code?: string } | null>(null);
+  const [vBusy, setVBusy] = useState<'' | 'email-send' | 'email-confirm' | 'sms-send' | 'sms-confirm'>('');
+  const loadVerify = async () => { try { const r = await api.get('/profile/kyc/verify/status'); setVerify(r.data); } catch { /* ignore */ } };
+  useEffect(() => { loadVerify(); }, []);
+  useEffect(() => {
+    const id = setInterval(() => {
+      setEmailSent(v => v && v.cooldown > 0 ? { ...v, cooldown: v.cooldown - 1 } : v);
+      setSmsSent(v => v && v.cooldown > 0 ? { ...v, cooldown: v.cooldown - 1 } : v);
+    }, 1000);
+    return () => clearInterval(id);
+  }, []);
+  const phoneE164Local = (() => {
+    let p = form.phone.replace(/[\s\-().]/g, '');
+    if (!p) return '';
+    if (p.startsWith('+')) return p;
+    if (p.startsWith('0')) p = p.slice(1);
+    return phoneCc + p;
+  })();
+  const phoneVerifiedForCurrent = !!verify?.phone_verified && !!verify?.phone_e164 && verify.phone_e164 === phoneE164Local;
+  const sendCode = async (channel: 'email' | 'sms') => {
+    setVBusy(channel === 'email' ? 'email-send' : 'sms-send');
+    try {
+      const r = await api.post('/profile/kyc/verify/send', channel === 'email' ? { channel } : { channel, phone: form.phone, phone_cc: phoneCc });
+      const info = { masked: r.data.target_masked, cooldown: 60, dev_code: r.data.dev_code };
+      if (channel === 'email') setEmailSent(info); else setSmsSent(info);
+      showToast('success', t('kyc.verifyTitle'), `${t('kyc.codeSent')} ${r.data.target_masked}${r.data.dev_mode ? ` (test mode code: ${r.data.dev_code})` : ''}`);
+    } catch (err: any) {
+      const d = err.response?.data || {};
+      if (d.error === 'COOLDOWN') { const info = { masked: d.target_masked, cooldown: Number(d.cooldown_sec || 60) }; channel === 'email' ? setEmailSent(info) : setSmsSent(info); showToast('error', t('kyc.verifyTitle'), t('kyc.codeCooldown', { sec: String(d.cooldown_sec || 60) })); }
+      else if (d.error === 'DAILY_LIMIT') showToast('error', t('kyc.verifyTitle'), t('kyc.codeDailyLimit'));
+      else if (d.code === 'PHONE_FORMAT') showToast('error', t('kyc.verifyTitle'), t('kyc.phoneFormat'));
+      else showToast('error', t('kyc.verifyTitle'), d.detail || d.error || t('kyc.codeSendFailed'));
+    } finally { setVBusy(''); }
+  };
+  const confirmCode = async (channel: 'email' | 'sms') => {
+    const code = channel === 'email' ? emailCode : smsCode;
+    setVBusy(channel === 'email' ? 'email-confirm' : 'sms-confirm');
+    try {
+      const r = await api.post('/profile/kyc/verify/confirm', { channel, code });
+      setVerify(r.data.status);
+      if (channel === 'email') setEmailCode(''); else setSmsCode('');
+      showToast('success', t('kyc.verifyTitle'), channel === 'email' ? t('kyc.emailVerified') : t('kyc.phoneVerified'));
+    } catch (err: any) {
+      const d = err.response?.data || {};
+      const map: Record<string, string> = { CODE_MISMATCH: t('kyc.codeMismatch', { left: String(d.attempts_left ?? '') }), CODE_EXPIRED: t('kyc.codeExpired'), NO_ACTIVE_CODE: t('kyc.codeNone'), TOO_MANY_ATTEMPTS: t('kyc.codeTooMany'), CODE_FORMAT: t('kyc.codeFormat') };
+      showToast('error', t('kyc.verifyTitle'), map[d.error] || d.error || t('profile.saveFailed'));
+    } finally { setVBusy(''); }
+  };
+
   useEffect(() => {
     // Load current KYC
     (async () => {
@@ -76,7 +131,8 @@ export default function KycPage() {
   };
 
   const validateStep = (n: number) => {
-    if (n === 1) return form.name.trim().length >= 2 && form.phone.trim().length >= 7 && form.id_number.trim().length >= 4;
+    if (n === 1) return form.name.trim().length >= 2 && form.phone.trim().length >= 7 && form.id_number.trim().length >= 4
+      && !!verify?.email_verified && phoneVerifiedForCurrent;
     if (n === 2) return form.address.trim().length >= 5;
     return true;
   };
@@ -84,12 +140,14 @@ export default function KycPage() {
   const handleSubmit = async () => {
     setLoading(true);
     try {
-      await api.post('/profile/kyc', form);
+      await api.post('/profile/kyc', { ...form, phone_cc: phoneCc });
       if (user) setUser({ ...user, kyc_status: 'pending', kyc_name: form.name, kyc_phone: form.phone, kyc_address: form.address });
       showToast('success', t('kyc.title'), t('kyc.submitted'));
       navigate('/profile');
     } catch (err: any) {
-      showToast('error', t('kyc.title'), err.response?.data?.error || t('profile.saveFailed'));
+      const d = err.response?.data || {};
+      if (d.error === 'VERIFICATION_REQUIRED') { setStep(1); showToast('error', t('kyc.title'), t('kyc.verifyRequired')); }
+      else showToast('error', t('kyc.title'), d.error || t('profile.saveFailed'));
     } finally {
       setLoading(false);
     }
@@ -194,11 +252,70 @@ export default function KycPage() {
           </div>
           <div>
             <label className="text-xs text-exchange-text-third mb-1 block">{t('profile.kycPhone')}</label>
-            <input type="tel" value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} placeholder={t('profile.phonePlaceholder')} className="input-field text-sm" />
+            <div className="flex gap-2">
+              <select value={phoneCc} onChange={e => setPhoneCc(e.target.value)} className="input-field text-sm !w-[118px] shrink-0">
+                {[['+81','🇯🇵 +81'],['+82','🇰🇷 +82'],['+1','🇺🇸 +1'],['+86','🇨🇳 +86'],['+886','🇹🇼 +886'],['+852','🇭🇰 +852'],['+65','🇸🇬 +65'],['+66','🇹🇭 +66'],['+84','🇻🇳 +84'],['+63','🇵🇭 +63'],['+60','🇲🇾 +60'],['+62','🇮🇩 +62'],['+91','🇮🇳 +91'],['+971','🇦🇪 +971'],['+44','🇬🇧 +44'],['+61','🇦🇺 +61'],['+49','🇩🇪 +49'],['+33','🇫🇷 +33'],['+7','🇷🇺 +7'],['+55','🇧🇷 +55']].map(([v,l]) => <option key={v} value={v}>{l}</option>)}
+              </select>
+              <input type="tel" value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} placeholder="90 1234 5678" className="input-field text-sm flex-1" />
+            </div>
+            <p className="text-[10px] text-exchange-text-third mt-1">{t('kyc.phoneHint')}</p>
           </div>
           <div>
             <label className="text-xs text-exchange-text-third mb-1 block">{t('profile.idLabel')}</label>
             <input type="text" value={form.id_number} onChange={e => setForm({ ...form, id_number: e.target.value })} placeholder={t('profile.idPlaceholder')} className="input-field text-sm" />
+          </div>
+
+          {/* ★ Dual verification — email + SMS (OWNER_RULES §13) */}
+          <div className="rounded-lg border border-exchange-border bg-exchange-input/40 p-3 space-y-3">
+            <div className="flex items-center gap-2">
+              <Shield size={14} className="text-exchange-yellow" />
+              <span className="text-xs font-semibold text-exchange-text">{t('kyc.verifyTitle')}</span>
+              <span className="text-[10px] text-exchange-text-third">{t('kyc.verifySub')}</span>
+            </div>
+
+            {/* Email */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-exchange-text-secondary">{t('kyc.emailLabel')} <span className="text-exchange-text-third">{verify?.email_masked}</span></span>
+                {verify?.email_verified ? <span className="inline-flex items-center gap-1 text-exchange-buy font-semibold"><CheckCircle2 size={12} /> {t('kyc.verified')}</span> : null}
+              </div>
+              {!verify?.email_verified && (
+                <div className="flex gap-2">
+                  <input inputMode="numeric" maxLength={6} value={emailCode} onChange={e => setEmailCode(e.target.value.replace(/\D/g, ''))} placeholder="000000" className="input-field text-sm font-mono tracking-[0.3em] text-center flex-1" />
+                  {emailSent && emailCode.length === 6 ? (
+                    <button onClick={() => confirmCode('email')} disabled={vBusy !== ''} className="btn-primary text-xs !py-2 !px-3 disabled:opacity-40 whitespace-nowrap">{vBusy === 'email-confirm' ? '…' : t('kyc.confirm')}</button>
+                  ) : (
+                    <button onClick={() => sendCode('email')} disabled={vBusy !== '' || (!!emailSent && emailSent.cooldown > 0)} className="px-3 py-2 rounded-lg text-xs border border-exchange-border text-exchange-text-secondary hover:bg-exchange-hover disabled:opacity-40 whitespace-nowrap">
+                      {vBusy === 'email-send' ? '…' : emailSent ? (emailSent.cooldown > 0 ? `${t('kyc.resend')} (${emailSent.cooldown}s)` : t('kyc.resend')) : t('kyc.sendCode')}
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* SMS */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-exchange-text-secondary">{t('kyc.smsLabel')} <span className="text-exchange-text-third">{phoneE164Local || '—'}</span></span>
+                {phoneVerifiedForCurrent ? <span className="inline-flex items-center gap-1 text-exchange-buy font-semibold"><CheckCircle2 size={12} /> {t('kyc.verified')}</span>
+                  : verify?.phone_verified ? <span className="text-[10px] text-exchange-yellow">{t('kyc.phoneChanged')}</span> : null}
+              </div>
+              {!phoneVerifiedForCurrent && (
+                <div className="flex gap-2">
+                  <input inputMode="numeric" maxLength={6} value={smsCode} onChange={e => setSmsCode(e.target.value.replace(/\D/g, ''))} placeholder="000000" className="input-field text-sm font-mono tracking-[0.3em] text-center flex-1" />
+                  {smsSent && smsCode.length === 6 ? (
+                    <button onClick={() => confirmCode('sms')} disabled={vBusy !== ''} className="btn-primary text-xs !py-2 !px-3 disabled:opacity-40 whitespace-nowrap">{vBusy === 'sms-confirm' ? '…' : t('kyc.confirm')}</button>
+                  ) : (
+                    <button onClick={() => sendCode('sms')} disabled={vBusy !== '' || form.phone.replace(/\D/g, '').length < 6 || (!!smsSent && smsSent.cooldown > 0)} className="px-3 py-2 rounded-lg text-xs border border-exchange-border text-exchange-text-secondary hover:bg-exchange-hover disabled:opacity-40 whitespace-nowrap">
+                      {vBusy === 'sms-send' ? '…' : smsSent ? (smsSent.cooldown > 0 ? `${t('kyc.resend')} (${smsSent.cooldown}s)` : t('kyc.resend')) : t('kyc.sendCode')}
+                    </button>
+                  )}
+                </div>
+              )}
+              {smsSent?.dev_code && !phoneVerifiedForCurrent && (
+                <p className="text-[10px] text-exchange-yellow">Test mode — SMS delivery not yet enabled. Your code: <b className="font-mono">{smsSent.dev_code}</b></p>
+              )}
+            </div>
           </div>
           <button
             onClick={() => setStep(2)}

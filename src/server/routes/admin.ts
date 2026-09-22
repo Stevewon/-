@@ -578,13 +578,21 @@ app.post('/users/:userId/toggle', async (c) => {
 // KYC management
 // ============================================================================
 app.get('/kyc/pending', async (c) => {
-  const { results } = await c.env.DB.prepare(`
+  // ★ §13: expose dual-verification timestamps so the reviewer can see whether
+  //   the email + phone were confirmed with 6-digit codes (legacy submissions
+  //   made before §13 have neither → shown as "미인증").
+  const sql = (withVerify: boolean) => `
     SELECT id, email, nickname, kyc_status, kyc_name, kyc_phone, kyc_id_number,
-           kyc_address, kyc_submitted_at, created_at
+           kyc_address, kyc_submitted_at, created_at,
+           CASE WHEN kyc_id_document_url IS NULL THEN 0 ELSE 1 END AS has_id_doc,
+           CASE WHEN kyc_address_document_url IS NULL THEN 0 ELSE 1 END AS has_addr_doc,
+           ${withVerify ? 'kyc_email_verified_at, kyc_phone_verified_at, kyc_phone_e164' : 'NULL AS kyc_email_verified_at, NULL AS kyc_phone_verified_at, NULL AS kyc_phone_e164'}
     FROM users
     WHERE kyc_status = 'pending'
-    ORDER BY kyc_submitted_at DESC, created_at DESC
-  `).all();
+    ORDER BY kyc_submitted_at DESC, created_at DESC`;
+  let results: any[] | undefined;
+  try { results = (await c.env.DB.prepare(sql(true)).all()).results; }
+  catch { results = (await c.env.DB.prepare(sql(false)).all()).results; }
   return c.json(results);
 });
 

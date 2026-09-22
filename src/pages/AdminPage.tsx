@@ -1114,6 +1114,13 @@ function KycTab({ t, onUpdate }: any) {
               {k.kyc_address && <div className="text-xs text-exchange-text-third mt-1">{k.kyc_address}</div>}
               {k.kyc_id_number && <div className="text-[11px] text-exchange-text-third mt-1 font-mono">ID: {k.kyc_id_number}</div>}
               <div className="text-[10px] text-exchange-text-third mt-1">{t('admin.submittedAt')}: {k.kyc_submitted_at || k.created_at}</div>
+              {/* ★ §13 dual verification + document presence */}
+              <div className="flex flex-wrap gap-1 mt-1.5">
+                <span className={`text-[10px] px-1.5 py-0.5 rounded ${k.kyc_email_verified_at ? 'bg-exchange-buy/15 text-exchange-buy' : 'bg-exchange-sell/10 text-exchange-sell'}`} title={k.kyc_email_verified_at || ''}>✉ 이메일 {k.kyc_email_verified_at ? '인증' : '미인증'}</span>
+                <span className={`text-[10px] px-1.5 py-0.5 rounded ${k.kyc_phone_verified_at ? 'bg-exchange-buy/15 text-exchange-buy' : 'bg-exchange-sell/10 text-exchange-sell'}`} title={k.kyc_phone_e164 || ''}>📱 SMS {k.kyc_phone_verified_at ? `인증 ${k.kyc_phone_e164 || ''}` : '미인증'}</span>
+                <span className={`text-[10px] px-1.5 py-0.5 rounded ${k.has_id_doc ? 'bg-exchange-input text-exchange-text-secondary' : 'bg-exchange-sell/10 text-exchange-sell'}`}>신분증 {k.has_id_doc ? '첨부' : '없음'}</span>
+                <span className={`text-[10px] px-1.5 py-0.5 rounded ${k.has_addr_doc ? 'bg-exchange-input text-exchange-text-secondary' : 'bg-exchange-sell/10 text-exchange-sell'}`}>주소증명 {k.has_addr_doc ? '첨부' : '없음'}</span>
+              </div>
             </div>
             <div className="flex gap-2">
               <button onClick={() => handle(k.id, 'approve')} className="btn-buy text-xs !py-1.5 !px-3 rounded-lg">{t('admin.approve')}</button>
