@@ -467,6 +467,19 @@ export default {
       } catch (e: any) { out.error = String(e?.message || e); }
       return new Response(JSON.stringify(out, null, 2), { headers: { 'content-type': 'application/json' } });
     }
+    if (url.pathname === '/kyc-census') {
+      const out: any = { generated_at: new Date().toISOString() };
+      try {
+        out.by_status = (await env.DB.prepare(`SELECT COALESCE(kyc_status,'none') s, COUNT(*) n FROM users WHERE role <> 'admin' AND id NOT IN ('mm-bot-a','mm-bot-b') GROUP BY s`).all<any>()).results;
+        out.docs = await env.DB.prepare(`SELECT COUNT(*) users_with_id_doc, SUM(CASE WHEN kyc_id_document_url LIKE 'r2://%' THEN 1 ELSE 0 END) r2_stored, SUM(CASE WHEN kyc_id_document_url LIKE 'kyc-doc:%' THEN 1 ELSE 0 END) hash_only FROM users WHERE kyc_id_document_url IS NOT NULL`).first<any>();
+        out.pending = (await env.DB.prepare(`SELECT email, nickname, kyc_name, kyc_submitted_at, CASE WHEN kyc_id_document_url IS NULL THEN 0 ELSE 1 END has_id_doc, CASE WHEN kyc_address_document_url IS NULL THEN 0 ELSE 1 END has_addr_doc FROM users WHERE kyc_status='pending' ORDER BY kyc_submitted_at`).all<any>()).results;
+        out.approved = (await env.DB.prepare(`SELECT email, nickname, kyc_name, kyc_reviewed_at, CASE WHEN kyc_id_document_url IS NULL THEN 0 ELSE 1 END has_id_doc FROM users WHERE kyc_status='approved' AND role <> 'admin' ORDER BY kyc_reviewed_at`).all<any>()).results;
+        out.approved_no_docs = (await env.DB.prepare(`SELECT COUNT(*) n FROM users WHERE kyc_status='approved' AND role<>'admin' AND kyc_id_document_url IS NULL`).first<any>());
+        out.kyc_documents_table = await env.DB.prepare(`SELECT COUNT(*) n FROM kyc_documents`).first<any>().catch(() => null);
+        out.audit = (await env.DB.prepare(`SELECT action, COUNT(*) n FROM admin_audit_logs WHERE action LIKE 'kyc.%' GROUP BY action`).all<any>()).results;
+      } catch (e: any) { out.error = String(e?.message || e); }
+      return new Response(JSON.stringify(out, null, 2), { headers: { 'content-type': 'application/json' } });
+    }
     if (url.pathname === '/sell-census') {
       // ★ OWNER_RULES §12 — who can sell QTA right now, and who sold recently.
       const out: any = { generated_at: new Date().toISOString(), rule: 'OWNER_RULES §12' };
