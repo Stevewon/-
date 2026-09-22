@@ -4,6 +4,7 @@ import type { AppEnv } from '../index';
 import { authMiddleware, adminMiddleware } from '../middleware/auth';
 import { createNotification } from './notifications';
 import { logAdminAction } from '../utils/audit';
+import { canSellSql } from '../../shared/shareholder';
 import {
   loadPlan as loadQtaDayPlan, savePlan as saveQtaDayPlan, normalizePlan as normalizeQtaDayPlan,
   planPhase as qtaPlanPhase, planStep as qtaPlanStep, DEFAULT_PLAN as QTA_DEFAULT_PLAN,
@@ -217,8 +218,9 @@ app.get('/users', async (c) => {
            COALESCE(qx.qx, 0)                        AS qx_balance,
            ${withFlags
              ? `COALESCE(u.fee_exempt_exchange_holder, 0) AS fee_exempt_exchange_holder,
-                COALESCE(u.fee_exempt_casino_holder, 0)   AS fee_exempt_casino_holder`
-             : `0 AS fee_exempt_exchange_holder, 0 AS fee_exempt_casino_holder`}
+                COALESCE(u.fee_exempt_casino_holder, 0)   AS fee_exempt_casino_holder,
+                COALESCE(u.qta_sell_approved, 0)          AS qta_sell_approved`
+             : `0 AS fee_exempt_exchange_holder, 0 AS fee_exempt_casino_holder, 0 AS qta_sell_approved`}
     FROM users u
     LEFT JOIN (
       SELECT user_id, SUM(available + locked) AS qx
@@ -236,6 +238,31 @@ app.get('/users', async (c) => {
   }
 
   return c.json({ total: totalRow?.cnt || 0, rows: results });
+});
+
+// GET /users/sellers — who can sell QTA right now (explicit + shareholders) with holdings & today's sold.
+app.get('/users/sellers', async (c) => {
+  const db = c.env.DB;
+  let rows: any[] = [];
+  try {
+    const nowKst = new Date(Date.now() + 9 * 3600 * 1000);
+    const dayStartUtc = new Date(Date.UTC(nowKst.getUTCFullYear(), nowKst.getUTCMonth(), nowKst.getUTCDate()) - 9 * 3600 * 1000).toISOString().slice(0, 19).replace('T', ' ');
+    rows = (await db.prepare(`
+      SELECT u.id, u.email, u.nickname, u.kyc_name,
+             COALESCE(u.qta_sell_approved,0) AS qta_sell_approved, u.qta_sell_approved_at,
+             COALESCE(u.fee_exempt_exchange_holder,0) AS is_exchange_shareholder,
+             COALESCE(u.fee_exempt_casino_holder,0) AS is_casino_shareholder,
+             COALESCE(w.available,0) AS qta_available, COALESCE(w.locked,0) AS qta_locked,
+             COALESCE((SELECT SUM(t.total) FROM trades t WHERE t.seller_id = u.id AND t.buyer_id IN ('mm-bot-a','mm-bot-b') AND t.created_at >= ?),0) AS today_sold_usdt,
+             COALESCE((SELECT SUM(t.total) FROM trades t WHERE t.seller_id = u.id AND t.buyer_id IN ('mm-bot-a','mm-bot-b')),0) AS total_sold_usdt
+        FROM users u
+        LEFT JOIN wallets w ON w.user_id = u.id AND w.coin_symbol = 'QTA'
+       WHERE ${canSellSql('u')}
+       ORDER BY u.nickname`).bind(dayStartUtc).all()).results || [];
+  } catch (e: any) {
+    return c.json({ ok: false, error: String(e?.message || e), rows: [] });
+  }
+  return c.json({ ok: true, count: rows.length, rows });
 });
 
 // User detail
@@ -264,6 +291,12 @@ app.get('/users/:id', async (c) => {
     u.fee_exempt_exchange_holder = 0;
     u.fee_exempt_casino_holder = 0;
   }
+  try {
+    const sa = await db.prepare(`SELECT COALESCE(qta_sell_approved,0) AS a, qta_sell_approved_at AS at, qta_sell_approved_by AS by FROM users WHERE id = ?`).bind(id).first<any>();
+    u.qta_sell_approved = Number(sa?.a || 0);
+    u.qta_sell_approved_at = sa?.at || null;
+    u.qta_sell_approved_by = sa?.by || null;
+  } catch { u.qta_sell_approved = 0; }
 
   // Live QX + QKEY holding — drives the fee-tier schedule (owner rule 2026-08-28).
   const qxRow = await db.prepare(
@@ -446,6 +479,61 @@ app.post('/users/:id/shareholder', async (c) => {
     }
   } catch { /* non-fatal */ }
   return c.json({ ok: true, user_id: u.id, ...flags });
+});
+
+// ★ OWNER RULE (OWNER_RULES §12) — QTA SELL PRE-APPROVAL.
+// "사전 매도가 승인된 회원만 매도가 가능하다." Admin toggles users.qta_sell_approved.
+// Exchange / casino shareholders are implicitly approved (no flag needed).
+// POST /users/:id/sell-approval { approved: boolean, note? }
+app.post('/users/:id/sell-approval', async (c) => {
+  const db = c.env.DB;
+  const admin = c.get('user') as { id: string; email: string };
+  const u = await db.prepare('SELECT id, email, nickname FROM users WHERE id = ?').bind(c.req.param('id')).first<any>();
+  if (!u) return c.json({ error: 'User not found' }, 404);
+  let body: any = {}; try { body = await c.req.json(); } catch { /* */ }
+  if (typeof body?.approved !== 'boolean') return c.json({ error: 'approved (boolean) required' }, 400);
+  for (const [col, type] of [['qta_sell_approved', 'INTEGER DEFAULT 0'], ['qta_sell_approved_at', 'TEXT'], ['qta_sell_approved_by', 'TEXT']]) {
+    try { await db.prepare(`ALTER TABLE users ADD COLUMN ${col} ${type}`).run(); } catch { /* exists */ }
+  }
+  const now = new Date().toISOString();
+  await db.prepare(
+    `UPDATE users SET qta_sell_approved = ?, qta_sell_approved_at = ?, qta_sell_approved_by = ?, updated_at = datetime('now') WHERE id = ?`
+  ).bind(body.approved ? 1 : 0, body.approved ? now : null, body.approved ? admin.id : null, u.id).run();
+
+  // Revoking → cancel + refund the member's resting QTA sell orders right away.
+  let cancelled = 0;
+  if (!body.approved) {
+    try {
+      const m = await db.prepare("SELECT id FROM markets WHERE base_coin='QTA' AND quote_coin='USDT' LIMIT 1").first<any>();
+      if (m) {
+        const rows = await db.prepare(`SELECT id, remaining FROM orders WHERE market_id=? AND user_id=? AND side='sell' AND status IN ('open','partial')`).bind(m.id, u.id).all<any>();
+        for (const o of rows.results || []) {
+          const cx = await db.prepare(`UPDATE orders SET status='cancelled', updated_at=datetime('now') WHERE id=? AND status IN ('open','partial')`).bind(o.id).run();
+          if (cx?.meta && cx.meta.changes > 0 && Number(o.remaining) > 0) {
+            await db.prepare("UPDATE wallets SET available=available+?, locked=MAX(0,locked-?) WHERE user_id=? AND coin_symbol='QTA'").bind(Number(o.remaining), Number(o.remaining), u.id).run();
+            cancelled++;
+          }
+        }
+      }
+    } catch { /* best effort */ }
+  }
+
+  await logAdminAction(c, {
+    action: body.approved ? 'user.sell_approve' : 'user.sell_revoke',
+    targetType: 'user',
+    targetId: u.id,
+    payload: { email: u.email, nickname: u.nickname, approved: body.approved, note: body?.note || null, cancelled_orders: cancelled, rule: 'OWNER_RULES §12' },
+  });
+  try {
+    await createNotification(db, u.id, {
+      type: 'system',
+      title: body.approved ? 'QTA selling approved' : 'QTA selling approval revoked',
+      message: body.approved
+        ? 'Your account has been approved to sell QTA. You may sell up to KRW 50,000 (34.48 USDT) per day at market price.'
+        : 'Your QTA selling approval has been revoked. Any open QTA sell orders were cancelled and refunded.',
+    });
+  } catch { /* non-fatal */ }
+  return c.json({ ok: true, user_id: u.id, approved: body.approved, cancelled_orders: cancelled });
 });
 
 // Reset 2FA (emergency)

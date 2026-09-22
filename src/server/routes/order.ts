@@ -5,6 +5,7 @@ import { rateLimit } from '../middleware/rateLimit';
 import { getUserFeeTier, recordFeeLedger, type FeeTier } from '../utils/fees';
 import { getRiskState } from '../lib/risk';
 import { loadPlan, planPhase, planEnvelope, planStep, resolveEffectivePlan } from '../lib/qta-day-plan';
+import { loadSellApproval, canSellSql } from '../../shared/shareholder';
 
 // ★★★ PERMANENT OWNER ORDER — QTA member-sell hard cap (OWNER_RULES.md §6) ★★★
 const MM_BOT_A = 'mm-bot-a';
@@ -152,6 +153,19 @@ app.post('/', authMiddleware, rlPlaceOrder, async (c) => {
   //     (2) matchOrder(): every bot-buys-from-member fill is clamped;
   //     (3) qta-mm-tick sweep: per-member cap + auto-cancel of leftovers.
   //   Limit sells may still REST (they are only filled up to the cap by 2/3).
+  // ★★★ OWNER RULE (OWNER_RULES §12, re-affirmed 2026-09-21): ONLY members the
+  //     admin PRE-APPROVED may sell QTA. Exchange / casino shareholders are
+  //     automatically approved. Everyone else → hard reject, any order type.
+  if (base === 'QTA' && side === 'sell' && !isCompanyAccount && user.id !== MM_BOT_A && user.id !== MM_BOT_B) {
+    const approval = await loadSellApproval(c.env.DB as any, user.id);
+    if (!approval.approved) {
+      return c.json({
+        error: 'SELL_NOT_APPROVED',
+        message: 'Selling QTA requires prior approval from the exchange. Please contact support.',
+      }, 403);
+    }
+  }
+
   if (base === 'QTA' && side === 'sell' && !isCompanyAccount && user.id !== MM_BOT_A && user.id !== MM_BOT_B) {
     const nowKst = new Date(Date.now() + 9 * 3600 * 1000);
     const kstMidnightUtcMs = Date.UTC(nowKst.getUTCFullYear(), nowKst.getUTCMonth(), nowKst.getUTCDate()) - 9 * 3600 * 1000;
@@ -367,6 +381,62 @@ app.delete('/:id', authMiddleware, async (c) => {
 });
 
 // Get user's orders
+// ============================================================================
+// GET /orders/qta-sell-status — member's own QTA sell situation for the trade
+// screen (OWNER_RULES §6 + §12, owner 2026-09-21: "매일 5만원어치 시세에 따라
+// 매도 … USDT로 얼마인지 누적과 함께 표시").
+//   approved            — may this member sell at all (flag OR shareholder)
+//   cap_krw / cap_usdt  — daily company buy-back cap (50,000 KRW = 34.48 USDT)
+//   today_sold_usdt/qta — company buys from this member since 00:00 KST
+//   remaining_usdt/qta  — room left today (qta at current best bid)
+//   total_sold_usdt/qta — lifetime company buys from this member
+//   ref_price           — current best company bid (USDT per QTA)
+// ============================================================================
+app.get('/qta-sell-status', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const DB = c.env.DB;
+  const approval = await loadSellApproval(DB as any, user.id);
+  const isCompany = user.role === 'admin' || user.email === 'admin@quantaex.io';
+  const market = await DB.prepare("SELECT id, min_order_total FROM markets WHERE base_coin='QTA' AND quote_coin='USDT' LIMIT 1").first<any>();
+  if (!market) return c.json({ error: 'market not found' }, 404);
+  const nowKst = new Date(Date.now() + 9 * 3600 * 1000);
+  const kstMidnightUtcMs = Date.UTC(nowKst.getUTCFullYear(), nowKst.getUTCMonth(), nowKst.getUTCDate()) - 9 * 3600 * 1000;
+  const dayStartUtc = new Date(kstMidnightUtcMs).toISOString().slice(0, 19).replace('T', ' ');
+  const [today, total, bid] = await Promise.all([
+    DB.prepare(`SELECT COALESCE(SUM(total),0) usdt, COALESCE(SUM(amount),0) qta, COUNT(*) n FROM trades WHERE market_id=? AND buyer_id IN (?, ?) AND seller_id=? AND created_at >= ?`)
+      .bind(market.id, MM_BOT_A, MM_BOT_B, user.id, dayStartUtc).first<any>().catch(() => null),
+    DB.prepare(`SELECT COALESCE(SUM(total),0) usdt, COALESCE(SUM(amount),0) qta, COUNT(*) n FROM trades WHERE market_id=? AND buyer_id IN (?, ?) AND seller_id=?`)
+      .bind(market.id, MM_BOT_A, MM_BOT_B, user.id).first<any>().catch(() => null),
+    DB.prepare("SELECT price FROM orders WHERE market_id=? AND side='buy' AND status IN ('open','partial') ORDER BY price DESC LIMIT 1")
+      .bind(market.id).first<{ price: number }>().catch(() => null),
+  ]);
+  const todayUsdt = Number(today?.usdt || 0);
+  const remainingUsdt = isCompany ? null : Math.max(0, MM_MEMBER_BUY_BUDGET_USDT - todayUsdt);
+  const refPrice = Number(bid?.price || 0);
+  const kstReset = new Date(kstMidnightUtcMs + 24 * 3600 * 1000).toISOString();
+  return c.json({
+    approved: isCompany || approval.approved,
+    approval_source: isCompany ? 'company' : approval.explicit ? 'admin' : approval.via_shareholder ? 'shareholder' : null,
+    is_exchange_shareholder: approval.exchange,
+    is_casino_shareholder: approval.casino,
+    cap_krw: 50000,
+    cap_usdt: Math.round(MM_MEMBER_BUY_BUDGET_USDT * 100) / 100,
+    usdt_krw_rate: USDT_KRW_RATE,
+    today_sold_usdt: Math.round(todayUsdt * 10000) / 10000,
+    today_sold_qta: Number(today?.qta || 0),
+    today_trades: Number(today?.n || 0),
+    remaining_usdt: remainingUsdt == null ? null : Math.round(remainingUsdt * 10000) / 10000,
+    remaining_krw: remainingUsdt == null ? null : Math.round(remainingUsdt * USDT_KRW_RATE),
+    remaining_qta: remainingUsdt == null || !(refPrice > 0) ? null : Math.floor(remainingUsdt / refPrice),
+    total_sold_usdt: Math.round(Number(total?.usdt || 0) * 10000) / 10000,
+    total_sold_qta: Number(total?.qta || 0),
+    total_trades: Number(total?.n || 0),
+    ref_price: refPrice,
+    min_order_total: Number(market.min_order_total || 1),
+    resets_at: kstReset,
+  });
+});
+
 app.get('/my', authMiddleware, async (c) => {
   const user = c.get('user');
   const status = c.req.query('status');
@@ -587,8 +657,35 @@ async function matchOrder(
   }
   const perSellerSpent = new Map<string, number>();
 
+  // ★ §12 sell pre-approval at the FILL boundary (2nd layer). A member's QTA
+  //   sell — whether it is the taker here or a resting maker ask being hit —
+  //   is never filled unless that member is approved (explicit flag or
+  //   shareholder). Unapproved resting asks are simply skipped (the mm-tick
+  //   sweep cancels + refunds them).
+  const sellApprovalCache = new Map<string, boolean>();
+  async function sellerApproved(uid: string): Promise<boolean> {
+    if (isBotOrder(uid)) return true;
+    const c0 = sellApprovalCache.get(uid);
+    if (c0 != null) return c0;
+    let ok = false;
+    try {
+      const r = await DB.prepare(`SELECT CASE WHEN ${canSellSql('u')} THEN 1 ELSE 0 END AS ok, role, email FROM users u WHERE id = ?`).bind(uid).first<any>();
+      ok = Number(r?.ok || 0) === 1 || r?.role === 'admin' || r?.email === 'admin@quantaex.io';
+    } catch {
+      const r = await DB.prepare(`SELECT role, email FROM users WHERE id = ?`).bind(uid).first<any>().catch(() => null);
+      ok = r?.role === 'admin' || r?.email === 'admin@quantaex.io';
+    }
+    sellApprovalCache.set(uid, ok);
+    return ok;
+  }
+  if (isQtaMarket && order.side === 'sell' && !(await sellerApproved(String(order.user_id)))) {
+    // Unapproved seller as taker: fill nothing (order rests; sweep will cancel).
+    matchingOrders.length = 0;
+  }
+
   for (const match of matchingOrders as any[]) {
     if (remaining <= 0) break;
+    if (isQtaMarket && match.side === 'sell' && !(await sellerApproved(String(match.user_id)))) continue;
 
     let tradeAmount = Math.min(remaining, match.remaining);
     const tradePrice = match.price;
@@ -1553,11 +1650,35 @@ app.post('/qta-mm-tick', async (c) => {
   {
     // All resting member asks at/under the live mid (exclude the bots), with
     // the seller id and each ask's price so we can buy at the member's price.
+    // ★ §12: sweep-cancel + refund every resting QTA ask from a member who is
+    //   NOT sell-approved (3rd layer — catches orders placed before approval
+    //   was revoked, or via any path that bypassed the POST gate).
+    try {
+      const unapproved = await DB.prepare(
+        `SELECT o.id, o.user_id, o.remaining FROM orders o JOIN users u ON u.id = o.user_id
+          WHERE o.market_id=? AND o.side='sell' AND o.status IN ('open','partial')
+            AND o.user_id NOT IN (?, ?) AND u.role <> 'admin' AND u.email <> 'admin@quantaex.io'
+            AND NOT ${canSellSql('u')}`
+      ).bind(market.id, MM_BOT_A, MM_BOT_B).all<any>();
+      for (const o of (unapproved.results || [])) {
+        const rem = Number(o.remaining || 0);
+        const cx = await DB.prepare(
+          `UPDATE orders SET status='cancelled', updated_at=datetime('now') WHERE id=? AND status IN ('open','partial')`
+        ).bind(o.id).run();
+        if (cx?.meta && cx.meta.changes > 0 && rem > 0) {
+          await DB.prepare(
+            "UPDATE wallets SET available=available+?, locked=MAX(0,locked-?) WHERE user_id=? AND coin_symbol='QTA'"
+          ).bind(rem, rem, o.user_id).run();
+        }
+      }
+    } catch { /* column missing → nothing to sweep */ }
+
     const askRows = await DB.prepare(
-      `SELECT id, user_id, remaining, price FROM orders
-         WHERE market_id=? AND side='sell' AND status IN ('open','partial')
-           AND user_id NOT IN (?, ?) AND price <= ?
-         ORDER BY user_id ASC, price ASC, created_at ASC`
+      `SELECT o.id, o.user_id, o.remaining, o.price FROM orders o JOIN users u ON u.id = o.user_id
+         WHERE o.market_id=? AND o.side='sell' AND o.status IN ('open','partial')
+           AND o.user_id NOT IN (?, ?) AND o.price <= ?
+           AND (${canSellSql('u')} OR u.role = 'admin' OR u.email = 'admin@quantaex.io')
+         ORDER BY o.user_id ASC, o.price ASC, o.created_at ASC`
     ).bind(market.id, MM_BOT_A, MM_BOT_B, mid).all<any>().catch(() => ({ results: [] as any[] }));
 
     // Per-seller USDT the company already bought from them TODAY.

@@ -39,6 +39,28 @@ const WITHDRAW_USDT_KRW_RATE = 1450;
 const WITHDRAW_MAX_KRW_PER_DAY = 50_000;
 const WITHDRAW_MAX_USD_PER_DAY = WITHDRAW_MAX_KRW_PER_DAY / WITHDRAW_USDT_KRW_RATE; // ≈ 34.4828
 const WITHDRAW_MAX_REQUESTS_PER_DAY = 1;
+// ★★★ OWNER RULE (2026-09-21, OWNER_RULES §12): a member may REQUEST a
+//   withdrawal to their own wallet ONLY every Friday 10:00–16:00 KST — the same
+//   window as dividend claims (§7/earn.ts). Any coin, any route. Outside the
+//   window → 403 WITHDRAW_WINDOW_CLOSED. Admin/company accounts are exempt.
+const WITHDRAW_WINDOW_WEEKDAY = 5;   // Friday (0=Sun)
+const WITHDRAW_WINDOW_START_HR = 10; // 10:00 KST inclusive
+const WITHDRAW_WINDOW_END_HR = 16;   // 16:00 KST exclusive
+export function withdrawWindowOpen(nowMs = Date.now()): boolean {
+  const kst = new Date(nowMs + 9 * 3600 * 1000);
+  return kst.getUTCDay() === WITHDRAW_WINDOW_WEEKDAY
+    && kst.getUTCHours() >= WITHDRAW_WINDOW_START_HR
+    && kst.getUTCHours() < WITHDRAW_WINDOW_END_HR;
+}
+export function nextWithdrawWindow(nowMs = Date.now()): { opens_at: string; closes_at: string } {
+  const kst = new Date(nowMs + 9 * 3600 * 1000);
+  const day = kst.getUTCDay();
+  let addDays = (WITHDRAW_WINDOW_WEEKDAY - day + 7) % 7;
+  if (addDays === 0 && kst.getUTCHours() >= WITHDRAW_WINDOW_END_HR) addDays = 7;
+  const openKst = Date.UTC(kst.getUTCFullYear(), kst.getUTCMonth(), kst.getUTCDate() + addDays, WITHDRAW_WINDOW_START_HR, 0, 0);
+  const closeKst = Date.UTC(kst.getUTCFullYear(), kst.getUTCMonth(), kst.getUTCDate() + addDays, WITHDRAW_WINDOW_END_HR, 0, 0);
+  return { opens_at: new Date(openKst - 9 * 3600 * 1000).toISOString(), closes_at: new Date(closeKst - 9 * 3600 * 1000).toISOString() };
+}
 const DAILY_WITHDRAW_USD_LIMIT = { none: 0, basic: 0, approved: WITHDRAW_MAX_USD_PER_DAY } as const;
 const PER_REQUEST_USD_LIMIT    = { none: 0, basic: 0, approved: WITHDRAW_MAX_USD_PER_DAY } as const;
 
@@ -304,6 +326,11 @@ app.delete('/withdraw/whitelist/:id', authMiddleware, async (c) => {
 // ============================================================================
 const rlWithdraw = rateLimit({ key: 'wallet:withdraw', max: 20, windowSec: 3600 });
 
+// GET /wallet/withdraw-window — is the Friday window open now? (UI hint)
+app.get('/withdraw-window', async (c) => {
+  return c.json({ open: withdrawWindowOpen(), weekday: 'Friday', start_kst: '10:00', end_kst: '16:00', ...nextWithdrawWindow(), server_time: new Date().toISOString() });
+});
+
 app.post('/withdraw', authMiddleware, rlWithdraw, requireKyc('approved'), async (c) => {
   const user = c.get('user');
   const body = await c.req.json().catch(() => ({}));
@@ -314,6 +341,17 @@ app.post('/withdraw', authMiddleware, rlWithdraw, requireKyc('approved'), async 
   const amount = Number(rawAmount);
   if (!coin_symbol || !isFinite(amount) || amount <= 0) {
     return c.json({ error: 'Invalid request' }, 400);
+  }
+
+  // ★ §12 — Friday 10:00–16:00 KST withdrawal request window (company exempt).
+  const isCompanyReq = user.role === 'admin' || user.email === 'admin@quantaex.io';
+  if (!isCompanyReq && !withdrawWindowOpen()) {
+    const nxt = nextWithdrawWindow();
+    return c.json({
+      error: 'WITHDRAW_WINDOW_CLOSED',
+      message: 'Withdrawal requests are accepted every Friday, 10:00 AM to 4:00 PM (KST).',
+      ...nxt,
+    }, 403);
   }
 
   // ── Payout-coin choice (boss's 2026-08-26 rule) ────────────────────────

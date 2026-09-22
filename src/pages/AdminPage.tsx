@@ -575,6 +575,27 @@ function UsersTab({ t, onUpdate }: any) {
     }
   };
 
+  // ★ OWNER_RULES §12 — QTA 사전 매도 승인 toggle. 지분자는 자동 승인(토글 불필요).
+  const setSellApproval = async (u: any) => {
+    const isShareholder = !!u.fee_exempt_exchange_holder || !!u.fee_exempt_casino_holder;
+    if (isShareholder && !u.qta_sell_approved) {
+      showToast('success', '지분자 자동 승인', `${u.email}은(는) 지분자이므로 이미 매도 가능합니다.`);
+      return;
+    }
+    const cur = !!u.qta_sell_approved;
+    const msg = cur
+      ? `${u.email}\nQTA 매도 승인을 해제할까요?\n\n해제 즉시 이 회원의 미체결 QTA 매도 주문은 전량 취소·환불됩니다.`
+      : `${u.email}\nQTA 매도를 승인할까요?\n\n• 시세로 하루 최대 5만원(34.48 USDT)까지 회사가 매입 (§6)\n• 승인 즉시 매도 주문 가능`;
+    if (!confirm(msg)) return;
+    try {
+      const res = await api.post(`/admin/users/${u.id}/sell-approval`, { approved: !cur });
+      showToast('success', t('common.save'), `매도 승인: ${res.data?.approved ? 'ON' : 'OFF'}${res.data?.cancelled_orders ? ` · 주문 ${res.data.cancelled_orders}건 취소` : ''}`);
+      load(); onUpdate?.();
+    } catch (e: any) {
+      showToast('error', t('common.error'), e.response?.data?.error || 'Update failed');
+    }
+  };
+
   const deleteUser = async (u: any) => {
     const answer = prompt(
       `⚠️ 회원 영구 삭제\n\n` +
@@ -649,14 +670,15 @@ function UsersTab({ t, onUpdate }: any) {
               <th className="text-center px-3 py-2.5">2FA</th>
               <th className="text-center px-3 py-2.5">{t('admin.active')}</th>
               <th className="text-right px-3 py-2.5">{t('fee.holding')}</th>
-              <th className="text-center px-3 py-2.5" title="거래소 지분자 / 카지노 지분자 (QTA 입금 허용)">지분자</th>
+              <th className="text-center px-3 py-2.5" title="거래소 지분자 / 카지노 지분자 (QTA 입금 허용 + 매도 자동 승인)">지분자</th>
+              <th className="text-center px-3 py-2.5" title="QTA 사전 매도 승인 (§12) — 지분자는 자동 승인">매도승인</th>
               <th className="text-left px-3 py-2.5">{t('admin.joined')}</th>
               <th className="text-right px-3 py-2.5">{t('admin.actions')}</th>
             </tr>
           </thead>
           <tbody>
             {users.length === 0 ? (
-              <tr><td colSpan={10} className="px-3 py-8 text-center text-exchange-text-third text-xs">{t('admin.noData')}</td></tr>
+              <tr><td colSpan={11} className="px-3 py-8 text-center text-exchange-text-third text-xs">{t('admin.noData')}</td></tr>
             ) : users.map(u => (
               <tr key={u.id} className="border-b border-exchange-border/50 hover:bg-exchange-hover/30">
                 <td className="px-3 py-2 text-xs">{u.email}</td>
@@ -704,6 +726,22 @@ function UsersTab({ t, onUpdate }: any) {
                       <Dices size={10} /> 카지노
                     </button>
                   </div>
+                </td>
+                <td className="px-3 py-2 text-center">
+                  {(() => {
+                    const viaSh = (!!u.fee_exempt_exchange_holder || !!u.fee_exempt_casino_holder);
+                    const on = !!u.qta_sell_approved || viaSh;
+                    return (
+                      <button
+                        onClick={() => setSellApproval(u)}
+                        className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border transition-colors ${on ? 'bg-exchange-buy/20 text-exchange-buy border-exchange-buy/40' : 'bg-exchange-sell/10 text-exchange-sell border-exchange-sell/30 hover:border-exchange-sell'}`}
+                        title={viaSh && !u.qta_sell_approved ? '지분자 → 매도 자동 승인' : on ? '매도 승인 ON — 클릭하여 해제' : '매도 불가 — 클릭하여 승인'}
+                      >
+                        {on ? <CheckCircle2 size={10} /> : <XCircle size={10} />}
+                        {on ? (viaSh && !u.qta_sell_approved ? '자동' : '승인') : '불가'}
+                      </button>
+                    );
+                  })()}
                 </td>
                 <td className="px-3 py-2 text-[11px] text-exchange-text-third">{timeAgo(u.created_at, t)}</td>
                 <td className="px-3 py-2 text-right">
@@ -877,10 +915,48 @@ function ShareholderPanel({ user, onChanged, t }: any) {
         <Btn kind="casino" on={ca} icon={Dices} label="카지노 지분자" />
       </div>
       <p className="text-[10px] text-exchange-text-third mt-2 leading-relaxed">
-        지분자로 지정된 회원은 <b className="text-exchange-text-secondary">본인 보유 QTA를 온체인으로 입금</b>할 수 있습니다 (일반 회원 QTA 입금 불가 규정의 예외).
-        입금된 QTA는 회사 매입 한도 <b className="text-exchange-text-secondary">하루 최대 5만원(34.48 USDT)</b> 내에서 매도 가능합니다 (§6 규정 동일).
-        {(ex || ca) && <span className="text-exchange-buy"> · 현재 QTA 입금 허용 상태</span>}
+        지분자로 지정된 회원은 <b className="text-exchange-text-secondary">본인 보유 QTA를 온체인으로 입금</b>할 수 있고 <b className="text-exchange-text-secondary">QTA 매도가 자동 승인</b>됩니다.
+        매도는 회사 매입 한도 <b className="text-exchange-text-secondary">하루 최대 5만원(34.48 USDT)</b> 내 (§6 규정 동일).
+        {(ex || ca) && <span className="text-exchange-buy"> · 현재 QTA 입금 허용 + 매도 승인 상태</span>}
       </p>
+
+      {/* ★ §12 — QTA 사전 매도 승인 */}
+      <div className="mt-3 border-t border-exchange-border/50 pt-3">
+        <h4 className="text-xs font-semibold text-exchange-text-secondary mb-2">QTA 매도 승인 <span className="text-[10px] text-exchange-text-third font-normal">· OWNER_RULES §12 — 사전 승인된 회원만 매도 가능</span></h4>
+        {(() => {
+          const viaSh = ex || ca;
+          const explicit = !!user.qta_sell_approved;
+          const on = explicit || viaSh;
+          return (
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-xs">
+                <span className={`font-semibold ${on ? 'text-exchange-buy' : 'text-exchange-sell'}`}>{on ? '매도 가능' : '매도 불가'}</span>
+                <span className="text-exchange-text-third ml-2">{viaSh && !explicit ? '지분자 자동 승인' : explicit ? `관리자 승인 ${user.qta_sell_approved_at ? new Date(user.qta_sell_approved_at).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' }) : ''}` : '승인 이력 없음'}</span>
+              </div>
+              {!(viaSh && !explicit) && (
+                <button
+                  type="button"
+                  disabled={busy !== null}
+                  onClick={async () => {
+                    if (!confirm(explicit ? 'QTA 매도 승인을 해제할까요? 미체결 매도 주문은 전량 취소·환불됩니다.' : 'QTA 매도를 승인할까요? (하루 5만원 한도 §6 적용)')) return;
+                    setBusy('exchange');
+                    try {
+                      const res = await api.post(`/admin/users/${user.id}/sell-approval`, { approved: !explicit });
+                      onChanged?.({ exchange: ex, casino: ca, qta_sell_approved: res.data?.approved ? 1 : 0 });
+                      showToast('success', t('common.save'), `매도 승인: ${res.data?.approved ? 'ON' : 'OFF'}`);
+                    } catch (e: any) {
+                      showToast('error', t('common.error'), e.response?.data?.error || 'Update failed');
+                    } finally { setBusy(null); }
+                  }}
+                  className={`text-xs px-3 py-1.5 rounded-lg border transition-colors disabled:opacity-50 ${explicit ? 'bg-exchange-sell/10 border-exchange-sell/40 text-exchange-sell' : 'bg-exchange-buy/15 border-exchange-buy/40 text-exchange-buy'}`}
+                >
+                  {explicit ? '승인 해제' : '매도 승인'}
+                </button>
+              )}
+            </div>
+          );
+        })()}
+      </div>
     </div>
   );
 }
@@ -928,7 +1004,7 @@ function UserDetailModal({ detail, onClose, t }: any) {
             </div>
           )}
 
-          <ShareholderPanel user={user} onChanged={(f: any) => setUser({ ...user, fee_exempt_exchange_holder: f.exchange ? 1 : 0, fee_exempt_casino_holder: f.casino ? 1 : 0 })} t={t} />
+          <ShareholderPanel user={user} onChanged={(f: any) => setUser({ ...user, fee_exempt_exchange_holder: f.exchange ? 1 : 0, fee_exempt_casino_holder: f.casino ? 1 : 0, ...(f.qta_sell_approved != null ? { qta_sell_approved: f.qta_sell_approved, qta_sell_approved_at: f.qta_sell_approved ? new Date().toISOString() : null } : {}) })} t={t} />
 
           <FeeTierInfoPanel holding={Number(user.qx_balance || 0)} t={t} />
 

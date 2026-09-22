@@ -28,6 +28,23 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [sliderPct, setSliderPct] = useState(0);
+
+  // ★ OWNER_RULES §6/§12 — QTA sell status widget: approval + today's sold
+  //   USDT / remaining room / lifetime total. Refreshes every 15s and after
+  //   each order. Only for the QTA market.
+  const isQtaMarket = symbol.toUpperCase().startsWith('QTA-') || symbol.toUpperCase().startsWith('QTA/');
+  const [sellStatus, setSellStatus] = useState<any>(null);
+  const loadSellStatus = async () => {
+    if (!user || !isQtaMarket) { setSellStatus(null); return; }
+    try { const r = await api.get('/orders/qta-sell-status'); setSellStatus(r.data); } catch { /* ignore */ }
+  };
+  useEffect(() => {
+    loadSellStatus();
+    if (!user || !isQtaMarket) return;
+    const id = setInterval(loadSellStatus, 15000);
+    return () => clearInterval(id);
+  }, [user?.id, symbol]); // eslint-disable-line
+  const sellBlocked = isQtaMarket && side === 'sell' && sellStatus && sellStatus.approved === false;
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   const [base, quote] = symbol.split('-');
@@ -115,6 +132,7 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
       setSliderPct(0);
       fetchWallets();
       fetchOpenOrders(symbol);
+      loadSellStatus();
       if (onComplete) setTimeout(onComplete, 1500);
     } catch (err: any) {
       const data = err.response?.data || {};
@@ -122,7 +140,12 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
       let shown = rawErr;
       // Friendly mapping for TIF rejections
       const lower = String(rawErr).toLowerCase();
-      if (rawErr === 'QTA_DAILY_SELL_LIMIT') {
+      if (rawErr === 'SELL_NOT_APPROVED') {
+        shown = t('trade.sellNotApproved');
+      } else if (rawErr === 'DAILY_SELL_CAP_REACHED') {
+        const remaining = Number(data.remaining_usdt || 0);
+        shown = t('trade.sellCapReached', { usdt: remaining.toFixed(2) });
+      } else if (rawErr === 'QTA_DAILY_SELL_LIMIT') {
         const remaining = Number(data.remaining_usdt || 0);
         const remainKrw = Math.max(0, Math.floor(remaining * 1400));
         shown = t('trade.qtaSellLimit', {
@@ -161,6 +184,38 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
           >
             {t('trade.sell')}
           </button>
+        </div>
+      )}
+
+      {/* ★ QTA sell status (OWNER_RULES §6 + §12) */}
+      {isQtaMarket && user && sellStatus && side === 'sell' && (
+        <div className={`rounded-lg border px-3 py-2.5 text-xs space-y-1.5 ${sellStatus.approved ? 'border-exchange-border bg-exchange-input/40' : 'border-exchange-sell/40 bg-exchange-sell/10'}`}>
+          {!sellStatus.approved ? (
+            <div className="text-exchange-sell font-medium leading-relaxed">{t('trade.sellNotApproved')}</div>
+          ) : (
+            <>
+              <div className="flex items-center justify-between">
+                <span className="text-exchange-text-third">{t('trade.sellCapTitle')}</span>
+                <span className="tabular-nums font-semibold">{Number(sellStatus.cap_usdt).toFixed(2)} USDT <span className="text-exchange-text-third font-normal">/ KRW {Number(sellStatus.cap_krw).toLocaleString('en-US')}</span></span>
+              </div>
+              <div className="h-1.5 rounded bg-exchange-border overflow-hidden">
+                <div className="h-full bg-exchange-sell" style={{ width: `${Math.min(100, (Number(sellStatus.today_sold_usdt) / Math.max(1e-9, Number(sellStatus.cap_usdt))) * 100)}%` }} />
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-exchange-text-third">{t('trade.sellToday')}</span>
+                <span className="tabular-nums"><span className="text-exchange-sell font-semibold">{Number(sellStatus.today_sold_usdt).toFixed(2)} USDT</span> <span className="text-exchange-text-third">({formatPrice(sellStatus.today_sold_qta)} QTA)</span></span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-exchange-text-third">{t('trade.sellRemaining')}</span>
+                <span className="tabular-nums font-semibold text-exchange-buy">{Number(sellStatus.remaining_usdt ?? 0).toFixed(2)} USDT{sellStatus.remaining_qta != null ? <span className="text-exchange-text-third font-normal"> ≈ {Number(sellStatus.remaining_qta).toLocaleString('en-US')} QTA</span> : null}</span>
+              </div>
+              <div className="flex items-center justify-between border-t border-exchange-border/60 pt-1.5">
+                <span className="text-exchange-text-third">{t('trade.sellTotal')}</span>
+                <span className="tabular-nums">{Number(sellStatus.total_sold_usdt).toFixed(2)} USDT <span className="text-exchange-text-third">({formatPrice(sellStatus.total_sold_qta)} QTA · {sellStatus.total_trades})</span></span>
+              </div>
+              <div className="text-[10px] text-exchange-text-third">{t('trade.sellResetNote')}{sellStatus.approval_source === 'shareholder' ? ` · ${t('trade.sellApprovedShareholder')}` : ''}</div>
+            </>
+          )}
         </div>
       )}
 
@@ -329,7 +384,7 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
       {/* Submit — Bybit-style big rounded pill */}
       <button
         onClick={handleSubmit}
-        disabled={loading}
+        disabled={loading || !!sellBlocked}
         className={`w-full !py-2.5 !rounded-lg font-bold text-sm transition-all disabled:opacity-50 ${
           side === 'buy' ? 'btn-buy' : 'btn-sell'
         }`}

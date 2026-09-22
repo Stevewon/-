@@ -324,6 +324,15 @@ const MIGRATIONS: Migration[] = [
     ],
   },
   {
+    // 0060 — QTA sell pre-approval flag (OWNER_RULES §12, 2026-09-21).
+    id: '0060_qta_sell_approval',
+    statements: [
+      `ALTER TABLE users ADD COLUMN qta_sell_approved     INTEGER DEFAULT 0`,
+      `ALTER TABLE users ADD COLUMN qta_sell_approved_at  TEXT`,
+      `ALTER TABLE users ADD COLUMN qta_sell_approved_by  TEXT`,
+    ],
+  },
+  {
     // 0056 — Admin-granted staking with a BONUS (인정) principal.
     // Mirrors /migrations/0056_staking_bonus_principal.sql. ADD COLUMN is
     // idempotent-guarded ("duplicate column name" is swallowed by runMigrations).

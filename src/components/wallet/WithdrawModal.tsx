@@ -48,6 +48,16 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
   //   NEVER choose the destination — we fetch it from the chain state and
   //   render it read-only. The server force-overrides it regardless.
   const [mainWallet, setMainWallet] = useState('');
+  // ★ OWNER_RULES §12 — withdrawal requests only Friday 10:00–16:00 KST.
+  const [windowInfo, setWindowInfo] = useState<{ open: boolean; opens_at?: string; closes_at?: string } | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    api.get('/wallet/withdraw-window')
+      .then(res => { if (alive) setWindowInfo(res.data); })
+      .catch(() => { /* server still enforces */ });
+    return () => { alive = false; };
+  }, [open]);
 
   // Fetch the fixed main payout wallet once the modal opens.
   useEffect(() => {
@@ -225,7 +235,8 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
       fetchWallets();
       showToast('success', t('wallet.withdrawSubmitted'), `${formatAmount(numAmount)} ${coin}`);
     } catch (err: any) {
-      showToast('error', t('wallet.withdrawFailed'), err.response?.data?.error);
+      const code = err.response?.data?.error;
+      showToast('error', t('wallet.withdrawFailed'), code === 'WITHDRAW_WINDOW_CLOSED' ? t('wallet.windowClosedBody') : code);
       setStep('form');
     } finally {
       setLoading(false);
@@ -492,6 +503,12 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
                 <p className="text-[10px] text-exchange-text-third mt-1">{t('wallet.memoWarning')}</p>
               </div>
             )}
+
+            {/* ★ §12 Friday window notice */}
+            <div className={`rounded-lg border px-3 py-2 text-xs leading-relaxed ${windowInfo?.open ? 'border-exchange-buy/40 bg-exchange-buy/10 text-exchange-text' : 'border-exchange-yellow/40 bg-exchange-yellow/10 text-exchange-text'}`}>
+              <div className="font-semibold">{windowInfo?.open ? t('wallet.windowOpenTitle') : t('wallet.windowClosedTitle')}</div>
+              <div className="text-exchange-text-secondary">{t('wallet.windowClosedBody')}{!windowInfo?.open && windowInfo?.opens_at ? ` ${t('wallet.windowNext')}: ${new Date(windowInfo.opens_at).toLocaleString('en-US', { timeZone: 'Asia/Seoul', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })} KST` : ''}</div>
+            </div>
 
             {/* Amount */}
             <div>

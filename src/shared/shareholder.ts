@@ -67,3 +67,51 @@ export async function loadShareholderFlags(
     return { exchange: false, casino: false };
   }
 }
+
+// ============================================================================
+// ★ OWNER_RULES §12 (2026-09-21) — QTA SELL PRE-APPROVAL.
+// "사전 매도가 승인된 회원만 매도가 가능하다." Only members the admin approved
+// may place / get filled on QTA sell orders. Shareholders (exchange / casino)
+// are AUTOMATICALLY approved ("지분자는 자동으로 매도 승인된 걸로 포함").
+//   users.qta_sell_approved  INTEGER DEFAULT 0   (migration 0060)
+// ============================================================================
+export interface SellApprovalRow extends ShareholderRow {
+  qta_sell_approved?: number | boolean | null;
+}
+
+export interface SellApproval {
+  approved: boolean;                       // effective (flag OR shareholder)
+  explicit: boolean;                       // users.qta_sell_approved = 1
+  via_shareholder: boolean;                // implied by exchange/casino flag
+  exchange: boolean;
+  casino: boolean;
+}
+
+export function sellApprovalFromRow(row: SellApprovalRow | null | undefined): SellApproval {
+  const f = flagsFromRow(row);
+  const explicit = Boolean(Number(row?.qta_sell_approved || 0));
+  const via = f.exchange || f.casino;
+  return { approved: explicit || via, explicit, via_shareholder: via && !explicit, exchange: f.exchange, casino: f.casino };
+}
+
+/** SQL boolean fragment: member may sell QTA (explicit approval OR shareholder). */
+export function canSellSql(alias = 'u'): string {
+  return `(COALESCE(${alias}.qta_sell_approved,0) = 1 OR ${shareholderSql(alias)})`;
+}
+
+export async function loadSellApproval(
+  DB: { prepare(sql: string): { bind(...a: unknown[]): { first<T>(): Promise<T | null> } } },
+  userId: string,
+): Promise<SellApproval> {
+  try {
+    const row = await DB.prepare(
+      `SELECT qta_sell_approved, fee_exempt_exchange_holder, fee_exempt_casino_holder FROM users WHERE id = ?`,
+    ).bind(userId).first<SellApprovalRow>();
+    return sellApprovalFromRow(row);
+  } catch {
+    // Column missing (migration 0060 not applied) → fall back to shareholder-only.
+    const f = await loadShareholderFlags(DB, userId);
+    const via = f.exchange || f.casino;
+    return { approved: via, explicit: false, via_shareholder: via, exchange: f.exchange, casino: f.casino };
+  }
+}
