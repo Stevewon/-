@@ -12,6 +12,8 @@ import {
 } from '../utils/mailer';
 import { getUserHolding, getFeeTierByHolding, HOLDING_FEE_SCHEDULE } from '../utils/fees';
 import { hasHangul } from '../utils/noHangul';
+import { rateLimit } from '../middleware/rateLimit';
+import { issueCode, verifyCode, verifyStatus, toE164, ensureKycVerifySchema, type Channel } from '../lib/kyc-verify';
 
 const app = new Hono<AppEnv>();
 
@@ -181,6 +183,59 @@ app.post('/kyc/upload', authMiddleware, async (c) => {
   });
 });
 
+// ============================================================================
+// ★ OWNER_RULES §13 — KYC dual verification (EMAIL + SMS, 6-digit codes).
+//   GET  /profile/kyc/verify/status
+//   POST /profile/kyc/verify/send    { channel: 'email' | 'sms', phone?, phone_cc? }
+//   POST /profile/kyc/verify/confirm { channel, code }
+// Codes are issued on demand only (SMS costs money): 60 s cooldown, 5/day per
+// channel, 5 wrong attempts burn the code. SMS runs in DEV mode (code shown
+// in the response + server log) until TWILIO_* env is configured.
+// ============================================================================
+const rlVerifySend = rateLimit({ key: 'kyc-verify-send', max: 10, windowSec: 600 });
+const rlVerifyConfirm = rateLimit({ key: 'kyc-verify-confirm', max: 30, windowSec: 600 });
+
+app.get('/kyc/verify/status', authMiddleware, async (c) => {
+  const user = c.get('user');
+  return c.json(await verifyStatus(c.env as any, user));
+});
+
+app.post('/kyc/verify/send', authMiddleware, rlVerifySend, async (c) => {
+  const user = c.get('user');
+  const body = await c.req.json().catch(() => ({} as any));
+  const channel = String(body.channel || '') as Channel;
+  if (channel !== 'email' && channel !== 'sms') return c.json({ error: 'channel must be email or sms' }, 400);
+  const cur = await c.env.DB.prepare('SELECT kyc_status, email FROM users WHERE id = ?').bind(user.id).first<any>();
+  const status = (cur?.kyc_status || 'none').toLowerCase();
+  if (status === 'pending' || status === 'approved') return c.json({ error: 'KYC already submitted', code: status === 'pending' ? 'KYC_PENDING' : 'KYC_ALREADY_APPROVED' }, 400);
+  let target: string;
+  if (channel === 'email') {
+    target = String(cur?.email || user.email);
+  } else {
+    const e164 = toE164(String(body.phone || ''), body.phone_cc);
+    if (!e164) return c.json({ error: 'Invalid phone number. Include the country code (e.g. +81 90 1234 5678).', code: 'PHONE_FORMAT' }, 400);
+    target = e164;
+  }
+  const ip = c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || 'unknown';
+  const r = await issueCode(c.env as any, { id: user.id, email: String(cur?.email || user.email) }, channel, target, ip);
+  if (!r.ok) {
+    if (r.cooldown_sec) return c.json({ error: 'COOLDOWN', cooldown_sec: r.cooldown_sec, target_masked: r.target_masked }, 429);
+    if (r.daily_limit) return c.json({ error: 'DAILY_LIMIT', message: 'Daily verification code limit reached. Try again tomorrow.', target_masked: r.target_masked }, 429);
+    return c.json({ error: 'SEND_FAILED', provider: r.provider, detail: r.error, target_masked: r.target_masked }, 502);
+  }
+  return c.json({ ok: true, channel, target_masked: r.target_masked, sent: r.sent, provider: r.provider, expires_in_sec: r.expires_in_sec, ...(r.dev_code ? { dev_mode: true, dev_code: r.dev_code } : {}) });
+});
+
+app.post('/kyc/verify/confirm', authMiddleware, rlVerifyConfirm, async (c) => {
+  const user = c.get('user');
+  const body = await c.req.json().catch(() => ({} as any));
+  const channel = String(body.channel || '') as Channel;
+  if (channel !== 'email' && channel !== 'sms') return c.json({ error: 'channel must be email or sms' }, 400);
+  const r = await verifyCode(c.env as any, user.id, channel, String(body.code || ''));
+  if (!r.ok) return c.json({ error: r.error, attempts_left: r.attempts_left }, 400);
+  return c.json({ ok: true, channel, verified_at: r.verified_at, status: await verifyStatus(c.env as any, user) });
+});
+
 app.post('/kyc', authMiddleware, async (c) => {
   const user = c.get('user');
   const body = await c.req.json().catch(() => ({} as any));
@@ -203,9 +258,28 @@ app.post('/kyc', authMiddleware, async (c) => {
     );
   }
 
-  // Required-field validation (mirrors KycPage validateStep).
+  // ★ OWNER_RULES §13 (2026-09-22) — DUAL verification gate. KYC can only be
+  //   submitted once BOTH the registered email AND the phone number on the form
+  //   have been confirmed with a 6-digit code (Telegram-style).
   const name      = String(body.name || '').trim();
   const phone     = String(body.phone || '').trim();
+  {
+    await ensureKycVerifySchema(c.env.DB);
+    const v = await c.env.DB.prepare(
+      `SELECT kyc_email_verified_at, kyc_phone_verified_at, kyc_phone_e164 FROM users WHERE id = ?`
+    ).bind(user.id).first<any>();
+    const missing: string[] = [];
+    if (!v?.kyc_email_verified_at) missing.push('email');
+    const e164 = toE164(phone, body.phone_cc);
+    if (!v?.kyc_phone_verified_at || !e164 || String(v.kyc_phone_e164 || '').toLowerCase() !== e164.toLowerCase()) missing.push('phone');
+    if (missing.length) {
+      return c.json({
+        error: 'VERIFICATION_REQUIRED',
+        message: 'Please verify your email and phone number with the 6-digit codes before submitting KYC.',
+        missing,
+      }, 403);
+    }
+  }
   const idNumber  = String(body.id_number || '').trim();
   const address   = String(body.address || '').trim();
   const idDoc     = body.id_document_url != null ? String(body.id_document_url) : null;

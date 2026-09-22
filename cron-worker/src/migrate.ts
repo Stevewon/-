@@ -333,6 +333,21 @@ const MIGRATIONS: Migration[] = [
     ],
   },
   {
+    // 0061 — KYC dual verification (email + SMS 6-digit codes), OWNER_RULES §13.
+    id: '0061_kyc_dual_verification',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS kyc_verifications (
+        id TEXT PRIMARY KEY, user_id TEXT NOT NULL, channel TEXT NOT NULL, target TEXT NOT NULL,
+        code_hash TEXT NOT NULL, expires_at TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
+        delivered INTEGER NOT NULL DEFAULT 0, provider TEXT, provider_ref TEXT, error TEXT,
+        used_at TEXT, ip_address TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
+      `CREATE INDEX IF NOT EXISTS idx_kyc_verif_user ON kyc_verifications(user_id, channel, created_at DESC)`,
+      `ALTER TABLE users ADD COLUMN kyc_email_verified_at TEXT`,
+      `ALTER TABLE users ADD COLUMN kyc_phone_verified_at TEXT`,
+      `ALTER TABLE users ADD COLUMN kyc_phone_e164 TEXT`,
+    ],
+  },
+  {
     // 0056 — Admin-granted staking with a BONUS (인정) principal.
     // Mirrors /migrations/0056_staking_bonus_principal.sql. ADD COLUMN is
     // idempotent-guarded ("duplicate column name" is swallowed by runMigrations).
