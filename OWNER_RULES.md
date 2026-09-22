@@ -221,6 +221,22 @@ QTA/USDT 마켓에만 적용. 회사(마켓메이커) = **mm-bot-a / mm-bot-b** 
 
 ---
 
+## 12. ★★★ 영구명령 — QTA 매도는 사전 승인 회원만 · 매도 현황 표시 · 출금 신청 금요일 창구 (2026-09-21) ★★★
+
+> "사전 매도가 승인된 회원만 매도가 가능하다고 이전에 분명히 지시했다. 잊으면 안 된다!"
+> "매일 5만원어치 시세에 따라 매도가 가능해야 한다. 그걸 바로 USDT로 얼마인지 누적과 함께 표시해 주고! 본인 지갑으로 출금 신청은 금요일 해당 시간에만."
+> "지분자(거래소/카지노)로 등록된 사람은 자동으로 매도 승인된 걸로 포함시켜라."
+
+- **매도 사전 승인**: `users.qta_sell_approved = 1`(관리자 지정) **또는** 지분자(`fee_exempt_exchange_holder` / `fee_exempt_casino_holder` = 1)인 회원만 QTA 매도 가능. 그 외 전원 **매도 불가** (기본값). 회사 계정·봇 제외.
+  - **3겹 강제**: ① 주문 접수(`POST /orders`) → `SELL_NOT_APPROVED` 403 (시장가·지정가·스탑 전부) ② 체결 엔진(`matchOrder`) → 미승인 회원 매도는 테이커든 메이커든 체결 스킵 ③ mm-tick 1분 스윕 → 미승인 회원의 잔여 매도 주문 전량 자동 취소·환불. 승인 해제 시 즉시 미체결 매도 주문 취소·환불.
+  - **관리자**: Admin → Users 「매도승인」열(승인/불가/자동) 토글 + 회원 상세 「QTA 매도 승인」패널. `GET /admin/users/sellers` = 현재 매도 가능 회원 명단(보유·오늘 매도·누적). Audit `user.sell_approve` / `user.sell_revoke`, 회원 알림.
+  - 지분자 지정 = 매도 자동 승인 (별도 토글 불필요, 화면에 "자동" 표시).
+- **매도 한도·표시**: §6 그대로 — 승인 회원은 **시세로 하루 5만원(=34.48 USDT, 1,450원 고정)**까지 회사가 매입. 거래 화면 매도 탭에 **일일 한도 / 오늘 매도(USDT·QTA) / 남은 한도(USDT ≈ QTA) / 누적 매도(전체 USDT·QTA·건수)** 실시간 위젯(15초 갱신, `GET /orders/qta-sell-status`). 미승인 회원은 매도 탭에 "사전 승인 필요" 안내 + 매도 버튼 비활성.
+- **출금 신청 창구**: 본인 지갑으로의 출금 신청(`POST /wallet/withdraw`, 모든 코인)은 **매주 금요일 10:00~16:00 KST에만** 접수 (배당 청구 §7 창구와 동일). 그 외 → `WITHDRAW_WINDOW_CLOSED` 403 + 다음 창구 시각 안내. §7 상한(하루 1회·5만원) 병행. 회사 계정 제외. 출금 모달 상단에 창구 열림/닫힘·다음 시각 표시. `GET /wallet/withdraw-window`.
+- **코드**: `src/shared/shareholder.ts`(canSellSql/loadSellApproval, cron 복사본 동일), `src/server/routes/order.ts`(POST 게이트·matchOrder·mm-tick·/qta-sell-status), `src/server/routes/wallet.ts`(withdrawWindowOpen·/withdraw-window), `src/server/routes/admin.ts`(/users/:id/sell-approval·/users/sellers), `src/components/trade/TradePanel.tsx`, `src/components/wallet/WithdrawModal.tsx`, `src/pages/AdminPage.tsx`, 마이그레이션 0060.
+
+---
+
 ## 변경 이력
 - 2026-08-31: 최초 작성. 관리자 인정 스테이킹(총금액 데일리·매칭 / 실입금 반환), 데일리 KST 자정 기준, 매칭 5단계 1회성 규칙 못박음.
 - 2026-09-04: **바이너리 규칙 근본 정정.** ① 좌우 볼륨은 무한대(하부 실적 전부 반영, 이전 볼륨 2× 하드캡·드롭 폐기). ② 매칭수당 총 한도 = 본인 몸값 × 2(USD 누계, 좌우 통합). ③ 데일리와 매칭 200% 한도는 별개. 전체 라인 볼륨 재산정(namim 좌 $2,000→$6,000 등), 매칭 지급 총액 불변(268,250 QTA).
@@ -242,3 +258,4 @@ QTA/USDT 마켓에만 적용. 회사(마켓메이커) = **mm-bot-a / mm-bot-b** 
 - 2026-09-21: **11번 신설 — QTA 입금 허용(지분자 한정).** 거래소/카지노 지분자(관리자 지정)만 본인 QTA 네이티브 입금 자동반영, 매도는 6번 5만원 상한 동일 적용. Admin Users 지분자 토글 + 회원 상세 패널, /me can_deposit_qta, Deposit 모달 QTA 노출, 네이티브 QTA 트레저리 스윕, 0051 자동 마이그레이션.
 - 2026-09-21: **11번 보강 — QTA 입금 전부 수령·보관 장부.** 모든 회원 QTA 입금 온체인 수령+메인지갑 스윕, 지분자 자동반영/일반회원 `held` 보관, Admin Deposits「QTA 입금 보관」탭(누가·언제·몇개·From·Tx·스윕·처리), 반영/반환기록 버튼(Audit), 0058 마이그레이션.
 - 2026-09-21: **11번 보강 — 비지분자 QTA 자동 반환.** 스위치 ON(기본) 시 컨펌 즉시 핫월렛→보낸 지갑 자동 송금(Tx 기록·알림·Audit), 보관 건 ⚡ 자동 반환 버튼(즉시 실행), 실패 재시도 3회, 0059 마이그레이션.
+- 2026-09-21: **★ 12번 신설 — QTA 매도 사전 승인 회원만(지분자 자동 포함) 3겹 강제 + 매도 현황 위젯(오늘/남은/누적 USDT) + 본인 지갑 출금 신청 금요일 10~16시 KST 창구.** 이전 지시가 코드에 누락돼 있던 것을 점검 후 봉합. 0060 마이그레이션.
