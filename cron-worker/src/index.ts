@@ -467,6 +467,52 @@ export default {
       } catch (e: any) { out.error = String(e?.message || e); }
       return new Response(JSON.stringify(out, null, 2), { headers: { 'content-type': 'application/json' } });
     }
+    if (url.pathname === '/sell-census') {
+      // ★ OWNER_RULES §12 — who can sell QTA right now, and who sold recently.
+      const out: any = { generated_at: new Date().toISOString(), rule: 'OWNER_RULES §12' };
+      try {
+        const nowKst = new Date(Date.now() + 9 * 3600 * 1000);
+        const dayStartUtc = new Date(Date.UTC(nowKst.getUTCFullYear(), nowKst.getUTCMonth(), nowKst.getUTCDate()) - 9 * 3600 * 1000).toISOString().slice(0, 19).replace('T', ' ');
+        const approved = await env.DB.prepare(`
+          SELECT u.id, u.email, u.nickname, u.kyc_name, u.role,
+                 COALESCE(u.qta_sell_approved,0) AS sell_approved, u.qta_sell_approved_at,
+                 COALESCE(u.fee_exempt_exchange_holder,0) AS exchange_sh, COALESCE(u.fee_exempt_casino_holder,0) AS casino_sh,
+                 COALESCE(w.available,0) AS qta_available, COALESCE(w.locked,0) AS qta_locked
+            FROM users u LEFT JOIN wallets w ON w.user_id = u.id AND w.coin_symbol='QTA'
+           WHERE ${shareholderSql('u')} OR COALESCE(u.qta_sell_approved,0) = 1
+           ORDER BY u.nickname`).all<any>();
+        out.can_sell_now = approved.results || [];
+        out.can_sell_count = out.can_sell_now.length;
+        const recent = await env.DB.prepare(`
+          SELECT t.seller_id, u.email, u.nickname, u.kyc_name,
+                 COUNT(*) trades, SUM(t.amount) qta, SUM(t.total) usdt, MIN(t.created_at) first_at, MAX(t.created_at) last_at,
+                 COALESCE(u.qta_sell_approved,0) AS sell_approved,
+                 COALESCE(u.fee_exempt_exchange_holder,0) AS exchange_sh, COALESCE(u.fee_exempt_casino_holder,0) AS casino_sh
+            FROM trades t JOIN users u ON u.id = t.seller_id
+           WHERE t.buyer_id IN ('mm-bot-a','mm-bot-b') AND t.seller_id NOT IN ('mm-bot-a','mm-bot-b')
+             AND t.created_at >= datetime('now','-30 days')
+           GROUP BY t.seller_id ORDER BY usdt DESC`).all<any>();
+        out.sold_to_company_last_30d = recent.results || [];
+        const today = await env.DB.prepare(`
+          SELECT t.seller_id, u.email, u.nickname, SUM(t.total) usdt, SUM(t.amount) qta, COUNT(*) n
+            FROM trades t JOIN users u ON u.id = t.seller_id
+           WHERE t.buyer_id IN ('mm-bot-a','mm-bot-b') AND t.seller_id NOT IN ('mm-bot-a','mm-bot-b') AND t.created_at >= ?
+           GROUP BY t.seller_id`).bind(dayStartUtc).all<any>();
+        out.sold_today = today.results || [];
+        const openAsks = await env.DB.prepare(`
+          SELECT o.user_id, u.email, u.nickname, COUNT(*) n, SUM(o.remaining) qta,
+                 COALESCE(u.qta_sell_approved,0) AS sell_approved,
+                 (COALESCE(u.fee_exempt_exchange_holder,0)=1 OR COALESCE(u.fee_exempt_casino_holder,0)=1) AS shareholder
+            FROM orders o JOIN users u ON u.id = o.user_id JOIN markets m ON m.id = o.market_id
+           WHERE m.base_coin='QTA' AND o.side='sell' AND o.status IN ('open','partial') AND o.user_id NOT IN ('mm-bot-a','mm-bot-b')
+           GROUP BY o.user_id`).all<any>();
+        out.open_member_asks = openAsks.results || [];
+        const holders = await env.DB.prepare(`
+          SELECT COUNT(*) n, SUM(available+locked) qta FROM wallets WHERE coin_symbol='QTA' AND available+locked > 0 AND user_id NOT IN ('mm-bot-a','mm-bot-b','admin-001')`).first<any>();
+        out.qta_holders = holders;
+      } catch (e: any) { out.error = String(e?.message || e); }
+      return new Response(JSON.stringify(out, null, 2), { headers: { 'content-type': 'application/json' } });
+    }
     if (url.pathname === '/treasury/sweep') {
       // ★ Owner 2026-09-12: move member-sold QTA bots → treasury (ledger) and
       //   hot wallet → main wallet (on-chain). Also runs on the daily cron.
