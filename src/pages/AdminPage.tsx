@@ -1076,6 +1076,83 @@ function UserDetailModal({ detail, onClose, t }: any) {
 }
 
 // ============================================================================
+// ★ OWNER_RULES §13 — SMS 발송사(Twilio) 설정 패널. 오너가 Account SID + Auth
+// Token만 붙여넣으면 서버가 검증 → 번호 자동 구매 → 테스트 발송 → LIVE 전환.
+// ============================================================================
+function SmsProviderPanel() {
+  const [st, setSt] = useState<any>(null);
+  const [open, setOpen] = useState(false);
+  const [sid, setSid] = useState('');
+  const [token, setToken] = useState('');
+  const [testTo, setTestTo] = useState('');
+  const [busy, setBusy] = useState('');
+  const load = async () => { try { const r = await api.get('/admin/sms/status'); setSt(r.data); if (r.data?.mode !== 'live') setOpen(true); } catch { /* */ } };
+  useEffect(() => { load(); }, []);
+  const run = async (label: string, fn: () => Promise<any>) => {
+    setBusy(label);
+    try { const r = await fn(); showToast('success', 'SMS', r?.data?.message || `${label} 완료`); await load(); return r; }
+    catch (e: any) { showToast('error', `SMS ${label} 실패`, e.response?.data?.detail || e.response?.data?.error || e.message); }
+    finally { setBusy(''); }
+  };
+  const saveCreds = () => run('자격증명 저장', async () => {
+    const r = await api.post('/admin/sms/credentials', { sid: sid.trim(), token: token.trim() });
+    setToken('');
+    if (r.data?.needs_number) {
+      if (confirm('연결 성공! 발신번호가 없습니다. 미국 SMS 번호를 자동 구매할까요? (월 약 $1.15, Twilio 잔액에서 차감)')) {
+        await api.post('/admin/sms/buy-number', { country: 'US' });
+      }
+    }
+    return r;
+  });
+  const live = st?.mode === 'live';
+  return (
+    <div className={`card p-4 border ${live ? 'border-exchange-buy/40' : 'border-exchange-yellow/50'}`}>
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-2">
+          <span className={`w-2 h-2 rounded-full ${live ? 'bg-exchange-buy animate-pulse' : 'bg-exchange-yellow'}`} />
+          <span className="text-sm font-semibold">KYC SMS 인증 발송 — {live ? <span className="text-exchange-buy">LIVE (Twilio)</span> : <span className="text-exchange-yellow">테스트 모드 (실발송 안 됨)</span>}</span>
+          {st?.balance && <span className="text-xs text-exchange-text-third">잔액 ${Number(st.balance.amount).toFixed(2)} {st.balance.currency}</span>}
+          {st?.from && <span className="text-xs text-exchange-text-third font-mono">발신 {st.from}</span>}
+        </div>
+        <button onClick={() => setOpen(o => !o)} className="text-xs text-exchange-text-secondary hover:text-exchange-text">{open ? '접기' : '설정'}</button>
+      </div>
+      {open && (
+        <div className="mt-3 space-y-3 text-xs">
+          <div className="rounded-lg border border-exchange-border bg-exchange-input/40 p-3 text-exchange-text-secondary leading-relaxed">
+            Twilio 콘솔 홈의 <b>Account SID</b>(AC로 시작)와 <b>Auth Token</b>(눈 아이콘 눌러 표시 후 복사)을 붙여넣고 저장하면 나머지는 자동입니다: 자격증명 검증 → 발신번호 없으면 미국 번호 자동 구매 → 테스트 발송 → LIVE 전환. 토큰은 서버에만 저장되고 화면에 다시 표시되지 않습니다.
+          </div>
+          <div className="grid md:grid-cols-2 gap-2">
+            <input value={sid} onChange={e => setSid(e.target.value)} placeholder={st?.sid_masked ? `Account SID (현재 ${st.sid_masked})` : 'Account SID — ACxxxxxxxx…'} className="input-field text-xs font-mono" />
+            <input value={token} onChange={e => setToken(e.target.value)} type="password" placeholder={st?.token_set ? 'Auth Token (저장됨 — 변경 시만 입력)' : 'Auth Token'} className="input-field text-xs font-mono" />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button disabled={!!busy || !sid || !token} onClick={saveCreds} className="btn-primary text-xs !py-1.5 !px-3 disabled:opacity-40">{busy === '자격증명 저장' ? '검증 중…' : '① 자격증명 저장·검증'}</button>
+            <button disabled={!!busy || !st?.token_set} onClick={() => { if (confirm('미국 SMS 번호를 구매합니다 (월 약 $1.15). 진행할까요?')) run('번호 구매', () => api.post('/admin/sms/buy-number', { country: 'US' })); }} className="px-3 py-1.5 rounded-lg border border-exchange-border hover:bg-exchange-hover disabled:opacity-40">② 미국 발신번호 자동 구매</button>
+            <div className="flex gap-1">
+              <input value={testTo} onChange={e => setTestTo(e.target.value)} placeholder="+82 10 1234 5678" className="input-field text-xs font-mono w-44" />
+              <button disabled={!!busy || !live || !testTo} onClick={() => run('테스트 발송', () => api.post('/admin/sms/test', { to: testTo }))} className="px-3 py-1.5 rounded-lg border border-exchange-border hover:bg-exchange-hover disabled:opacity-40">③ 테스트 발송</button>
+            </div>
+            {st?.token_set && (
+              <button disabled={!!busy} onClick={() => run(st.enabled ? '끄기' : '켜기', () => api.put('/admin/sms/enabled', { enabled: !st.enabled }))} className={`px-3 py-1.5 rounded-lg border ${st.enabled ? 'border-exchange-sell/40 text-exchange-sell' : 'border-exchange-buy/40 text-exchange-buy'} disabled:opacity-40`}>{st.enabled ? 'SMS 실발송 끄기' : 'SMS 실발송 켜기'}</button>
+            )}
+          </div>
+          {st?.numbers?.length > 0 && (
+            <div className="text-exchange-text-third">보유 번호: {st.numbers.map((n: any) => (
+              <button key={n.sid} onClick={() => run('발신번호 선택', () => api.put('/admin/sms/from', { from: n.phone_number }))} className={`font-mono mr-2 underline-offset-2 hover:underline ${st.from === n.phone_number ? 'text-exchange-buy' : ''}`}>{n.phone_number}{n.sms ? '' : ' (SMS 불가)'}</button>
+            ))}</div>
+          )}
+          {st?.account?.error && <div className="text-exchange-sell">Twilio 계정 조회 실패: {String(st.account.error)}</div>}
+          {st?.recent_sms?.length > 0 && (
+            <div className="text-exchange-text-third">최근 SMS: {st.recent_sms.slice(0, 5).map((r: any, i: number) => <span key={i} className="mr-2 font-mono">{r.target} {r.delivered ? '✓' : '✗'}{r.error ? ` (${String(r.error).slice(0, 40)})` : ''}</span>)}</div>
+          )}
+          <div className="text-[10px] text-exchange-text-third">Twilio 콘솔에서 추가로 켜야 할 것: <b>Messaging → Settings → Geo permissions</b>에서 Japan·South Korea 등 회원 국가 체크 (기본은 미국만 허용). 자동충전(Auto-recharge)은 꺼둔 상태 유지 권장.</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
 // KYC tab
 // ============================================================================
 function KycTab({ t, onUpdate }: any) {
@@ -1103,6 +1180,7 @@ function KycTab({ t, onUpdate }: any) {
 
   return (
     <div className="space-y-2">
+      <SmsProviderPanel />
       {list.length === 0 ? (
         <div className="card p-8 text-center text-exchange-text-third text-sm">{t('admin.noKyc')}</div>
       ) : list.map(k => (
