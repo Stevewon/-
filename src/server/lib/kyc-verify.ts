@@ -94,31 +94,72 @@ export function maskTarget(channel: Channel, target: string): string {
   return target.slice(0, 4) + '*'.repeat(Math.max(0, target.length - 7)) + target.slice(-3);
 }
 
+// ---------------------------------------------------------------------------
+// Twilio configuration — admin-managed in system_state (key 'twilio_config',
+// JSON {sid, token, from, messaging_service_sid, enabled}) so the owner can
+// paste credentials in the Admin console without touching Cloudflare env.
+// Env vars remain a fallback. Resolved once per request via loadTwilioConfig().
+// ---------------------------------------------------------------------------
+export interface TwilioConfig { sid: string; token: string; from?: string; messaging_service_sid?: string; enabled: boolean; source: 'db' | 'env' | 'none' }
+export const TWILIO_STATE_KEY = 'twilio_config';
+
+export async function loadTwilioConfig(env: KycVerifyEnv): Promise<TwilioConfig> {
+  const none: TwilioConfig = { sid: '', token: '', enabled: false, source: 'none' };
+  if (String(env.KYC_SMS_DEV_MODE || '').toLowerCase() === 'true') return none;
+  try {
+    const r = await env.DB.prepare(`SELECT value FROM system_state WHERE key = ?`).bind(TWILIO_STATE_KEY).first<{ value: string }>();
+    if (r?.value) {
+      const j = JSON.parse(r.value);
+      if (j?.sid && j?.token && j?.enabled !== false) {
+        return { sid: String(j.sid), token: String(j.token), from: j.from || undefined, messaging_service_sid: j.messaging_service_sid || undefined, enabled: true, source: 'db' };
+      }
+    }
+  } catch { /* fall through to env */ }
+  if (env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && (env.TWILIO_FROM || env.TWILIO_MESSAGING_SERVICE_SID)) {
+    return { sid: env.TWILIO_ACCOUNT_SID, token: env.TWILIO_AUTH_TOKEN, from: env.TWILIO_FROM, messaging_service_sid: env.TWILIO_MESSAGING_SERVICE_SID, enabled: true, source: 'env' };
+  }
+  return none;
+}
+
+export function twilioReady(cfg: TwilioConfig): boolean {
+  return cfg.enabled && Boolean(cfg.sid && cfg.token && (cfg.from || cfg.messaging_service_sid));
+}
+
+/** Synchronous env-only check kept for callers without DB access. */
 export function smsConfigured(env: KycVerifyEnv): boolean {
   if (String(env.KYC_SMS_DEV_MODE || '').toLowerCase() === 'true') return false;
   return Boolean(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && (env.TWILIO_FROM || env.TWILIO_MESSAGING_SERVICE_SID));
 }
 
-async function sendSms(env: KycVerifyEnv, to: string, body: string): Promise<{ sent: boolean; provider: string; ref?: string; error?: string }> {
-  if (!smsConfigured(env)) return { sent: false, provider: 'dev', error: 'sms_not_configured' };
-  const sid = env.TWILIO_ACCOUNT_SID as string;
-  const token = env.TWILIO_AUTH_TOKEN as string;
-  const form = new URLSearchParams({ To: to, Body: body });
-  if (env.TWILIO_MESSAGING_SERVICE_SID) form.set('MessagingServiceSid', env.TWILIO_MESSAGING_SERVICE_SID);
-  else form.set('From', env.TWILIO_FROM as string);
+export async function twilioRequest(cfg: { sid: string; token: string }, path: string, init: { method?: string; form?: Record<string, string> } = {}): Promise<{ ok: boolean; status: number; json: any }> {
+  const url = path.startsWith('http') ? path : `https://api.twilio.com/2010-04-01/Accounts/${cfg.sid}${path}`;
+  const r = await fetch(url, {
+    method: init.method || (init.form ? 'POST' : 'GET'),
+    headers: { Authorization: 'Basic ' + btoa(`${cfg.sid}:${cfg.token}`), ...(init.form ? { 'content-type': 'application/x-www-form-urlencoded' } : {}) },
+    body: init.form ? new URLSearchParams(init.form).toString() : undefined,
+    signal: AbortSignal.timeout(20_000),
+  });
+  const json: any = await r.json().catch(() => ({}));
+  return { ok: r.ok, status: r.status, json };
+}
+
+export async function sendSmsWith(cfg: TwilioConfig, to: string, body: string): Promise<{ sent: boolean; provider: string; ref?: string; error?: string }> {
+  if (!twilioReady(cfg)) return { sent: false, provider: 'dev', error: 'sms_not_configured' };
+  const form: Record<string, string> = { To: to, Body: body };
+  if (cfg.messaging_service_sid) form.MessagingServiceSid = cfg.messaging_service_sid;
+  else form.From = cfg.from as string;
   try {
-    const r = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {
-      method: 'POST',
-      headers: { Authorization: 'Basic ' + btoa(`${sid}:${token}`), 'content-type': 'application/x-www-form-urlencoded' },
-      body: form.toString(),
-      signal: AbortSignal.timeout(15_000),
-    });
-    const j: any = await r.json().catch(() => ({}));
-    if (!r.ok) return { sent: false, provider: 'twilio', error: `${r.status} ${j?.message || j?.code || ''}`.trim() };
-    return { sent: true, provider: 'twilio', ref: j?.sid };
+    const r = await twilioRequest(cfg, '/Messages.json', { form });
+    if (!r.ok) return { sent: false, provider: 'twilio', error: `${r.status} ${r.json?.message || r.json?.code || ''}`.trim() };
+    return { sent: true, provider: 'twilio', ref: r.json?.sid };
   } catch (e: any) {
     return { sent: false, provider: 'twilio', error: String(e?.message || e) };
   }
+}
+
+async function sendSms(env: KycVerifyEnv, to: string, body: string): Promise<{ sent: boolean; provider: string; ref?: string; error?: string }> {
+  const cfg = await loadTwilioConfig(env);
+  return sendSmsWith(cfg, to, body);
 }
 
 export interface IssueResult {
@@ -196,7 +237,7 @@ export async function issueCode(
     `UPDATE kyc_verifications SET delivered = ?, provider = ?, provider_ref = ?, error = ? WHERE id = ?`,
   ).bind(result.sent ? 1 : 0, result.provider, result.ref || null, result.error || null, id).run();
 
-  const devMode = channel === 'sms' && !smsConfigured(env);
+  const devMode = channel === 'sms' && !twilioReady(await loadTwilioConfig(env));
   if (!result.sent && !devMode) {
     // Real provider failed → burn the code so the cooldown does not trap the user.
     await DB.prepare(`UPDATE kyc_verifications SET used_at = datetime('now') WHERE id = ?`).bind(id).run();
@@ -264,6 +305,6 @@ export async function verifyStatus(env: KycVerifyEnv, user: { id: string; email:
     phone_verified_at: r?.kyc_phone_verified_at || null,
     phone_e164: r?.kyc_phone_e164 || null,
     phone_masked: r?.kyc_phone_e164 ? maskTarget('sms', r.kyc_phone_e164) : null,
-    sms_mode: smsConfigured(env) ? 'live' : 'dev',
+    sms_mode: twilioReady(await loadTwilioConfig(env)) ? 'live' : 'dev',
   };
 }

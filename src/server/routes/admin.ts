@@ -5,6 +5,7 @@ import { authMiddleware, adminMiddleware } from '../middleware/auth';
 import { createNotification } from './notifications';
 import { logAdminAction } from '../utils/audit';
 import { canSellSql } from '../../shared/shareholder';
+import { loadTwilioConfig, twilioReady, twilioRequest, sendSmsWith, toE164, TWILIO_STATE_KEY, ensureKycVerifySchema } from '../lib/kyc-verify';
 import {
   loadPlan as loadQtaDayPlan, savePlan as saveQtaDayPlan, normalizePlan as normalizeQtaDayPlan,
   planPhase as qtaPlanPhase, planStep as qtaPlanStep, DEFAULT_PLAN as QTA_DEFAULT_PLAN,
@@ -577,6 +578,135 @@ app.post('/users/:userId/toggle', async (c) => {
 // ============================================================================
 // KYC management
 // ============================================================================
+// ============================================================================
+// ★ OWNER_RULES §13 — SMS provider (Twilio) admin panel. The owner pastes the
+// Account SID + Auth Token here; the server validates them, buys a US number if
+// none exists, runs a test send, and flips KYC SMS from DEV mode to LIVE. The
+// credentials live in system_state.twilio_config (admin-only routes; the token
+// is never echoed back — only a masked preview).
+// ============================================================================
+function maskTok(v?: string) { return v && v.length > 8 ? `${v.slice(0, 4)}…${v.slice(-4)}` : v ? '••••' : ''; }
+async function saveTwilio(db: D1Database, patch: Record<string, any>) {
+  let cur: any = {};
+  try { const r = await db.prepare(`SELECT value FROM system_state WHERE key = ?`).bind(TWILIO_STATE_KEY).first<{ value: string }>(); cur = r?.value ? JSON.parse(r.value) : {}; } catch { cur = {}; }
+  const next = { ...cur, ...patch, updated_at: new Date().toISOString() };
+  await db.prepare(`INSERT INTO system_state (key, value, updated_at) VALUES (?, ?, datetime('now')) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`)
+    .bind(TWILIO_STATE_KEY, JSON.stringify(next)).run();
+  return next;
+}
+
+// GET /admin/sms/status — config (masked), live account info, balance, numbers, recent usage
+app.get('/sms/status', async (c) => {
+  const env = c.env as any;
+  await ensureKycVerifySchema(env.DB);
+  const cfg = await loadTwilioConfig(env);
+  const out: any = {
+    mode: twilioReady(cfg) ? 'live' : 'dev',
+    source: cfg.source,
+    sid_masked: maskTok(cfg.sid), token_set: Boolean(cfg.token), from: cfg.from || null, messaging_service_sid: cfg.messaging_service_sid || null,
+    enabled: cfg.enabled,
+  };
+  if (cfg.sid && cfg.token) {
+    try {
+      const [acct, bal, nums] = await Promise.all([
+        twilioRequest(cfg, '.json'),
+        twilioRequest(cfg, '/Balance.json'),
+        twilioRequest(cfg, '/IncomingPhoneNumbers.json?PageSize=20'),
+      ]);
+      out.account = acct.ok ? { friendly_name: acct.json?.friendly_name, status: acct.json?.status, type: acct.json?.type } : { error: acct.json?.message || acct.status };
+      out.balance = bal.ok ? { amount: Number(bal.json?.balance), currency: bal.json?.currency } : null;
+      out.numbers = nums.ok ? (nums.json?.incoming_phone_numbers || []).map((n: any) => ({ sid: n.sid, phone_number: n.phone_number, friendly_name: n.friendly_name, sms: Boolean(n.capabilities?.sms) })) : [];
+    } catch (e: any) { out.account = { error: String(e?.message || e) }; }
+  }
+  try {
+    out.usage = (await env.DB.prepare(`SELECT channel, provider, COUNT(*) n, SUM(delivered) delivered FROM kyc_verifications WHERE created_at >= datetime('now','-30 days') GROUP BY channel, provider`).all()).results;
+    out.recent_sms = (await env.DB.prepare(`SELECT created_at, target, delivered, provider, error FROM kyc_verifications WHERE channel='sms' ORDER BY created_at DESC LIMIT 10`).all()).results;
+  } catch { /* */ }
+  return c.json(out);
+});
+
+// POST /admin/sms/credentials { sid, token } — validate against Twilio, store, auto-pick a number.
+app.post('/sms/credentials', async (c) => {
+  const env = c.env as any;
+  let body: any = {}; try { body = await c.req.json(); } catch { /* */ }
+  const sid = String(body.sid || '').trim(); const token = String(body.token || '').trim();
+  if (!/^AC[0-9a-fA-F]{32}$/.test(sid)) return c.json({ error: 'Account SID must start with AC and be 34 chars' }, 400);
+  if (token.length < 20) return c.json({ error: 'Auth Token looks too short' }, 400);
+  const probe = await twilioRequest({ sid, token }, '.json').catch((e: any) => ({ ok: false, status: 0, json: { message: String(e?.message || e) } }));
+  if (!probe.ok) return c.json({ error: 'Twilio rejected the credentials', detail: probe.json?.message || probe.status }, 400);
+  // Existing SMS-capable number? use it.
+  let from: string | undefined;
+  try {
+    const nums = await twilioRequest({ sid, token }, '/IncomingPhoneNumbers.json?PageSize=20');
+    const smsNum = (nums.json?.incoming_phone_numbers || []).find((n: any) => n.capabilities?.sms);
+    if (smsNum) from = smsNum.phone_number;
+  } catch { /* */ }
+  const saved = await saveTwilio(env.DB, { sid, token, from: from || null, enabled: true });
+  await logAdminAction(c, { action: 'sms.credentials_set', targetType: 'system', targetId: 'twilio', payload: { sid_masked: maskTok(sid), from: from || null, account: probe.json?.friendly_name } });
+  return c.json({ ok: true, account: { friendly_name: probe.json?.friendly_name, status: probe.json?.status, type: probe.json?.type }, from: saved.from || null, needs_number: !saved.from });
+});
+
+// POST /admin/sms/buy-number { country?='US' } — buy the first SMS-capable local number.
+app.post('/sms/buy-number', async (c) => {
+  const env = c.env as any;
+  const cfg = await loadTwilioConfig(env);
+  if (!cfg.sid || !cfg.token) return c.json({ error: 'Set credentials first' }, 400);
+  let body: any = {}; try { body = await c.req.json(); } catch { /* */ }
+  const country = String(body.country || 'US').toUpperCase();
+  const avail = await twilioRequest(cfg, `/AvailablePhoneNumbers/${country}/Local.json?SmsEnabled=true&PageSize=5`);
+  if (!avail.ok) return c.json({ error: 'Could not list available numbers', detail: avail.json?.message || avail.status }, 502);
+  const cand = (avail.json?.available_phone_numbers || [])[0];
+  if (!cand) return c.json({ error: `No SMS-capable ${country} numbers available right now` }, 404);
+  const buy = await twilioRequest(cfg, '/IncomingPhoneNumbers.json', { form: { PhoneNumber: cand.phone_number, FriendlyName: 'QuantaEX KYC SMS' } });
+  if (!buy.ok) return c.json({ error: 'Purchase failed', detail: buy.json?.message || buy.status, code: buy.json?.code }, 502);
+  await saveTwilio(env.DB, { from: buy.json.phone_number, enabled: true });
+  await logAdminAction(c, { action: 'sms.number_bought', targetType: 'system', targetId: 'twilio', payload: { phone_number: buy.json.phone_number, sid: buy.json.sid, country } });
+  return c.json({ ok: true, phone_number: buy.json.phone_number, sid: buy.json.sid });
+});
+
+// PUT /admin/sms/from { from } — pick an existing number / alphanumeric sender id.
+app.put('/sms/from', async (c) => {
+  const env = c.env as any;
+  let body: any = {}; try { body = await c.req.json(); } catch { /* */ }
+  const from = String(body.from || '').trim();
+  if (!from) return c.json({ error: 'from required' }, 400);
+  await saveTwilio(env.DB, { from, enabled: true });
+  await logAdminAction(c, { action: 'sms.from_set', targetType: 'system', targetId: 'twilio', payload: { from } });
+  return c.json({ ok: true, from });
+});
+
+// POST /admin/sms/test { to } — real test send (costs one SMS).
+app.post('/sms/test', async (c) => {
+  const env = c.env as any;
+  const cfg = await loadTwilioConfig(env);
+  if (!twilioReady(cfg)) return c.json({ error: 'SMS not configured (need SID, token and a From number)' }, 400);
+  let body: any = {}; try { body = await c.req.json(); } catch { /* */ }
+  const to = toE164(String(body.to || ''), body.cc);
+  if (!to) return c.json({ error: 'Invalid destination (use +country number)' }, 400);
+  const r = await sendSmsWith(cfg, to, 'QuantaEX test message: SMS verification is now live. Code sample: 123456');
+  await logAdminAction(c, { action: 'sms.test_send', targetType: 'system', targetId: 'twilio', payload: { to, sent: r.sent, ref: r.ref || null, error: r.error || null } });
+  if (!r.sent) return c.json({ ok: false, error: r.error }, 502);
+  return c.json({ ok: true, to, ref: r.ref });
+});
+
+// PUT /admin/sms/enabled { enabled } — flip live/dev without deleting credentials.
+app.put('/sms/enabled', async (c) => {
+  const env = c.env as any;
+  let body: any = {}; try { body = await c.req.json(); } catch { /* */ }
+  const enabled = Boolean(body.enabled);
+  await saveTwilio(env.DB, { enabled });
+  await logAdminAction(c, { action: 'sms.enabled', targetType: 'system', targetId: 'twilio', payload: { enabled } });
+  return c.json({ ok: true, enabled });
+});
+
+// DELETE /admin/sms/credentials — wipe stored credentials.
+app.delete('/sms/credentials', async (c) => {
+  const env = c.env as any;
+  await env.DB.prepare(`DELETE FROM system_state WHERE key = ?`).bind(TWILIO_STATE_KEY).run();
+  await logAdminAction(c, { action: 'sms.credentials_cleared', targetType: 'system', targetId: 'twilio', payload: {} });
+  return c.json({ ok: true });
+});
+
 app.get('/kyc/pending', async (c) => {
   // ★ §13: expose dual-verification timestamps so the reviewer can see whether
   //   the email + phone were confirmed with 6-digit codes (legacy submissions
