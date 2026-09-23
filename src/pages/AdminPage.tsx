@@ -1084,6 +1084,7 @@ function SmsProviderPanel() {
   const [open, setOpen] = useState(false);
   const [sid, setSid] = useState('');
   const [token, setToken] = useState('');
+  const [provider, setProvider] = useState<'vonage' | 'twilio'>('vonage');
   const [testTo, setTestTo] = useState('');
   const [busy, setBusy] = useState('');
   const load = async () => { try { const r = await api.get('/admin/sms/status'); setSt(r.data); if (r.data?.mode !== 'live') setOpen(true); } catch { /* */ } };
@@ -1095,7 +1096,7 @@ function SmsProviderPanel() {
     finally { setBusy(''); }
   };
   const saveCreds = () => run('자격증명 저장', async () => {
-    const r = await api.post('/admin/sms/credentials', { sid: sid.trim(), token: token.trim() });
+    const r = await api.post('/admin/sms/credentials', { provider, sid: sid.trim(), token: token.trim(), ...(provider === 'vonage' ? { from: 'QuantaEX' } : {}) });
     setToken('');
     if (r.data?.needs_number) {
       if (confirm('연결 성공! 발신번호가 없습니다. 미국 SMS 번호를 자동 구매할까요? (월 약 $1.15, Twilio 잔액에서 차감)')) {
@@ -1110,7 +1111,7 @@ function SmsProviderPanel() {
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="flex items-center gap-2">
           <span className={`w-2 h-2 rounded-full ${live ? 'bg-exchange-buy animate-pulse' : 'bg-exchange-yellow'}`} />
-          <span className="text-sm font-semibold">KYC SMS 인증 발송 — {live ? <span className="text-exchange-buy">LIVE (Twilio)</span> : <span className="text-exchange-yellow">테스트 모드 (실발송 안 됨)</span>}</span>
+          <span className="text-sm font-semibold">KYC SMS 인증 발송 — {live ? <span className="text-exchange-buy">LIVE ({st?.provider === 'vonage' ? 'Vonage' : 'Twilio'})</span> : <span className="text-exchange-yellow">테스트 모드 (실발송 안 됨)</span>}</span>
           {st?.balance && <span className="text-xs text-exchange-text-third">잔액 ${Number(st.balance.amount).toFixed(2)} {st.balance.currency}</span>}
           {st?.from && <span className="text-xs text-exchange-text-third font-mono">발신 {st.from}</span>}
         </div>
@@ -1118,23 +1119,31 @@ function SmsProviderPanel() {
       </div>
       {open && (
         <div className="mt-3 space-y-3 text-xs">
+          <div className="flex items-center gap-1 bg-exchange-card rounded-lg border border-exchange-border p-1 w-fit">
+            {(['vonage', 'twilio'] as const).map(p => (
+              <button key={p} onClick={() => setProvider(p)} className={`px-3 py-1 text-xs rounded-md ${provider === p ? 'bg-exchange-hover text-exchange-yellow' : 'text-exchange-text-secondary'}`}>{p === 'vonage' ? 'Vonage (권장 · 심사 없음)' : 'Twilio (Trust Hub 승인 필요)'}</button>
+            ))}
+          </div>
           <div className="rounded-lg border border-exchange-border bg-exchange-input/40 p-3 text-exchange-text-secondary leading-relaxed">
-            Twilio 콘솔 홈의 <b>Account SID</b>(AC로 시작)와 <b>Auth Token</b>(눈 아이콘 눌러 표시 후 복사)을 붙여넣고 저장하면 나머지는 자동입니다: 자격증명 검증 → 발신번호 없으면 미국 번호 자동 구매 → 테스트 발송 → LIVE 전환. 토큰은 서버에만 저장되고 화면에 다시 표시되지 않습니다.
+            {provider === 'vonage'
+              ? <>Vonage 대시보드(dashboard.nexmo.com) 홈 우상단의 <b>API key</b>와 <b>API secret</b>을 붙여넣고 저장하면 즉시 LIVE. 발신자명 <b>QuantaEX</b>로 발송되며 번호 구매·사전 심사가 없습니다. 크레딧은 Billing에서 €10 정도만 충전(자동충전 OFF).</>
+              : <>Twilio 콘솔 홈의 <b>Account SID</b>(AC로 시작)와 <b>Auth Token</b>을 붙여넣으면 검증 → 미국 번호 자동 구매 → LIVE. ※ Trust Hub 컴플라이언스 승인이 먼저 필요합니다(미승인 시 번호 구매·발송 불가).</>}
+            {' '}키는 서버에만 저장되고 화면에 다시 표시되지 않습니다.
           </div>
           <div className="grid md:grid-cols-2 gap-2">
             <div>
-              <label className="block text-[10px] text-exchange-text-third mb-0.5">Account SID (AC로 시작, 34자)</label>
-              <input name="twilio_sid" autoComplete="off" data-lpignore="true" value={sid} onChange={e => setSid(e.target.value.trim())} placeholder={st?.sid_masked ? `현재 ${st.sid_masked}` : 'ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'} className={`input-field text-xs font-mono ${sid && !/^AC[0-9a-fA-F]{32}$/.test(sid) ? 'border-exchange-sell' : ''}`} />
-              {sid && !/^AC[0-9a-fA-F]{32}$/.test(sid) && <div className="text-[10px] text-exchange-sell mt-0.5">이메일/비밀번호가 아닙니다 — Twilio 콘솔의 Account SID를 붙여넣으세요</div>}
+              <label className="block text-[10px] text-exchange-text-third mb-0.5">{provider === 'vonage' ? 'API key (8자 영숫자)' : 'Account SID (AC로 시작, 34자)'}</label>
+              <input name="sms_key" autoComplete="off" data-lpignore="true" value={sid} onChange={e => setSid(e.target.value.trim())} placeholder={st?.sid_masked ? `현재 ${st.sid_masked}` : provider === 'vonage' ? 'a1b2c3d4' : 'ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'} className={`input-field text-xs font-mono ${sid && provider === 'twilio' && !/^AC[0-9a-fA-F]{32}$/.test(sid) ? 'border-exchange-sell' : ''}`} />
+              {sid.includes('@') && <div className="text-[10px] text-exchange-sell mt-0.5">이메일이 아닙니다 — 대시보드의 API key를 붙여넣으세요</div>}
             </div>
             <div>
-              <label className="block text-[10px] text-exchange-text-third mb-0.5">Auth Token (32자, 👁 눌러 표시 후 복사)</label>
-              <input name="twilio_token" autoComplete="new-password" data-lpignore="true" value={token} onChange={e => setToken(e.target.value.trim())} type="password" placeholder={st?.token_set ? '저장됨 — 변경 시만 입력' : 'Auth Token'} className="input-field text-xs font-mono" />
+              <label className="block text-[10px] text-exchange-text-third mb-0.5">{provider === 'vonage' ? 'API secret' : 'Auth Token (32자)'}</label>
+              <input name="sms_secret" autoComplete="new-password" data-lpignore="true" value={token} onChange={e => setToken(e.target.value.trim())} type="password" placeholder={st?.token_set ? '저장됨 — 변경 시만 입력' : provider === 'vonage' ? 'API secret' : 'Auth Token'} className="input-field text-xs font-mono" />
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
             <button disabled={!!busy || !sid || !token} onClick={saveCreds} className="btn-primary text-xs !py-1.5 !px-3 disabled:opacity-40">{busy === '자격증명 저장' ? '검증 중…' : '① 자격증명 저장·검증'}</button>
-            <button disabled={!!busy || !st?.token_set} onClick={() => { if (confirm('미국 SMS 번호를 구매합니다 (월 약 $1.15). 진행할까요?')) run('번호 구매', () => api.post('/admin/sms/buy-number', { country: 'US' })); }} className="px-3 py-1.5 rounded-lg border border-exchange-border hover:bg-exchange-hover disabled:opacity-40">② 미국 발신번호 자동 구매</button>
+            {st?.provider !== 'vonage' && <button disabled={!!busy || !st?.token_set} onClick={() => { if (confirm('미국 SMS 번호를 구매합니다 (월 약 $1.15). 진행할까요?')) run('번호 구매', () => api.post('/admin/sms/buy-number', { country: 'US' })); }} className="px-3 py-1.5 rounded-lg border border-exchange-border hover:bg-exchange-hover disabled:opacity-40">② 미국 발신번호 자동 구매</button>}
             <div className="flex gap-1">
               <input value={testTo} onChange={e => setTestTo(e.target.value)} placeholder="+82 10 1234 5678" className="input-field text-xs font-mono w-44" />
               <button disabled={!!busy || !live || !testTo} onClick={() => run('테스트 발송', () => api.post('/admin/sms/test', { to: testTo }))} className="px-3 py-1.5 rounded-lg border border-exchange-border hover:bg-exchange-hover disabled:opacity-40">③ 테스트 발송</button>
@@ -1152,7 +1161,7 @@ function SmsProviderPanel() {
           {st?.recent_sms?.length > 0 && (
             <div className="text-exchange-text-third">최근 SMS: {st.recent_sms.slice(0, 5).map((r: any, i: number) => <span key={i} className="mr-2 font-mono">{r.target} {r.delivered ? '✓' : '✗'}{r.error ? ` (${String(r.error).slice(0, 40)})` : ''}</span>)}</div>
           )}
-          <div className="text-[10px] text-exchange-text-third">Twilio 콘솔에서 추가로 켜야 할 것: <b>Messaging → Settings → Geo permissions</b>에서 Japan·South Korea 등 회원 국가 체크 (기본은 미국만 허용). 자동충전(Auto-recharge)은 꺼둔 상태 유지 권장.</div>
+          <div className="text-[10px] text-exchange-text-third">{st?.provider === 'vonage' || provider === 'vonage' ? '한국 수신은 통신사 정책상 영문 발신자명이 번호로 대체 표시될 수 있으나 수신은 됩니다. 자동충전은 꺼두세요.' : 'Twilio: Messaging → Settings → Geo permissions에서 Japan·South Korea 체크 필요. Auto-recharge OFF 유지.'}</div>
         </div>
       )}
     </div>
