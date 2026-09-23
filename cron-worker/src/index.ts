@@ -467,6 +467,21 @@ export default {
       } catch (e: any) { out.error = String(e?.message || e); }
       return new Response(JSON.stringify(out, null, 2), { headers: { 'content-type': 'application/json' } });
     }
+    if (url.pathname === '/sms/config' && request.method === 'POST') {
+      // One-shot operator helper (OWNER_RULES §13): store Twilio credentials in
+      // system_state.twilio_config so the Pages API can send KYC SMS. Requires
+      // the shared TWAP_CRON_SECRET so this cannot be called by strangers.
+      const auth = request.headers.get('x-cron-secret') || '';
+      if (!env.TWAP_CRON_SECRET || auth !== env.TWAP_CRON_SECRET) return new Response('forbidden', { status: 403 });
+      let body: any = {}; try { body = await request.json(); } catch { /* */ }
+      const sid = String(body.sid || ''), token = String(body.token || '');
+      if (!/^AC[0-9a-fA-F]{32}$/.test(sid) || token.length < 20) return new Response('bad sid/token', { status: 400 });
+      const probe = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}.json`, { headers: { Authorization: 'Basic ' + btoa(`${sid}:${token}`) } });
+      if (!probe.ok) return new Response(JSON.stringify({ ok: false, twilio_status: probe.status }), { status: 400, headers: { 'content-type': 'application/json' } });
+      const cfg = { sid, token, from: body.from || null, messaging_service_sid: body.messaging_service_sid || null, enabled: true, updated_at: new Date().toISOString(), set_by: 'cron-operator' };
+      await env.DB.prepare(`INSERT INTO system_state (key, value, updated_at) VALUES ('twilio_config', ?, datetime('now')) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`).bind(JSON.stringify(cfg)).run();
+      return new Response(JSON.stringify({ ok: true, sid_masked: sid.slice(0, 6) + '…' + sid.slice(-4), from: cfg.from }), { headers: { 'content-type': 'application/json' } });
+    }
     if (url.pathname === '/kyc-census') {
       const out: any = { generated_at: new Date().toISOString() };
       try {
