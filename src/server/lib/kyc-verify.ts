@@ -100,29 +100,66 @@ export function maskTarget(channel: Channel, target: string): string {
 // paste credentials in the Admin console without touching Cloudflare env.
 // Env vars remain a fallback. Resolved once per request via loadTwilioConfig().
 // ---------------------------------------------------------------------------
-export interface TwilioConfig { sid: string; token: string; from?: string; messaging_service_sid?: string; enabled: boolean; source: 'db' | 'env' | 'none' }
+// provider: 'twilio' (sid/token = Account SID / Auth Token, needs a From number)
+//           'vonage' (sid/token = API key / API secret, From = alphanumeric
+//                     sender id like "QuantaEX" — no number purchase, no
+//                     Trust Hub. Chosen 2026-09-22 after Twilio's KCB
+//                     compliance iframe was unusable from Korea.)
+export type SmsProvider = 'twilio' | 'vonage';
+export interface TwilioConfig { provider: SmsProvider; sid: string; token: string; from?: string; messaging_service_sid?: string; enabled: boolean; source: 'db' | 'env' | 'none' }
 export const TWILIO_STATE_KEY = 'twilio_config';
+export const VONAGE_DEFAULT_FROM = 'QuantaEX';
 
 export async function loadTwilioConfig(env: KycVerifyEnv): Promise<TwilioConfig> {
-  const none: TwilioConfig = { sid: '', token: '', enabled: false, source: 'none' };
+  const none: TwilioConfig = { provider: 'twilio', sid: '', token: '', enabled: false, source: 'none' };
   if (String(env.KYC_SMS_DEV_MODE || '').toLowerCase() === 'true') return none;
   try {
     const r = await env.DB.prepare(`SELECT value FROM system_state WHERE key = ?`).bind(TWILIO_STATE_KEY).first<{ value: string }>();
     if (r?.value) {
       const j = JSON.parse(r.value);
       if (j?.sid && j?.token && j?.enabled !== false) {
-        return { sid: String(j.sid), token: String(j.token), from: j.from || undefined, messaging_service_sid: j.messaging_service_sid || undefined, enabled: true, source: 'db' };
+        const provider: SmsProvider = j.provider === 'vonage' ? 'vonage' : 'twilio';
+        return { provider, sid: String(j.sid), token: String(j.token), from: j.from || (provider === 'vonage' ? VONAGE_DEFAULT_FROM : undefined), messaging_service_sid: j.messaging_service_sid || undefined, enabled: true, source: 'db' };
       }
     }
   } catch { /* fall through to env */ }
   if (env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && (env.TWILIO_FROM || env.TWILIO_MESSAGING_SERVICE_SID)) {
-    return { sid: env.TWILIO_ACCOUNT_SID, token: env.TWILIO_AUTH_TOKEN, from: env.TWILIO_FROM, messaging_service_sid: env.TWILIO_MESSAGING_SERVICE_SID, enabled: true, source: 'env' };
+    return { provider: 'twilio', sid: env.TWILIO_ACCOUNT_SID, token: env.TWILIO_AUTH_TOKEN, from: env.TWILIO_FROM, messaging_service_sid: env.TWILIO_MESSAGING_SERVICE_SID, enabled: true, source: 'env' };
   }
   return none;
 }
 
 export function twilioReady(cfg: TwilioConfig): boolean {
   return cfg.enabled && Boolean(cfg.sid && cfg.token && (cfg.from || cfg.messaging_service_sid));
+}
+
+/** Vonage (Nexmo) SMS API — https://rest.nexmo.com/sms/json */
+export async function vonageSend(cfg: { sid: string; token: string; from?: string }, to: string, text: string): Promise<{ sent: boolean; provider: string; ref?: string; error?: string }> {
+  try {
+    const r = await fetch('https://rest.nexmo.com/sms/json', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ api_key: cfg.sid, api_secret: cfg.token, from: cfg.from || VONAGE_DEFAULT_FROM, to: to.replace(/^\+/, ''), text, type: 'text' }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    const j: any = await r.json().catch(() => ({}));
+    const m = j?.messages?.[0];
+    if (!m) return { sent: false, provider: 'vonage', error: `HTTP ${r.status}` };
+    if (String(m.status) !== '0') return { sent: false, provider: 'vonage', error: `${m.status} ${m['error-text'] || ''}`.trim() };
+    return { sent: true, provider: 'vonage', ref: m['message-id'] };
+  } catch (e: any) {
+    return { sent: false, provider: 'vonage', error: String(e?.message || e) };
+  }
+}
+
+/** Vonage account probe: balance (also validates key/secret). */
+export async function vonageBalance(cfg: { sid: string; token: string }): Promise<{ ok: boolean; value?: number; error?: string }> {
+  try {
+    const r = await fetch(`https://rest.nexmo.com/account/get-balance?api_key=${encodeURIComponent(cfg.sid)}&api_secret=${encodeURIComponent(cfg.token)}`, { signal: AbortSignal.timeout(15_000) });
+    const j: any = await r.json().catch(() => ({}));
+    if (!r.ok || j?.value == null) return { ok: false, error: j?.['error-code-label'] || j?.title || `HTTP ${r.status}` };
+    return { ok: true, value: Number(j.value) };
+  } catch (e: any) { return { ok: false, error: String(e?.message || e) }; }
 }
 
 /** Synchronous env-only check kept for callers without DB access. */
@@ -145,6 +182,7 @@ export async function twilioRequest(cfg: { sid: string; token: string }, path: s
 
 export async function sendSmsWith(cfg: TwilioConfig, to: string, body: string): Promise<{ sent: boolean; provider: string; ref?: string; error?: string }> {
   if (!twilioReady(cfg)) return { sent: false, provider: 'dev', error: 'sms_not_configured' };
+  if (cfg.provider === 'vonage') return vonageSend(cfg, to, body);
   const form: Record<string, string> = { To: to, Body: body };
   if (cfg.messaging_service_sid) form.MessagingServiceSid = cfg.messaging_service_sid;
   else form.From = cfg.from as string;

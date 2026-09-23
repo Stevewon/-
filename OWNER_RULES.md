@@ -246,6 +246,7 @@ QTA/USDT 마켓에만 적용. 회사(마켓메이커) = **mm-bot-a / mm-bot-b** 
 - **발송사**: 이메일 = 기존 Resend(무료). SMS = **Twilio** — Cloudflare Pages 환경변수 `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM`(발신번호 또는 Sender ID "QuantaEX") 또는 `TWILIO_MESSAGING_SERVICE_SID`. **미설정 시 개발모드**: 코드가 응답·서버 로그에 표시돼 흐름 테스트 가능(회원 화면에 "Test mode" 표시). `KYC_SMS_DEV_MODE=true`로 강제 개발모드.
 - **★ 관리자 SMS 설정 패널 (Admin → KYC 탭 상단)**: Cloudflare 환경변수 대신 **Account SID + Auth Token을 붙여넣으면 서버가 자동 처리** — ① 자격증명 검증(Twilio 계정 조회) ② 발신번호 없으면 미국 SMS 번호 자동 구매(월 ~$1.15) ③ 테스트 발송 ④ LIVE 전환. 잔액·보유 번호·최근 발송 결과 표시, 실발송 ON/OFF 스위치. 토큰은 `system_state.twilio_config`에만 저장되고 화면에 재표시되지 않음. 환경변수(`TWILIO_*`)는 폴백. Audit `sms.*`.
 - **Twilio 콘솔에서 오너가 할 것**: Geo permissions(Messaging → Settings)에서 Japan·South Korea 등 회원 국가 허용. Auto-recharge는 OFF 유지.
+- **★ 2026-09-22 발송사 전환 — Vonage 권장**: Twilio는 한국 계정에 KCB 본인인증(Trust Hub)을 강제하는데 그 iframe이 Chrome·Edge 모두에서 차단돼 진행 불가(에러 20003, 번호 구매·발송 전면 차단). 관리자 SMS 패널에 **Vonage(Nexmo) 지원 추가** — API key/secret 붙여넣기 → 잔액 조회로 검증 → 즉시 LIVE. 발신자명 `QuantaEX`(번호 구매 불필요, 사전 심사 없음). 저장 형식 `system_state.twilio_config = {provider:'vonage'|'twilio', sid, token, from, enabled}`. Twilio 계정($50)은 Trust Hub 풀리면 패널에서 전환 가능. Twilio 토큰이 채팅에 노출됨 → **오너가 Regenerate 필요**.
 - **관리자**: KYC 대기 카드에 ✉ 이메일 인증/미인증 · 📱 SMS 인증(+E.164)/미인증 · 신분증/주소증명 첨부 여부 뱃지. §13 이전 제출 42건은 둘 다 "미인증"으로 표시됨.
 - **저장**: `kyc_verifications`(코드 해시·발송사·오류·IP), `users.kyc_email_verified_at / kyc_phone_verified_at / kyc_phone_e164`. 마이그레이션 0061.
 - **코드**: `src/server/lib/kyc-verify.ts`, `src/server/routes/profile.ts`(/kyc/verify/status·send·confirm + 제출 게이트), `src/pages/KycPage.tsx`, `src/server/routes/admin.ts` /kyc/pending.
@@ -276,3 +277,4 @@ QTA/USDT 마켓에만 적용. 회사(마켓메이커) = **mm-bot-a / mm-bot-b** 
 - 2026-09-21: **★ 12번 신설 — QTA 매도 사전 승인 회원만(지분자 자동 포함) 3겹 강제 + 매도 현황 위젯(오늘/남은/누적 USDT) + 본인 지갑 출금 신청 금요일 10~16시 KST 창구.** 이전 지시가 코드에 누락돼 있던 것을 점검 후 봉합. 0060 마이그레이션.
 - 2026-09-22: **13번 신설 — KYC 이메일+SMS 6자리 이중 인증.** 요청 시에만 발송·쿨다운·일일 한도로 비용 통제, Twilio 미설정 시 개발모드, 관리자 KYC 카드에 인증 뱃지. 0061 마이그레이션.
 - 2026-09-22: **13번 보강 — 관리자 SMS(Twilio) 설정 패널.** SID/토큰 붙여넣기 → 검증·번호 자동구매·테스트·LIVE 전환 원클릭. 잔액/번호/발송 이력 표시.
+- 2026-09-22: **13번 보강 — SMS 발송사 Vonage 지원.** Twilio KCB Trust Hub 차단으로 전환. 관리자 패널 provider 선택(Vonage 권장), 잔액 검증, 발신자명 QuantaEX.

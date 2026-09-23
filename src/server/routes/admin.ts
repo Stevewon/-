@@ -5,7 +5,7 @@ import { authMiddleware, adminMiddleware } from '../middleware/auth';
 import { createNotification } from './notifications';
 import { logAdminAction } from '../utils/audit';
 import { canSellSql } from '../../shared/shareholder';
-import { loadTwilioConfig, twilioReady, twilioRequest, sendSmsWith, toE164, TWILIO_STATE_KEY, ensureKycVerifySchema } from '../lib/kyc-verify';
+import { loadTwilioConfig, twilioReady, twilioRequest, sendSmsWith, toE164, TWILIO_STATE_KEY, ensureKycVerifySchema, vonageBalance, VONAGE_DEFAULT_FROM } from '../lib/kyc-verify';
 import {
   loadPlan as loadQtaDayPlan, savePlan as saveQtaDayPlan, normalizePlan as normalizeQtaDayPlan,
   planPhase as qtaPlanPhase, planStep as qtaPlanStep, DEFAULT_PLAN as QTA_DEFAULT_PLAN,
@@ -602,11 +602,17 @@ app.get('/sms/status', async (c) => {
   const cfg = await loadTwilioConfig(env);
   const out: any = {
     mode: twilioReady(cfg) ? 'live' : 'dev',
+    provider: cfg.provider,
     source: cfg.source,
     sid_masked: maskTok(cfg.sid), token_set: Boolean(cfg.token), from: cfg.from || null, messaging_service_sid: cfg.messaging_service_sid || null,
     enabled: cfg.enabled,
   };
-  if (cfg.sid && cfg.token) {
+  if (cfg.provider === 'vonage' && cfg.sid && cfg.token) {
+    const b = await vonageBalance(cfg);
+    out.account = b.ok ? { friendly_name: 'Vonage', status: 'active', type: 'vonage' } : { error: b.error };
+    out.balance = b.ok ? { amount: b.value, currency: 'EUR' } : null;
+    out.numbers = [];
+  } else if (cfg.sid && cfg.token) {
     try {
       const [acct, bal, nums] = await Promise.all([
         twilioRequest(cfg, '.json'),
@@ -630,6 +636,16 @@ app.post('/sms/credentials', async (c) => {
   const env = c.env as any;
   let body: any = {}; try { body = await c.req.json(); } catch { /* */ }
   const sid = String(body.sid || '').trim(); const token = String(body.token || '').trim();
+  const provider = String(body.provider || (/^AC[0-9a-fA-F]{32}$/.test(sid) ? 'twilio' : 'vonage'));
+  if (provider === 'vonage') {
+    if (sid.length < 6 || token.length < 8) return c.json({ error: 'Vonage API key / secret look too short' }, 400);
+    const b = await vonageBalance({ sid, token });
+    if (!b.ok) return c.json({ error: 'Vonage rejected the credentials', detail: b.error }, 400);
+    const from = String(body.from || VONAGE_DEFAULT_FROM).trim().slice(0, 11) || VONAGE_DEFAULT_FROM;
+    await saveTwilio(env.DB, { provider: 'vonage', sid, token, from, messaging_service_sid: null, enabled: true });
+    await logAdminAction(c, { action: 'sms.credentials_set', targetType: 'system', targetId: 'vonage', payload: { sid_masked: maskTok(sid), from, balance_eur: b.value } });
+    return c.json({ ok: true, provider: 'vonage', account: { friendly_name: 'Vonage', status: 'active', type: 'vonage' }, balance: { amount: b.value, currency: 'EUR' }, from, needs_number: false });
+  }
   if (!/^AC[0-9a-fA-F]{32}$/.test(sid)) return c.json({ error: 'Account SID must start with AC and be 34 chars' }, 400);
   if (token.length < 20) return c.json({ error: 'Auth Token looks too short' }, 400);
   const probe = await twilioRequest({ sid, token }, '.json').catch((e: any) => ({ ok: false, status: 0, json: { message: String(e?.message || e) } }));
@@ -641,7 +657,7 @@ app.post('/sms/credentials', async (c) => {
     const smsNum = (nums.json?.incoming_phone_numbers || []).find((n: any) => n.capabilities?.sms);
     if (smsNum) from = smsNum.phone_number;
   } catch { /* */ }
-  const saved = await saveTwilio(env.DB, { sid, token, from: from || null, enabled: true });
+  const saved = await saveTwilio(env.DB, { provider: 'twilio', sid, token, from: from || null, enabled: true });
   await logAdminAction(c, { action: 'sms.credentials_set', targetType: 'system', targetId: 'twilio', payload: { sid_masked: maskTok(sid), from: from || null, account: probe.json?.friendly_name } });
   return c.json({ ok: true, account: { friendly_name: probe.json?.friendly_name, status: probe.json?.status, type: probe.json?.type }, from: saved.from || null, needs_number: !saved.from });
 });
