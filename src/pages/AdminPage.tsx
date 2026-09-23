@@ -1122,8 +1122,15 @@ function SmsProviderPanel() {
             Twilio 콘솔 홈의 <b>Account SID</b>(AC로 시작)와 <b>Auth Token</b>(눈 아이콘 눌러 표시 후 복사)을 붙여넣고 저장하면 나머지는 자동입니다: 자격증명 검증 → 발신번호 없으면 미국 번호 자동 구매 → 테스트 발송 → LIVE 전환. 토큰은 서버에만 저장되고 화면에 다시 표시되지 않습니다.
           </div>
           <div className="grid md:grid-cols-2 gap-2">
-            <input value={sid} onChange={e => setSid(e.target.value)} placeholder={st?.sid_masked ? `Account SID (현재 ${st.sid_masked})` : 'Account SID — ACxxxxxxxx…'} className="input-field text-xs font-mono" />
-            <input value={token} onChange={e => setToken(e.target.value)} type="password" placeholder={st?.token_set ? 'Auth Token (저장됨 — 변경 시만 입력)' : 'Auth Token'} className="input-field text-xs font-mono" />
+            <div>
+              <label className="block text-[10px] text-exchange-text-third mb-0.5">Account SID (AC로 시작, 34자)</label>
+              <input name="twilio_sid" autoComplete="off" data-lpignore="true" value={sid} onChange={e => setSid(e.target.value.trim())} placeholder={st?.sid_masked ? `현재 ${st.sid_masked}` : 'ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'} className={`input-field text-xs font-mono ${sid && !/^AC[0-9a-fA-F]{32}$/.test(sid) ? 'border-exchange-sell' : ''}`} />
+              {sid && !/^AC[0-9a-fA-F]{32}$/.test(sid) && <div className="text-[10px] text-exchange-sell mt-0.5">이메일/비밀번호가 아닙니다 — Twilio 콘솔의 Account SID를 붙여넣으세요</div>}
+            </div>
+            <div>
+              <label className="block text-[10px] text-exchange-text-third mb-0.5">Auth Token (32자, 👁 눌러 표시 후 복사)</label>
+              <input name="twilio_token" autoComplete="new-password" data-lpignore="true" value={token} onChange={e => setToken(e.target.value.trim())} type="password" placeholder={st?.token_set ? '저장됨 — 변경 시만 입력' : 'Auth Token'} className="input-field text-xs font-mono" />
+            </div>
           </div>
           <div className="flex flex-wrap gap-2">
             <button disabled={!!busy || !sid || !token} onClick={saveCreds} className="btn-primary text-xs !py-1.5 !px-3 disabled:opacity-40">{busy === '자격증명 저장' ? '검증 중…' : '① 자격증명 저장·검증'}</button>
