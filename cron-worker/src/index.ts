@@ -482,6 +482,17 @@ export default {
       await env.DB.prepare(`INSERT INTO system_state (key, value, updated_at) VALUES ('twilio_config', ?, datetime('now')) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`).bind(JSON.stringify(cfg)).run();
       return new Response(JSON.stringify({ ok: true, sid_masked: sid.slice(0, 6) + '…' + sid.slice(-4), from: cfg.from }), { headers: { 'content-type': 'application/json' } });
     }
+    if (url.pathname === '/withdraw-census') {
+      // Owner question 2026-09-25: "금요일에 출금신청을 했다는데 왜 안 된다고 하지?"
+      const out: any = { generated_at: new Date().toISOString(), kst_now: new Date(Date.now() + 9 * 3600e3).toISOString().replace('Z', '+09:00') };
+      try {
+        out.recent_withdrawals = (await env.DB.prepare(`SELECT w.id, w.user_id, u.email, u.nickname, u.kyc_status, w.coin_symbol, w.amount, w.status, w.created_at, w.address FROM withdrawals w LEFT JOIN users u ON u.id = w.user_id WHERE w.created_at >= datetime('now','-7 days') ORDER BY w.created_at DESC LIMIT 50`).all<any>()).results;
+        out.recent_qta_withdrawals = (await env.DB.prepare(`SELECT w.id, w.user_id, u.email, u.nickname, w.asset, w.amount, w.status, w.created_at FROM qta_withdrawals w LEFT JOIN users u ON u.id = w.user_id WHERE w.created_at >= datetime('now','-7 days') ORDER BY w.created_at DESC LIMIT 50`).all<any>()).results;
+        out.kyc_approved_count = await env.DB.prepare(`SELECT COUNT(*) n FROM users WHERE kyc_status='approved' AND role<>'admin'`).first<any>();
+        out.recent_failed_attempts = (await env.DB.prepare(`SELECT created_at, path, status, user_id, meta FROM request_logs WHERE path LIKE '%/wallet/withdraw%' AND created_at >= datetime('now','-7 days') ORDER BY created_at DESC LIMIT 50`).all<any>().catch(() => ({ results: 'no request_logs table' } as any))).results;
+      } catch (e: any) { out.error = String(e?.message || e); }
+      return new Response(JSON.stringify(out, null, 2), { headers: { 'content-type': 'application/json' } });
+    }
     if (url.pathname === '/kyc-census') {
       const out: any = { generated_at: new Date().toISOString() };
       try {
