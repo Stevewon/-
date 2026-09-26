@@ -348,6 +348,23 @@ const MIGRATIONS: Migration[] = [
     ],
   },
   {
+    // 0062 — Bybit-style Convert (QTA → USDT off-book OTC swap), OWNER_RULES §14.
+    id: '0062_convert_orders',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS convert_orders (
+        id TEXT PRIMARY KEY, user_id TEXT NOT NULL, from_coin TEXT NOT NULL, to_coin TEXT NOT NULL,
+        from_amount REAL NOT NULL, to_amount REAL NOT NULL, price REAL NOT NULL, ref_price REAL,
+        spread_bps INTEGER NOT NULL DEFAULT 0, fee_amount REAL NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'quoted', quote_expires_at TEXT NOT NULL, filled_at TEXT,
+        treasury_user_id TEXT, source TEXT NOT NULL DEFAULT 'convert', error TEXT, ip_address TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
+      `CREATE INDEX IF NOT EXISTS idx_convert_user_status ON convert_orders(user_id, status, filled_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_convert_created ON convert_orders(created_at DESC)`,
+      `INSERT OR IGNORE INTO system_state (key, value) VALUES ('convert_enabled', 'on')`,
+      `INSERT OR IGNORE INTO system_state (key, value) VALUES ('convert_spread_bps', '30')`,
+    ],
+  },
+  {
     // 0056 — Admin-granted staking with a BONUS (인정) principal.
     // Mirrors /migrations/0056_staking_bonus_principal.sql. ADD COLUMN is
     // idempotent-guarded ("duplicate column name" is swallowed by runMigrations).

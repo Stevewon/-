@@ -6,6 +6,7 @@ import { getUserFeeTier, recordFeeLedger, type FeeTier } from '../utils/fees';
 import { getRiskState } from '../lib/risk';
 import { loadPlan, planPhase, planEnvelope, planStep, resolveEffectivePlan } from '../lib/qta-day-plan';
 import { loadSellApproval, canSellSql } from '../../shared/shareholder';
+import { memberSoldSince, memberSoldTodayUsdt } from '../../shared/sell-cap';
 
 // ★★★ PERMANENT OWNER ORDER — QTA member-sell hard cap (OWNER_RULES.md §6) ★★★
 const MM_BOT_A = 'mm-bot-a';
@@ -167,14 +168,9 @@ app.post('/', authMiddleware, rlPlaceOrder, async (c) => {
   }
 
   if (base === 'QTA' && side === 'sell' && !isCompanyAccount && user.id !== MM_BOT_A && user.id !== MM_BOT_B) {
-    const nowKst = new Date(Date.now() + 9 * 3600 * 1000);
-    const kstMidnightUtcMs = Date.UTC(nowKst.getUTCFullYear(), nowKst.getUTCMonth(), nowKst.getUTCDate()) - 9 * 3600 * 1000;
-    const dayStartUtc = new Date(kstMidnightUtcMs).toISOString().slice(0, 19).replace('T', ' ');
-    const r = await c.env.DB.prepare(
-      `SELECT COALESCE(SUM(total),0) spent FROM trades
-        WHERE market_id=? AND buyer_id IN (?, ?) AND seller_id=? AND created_at >= ?`
-    ).bind(market.id, MM_BOT_A, MM_BOT_B, user.id, dayStartUtc).first<{ spent: number }>().catch(() => null);
-    const roomUsdt = Math.max(0, MM_MEMBER_BUY_BUDGET_USDT - Number(r?.spent || 0));
+    // ★ §14: spot sells + Convert share ONE daily budget (src/shared/sell-cap.ts).
+    const spentToday = await memberSoldTodayUsdt(c.env.DB as any, market.id, user.id);
+    const roomUsdt = Math.max(0, MM_MEMBER_BUY_BUDGET_USDT - spentToday);
     if (type === 'market') {
       if (roomUsdt < Number(market.min_order_total || 1)) {
         return c.json({
@@ -402,11 +398,10 @@ app.get('/qta-sell-status', authMiddleware, async (c) => {
   const nowKst = new Date(Date.now() + 9 * 3600 * 1000);
   const kstMidnightUtcMs = Date.UTC(nowKst.getUTCFullYear(), nowKst.getUTCMonth(), nowKst.getUTCDate()) - 9 * 3600 * 1000;
   const dayStartUtc = new Date(kstMidnightUtcMs).toISOString().slice(0, 19).replace('T', ' ');
+  // ★ §14: spot + Convert combined (one shared 5만원/day budget).
   const [today, total, bid] = await Promise.all([
-    DB.prepare(`SELECT COALESCE(SUM(total),0) usdt, COALESCE(SUM(amount),0) qta, COUNT(*) n FROM trades WHERE market_id=? AND buyer_id IN (?, ?) AND seller_id=? AND created_at >= ?`)
-      .bind(market.id, MM_BOT_A, MM_BOT_B, user.id, dayStartUtc).first<any>().catch(() => null),
-    DB.prepare(`SELECT COALESCE(SUM(total),0) usdt, COALESCE(SUM(amount),0) qta, COUNT(*) n FROM trades WHERE market_id=? AND buyer_id IN (?, ?) AND seller_id=?`)
-      .bind(market.id, MM_BOT_A, MM_BOT_B, user.id).first<any>().catch(() => null),
+    memberSoldSince(DB as any, market.id, user.id, dayStartUtc),
+    memberSoldSince(DB as any, market.id, user.id),
     DB.prepare("SELECT price FROM orders WHERE market_id=? AND side='buy' AND status IN ('open','partial') ORDER BY price DESC LIMIT 1")
       .bind(market.id).first<{ price: number }>().catch(() => null),
   ]);
@@ -425,12 +420,15 @@ app.get('/qta-sell-status', authMiddleware, async (c) => {
     today_sold_usdt: Math.round(todayUsdt * 10000) / 10000,
     today_sold_qta: Number(today?.qta || 0),
     today_trades: Number(today?.n || 0),
+    today_spot_usdt: Math.round(Number(today?.spot_usdt || 0) * 10000) / 10000,
+    today_convert_usdt: Math.round(Number(today?.convert_usdt || 0) * 10000) / 10000,
     remaining_usdt: remainingUsdt == null ? null : Math.round(remainingUsdt * 10000) / 10000,
     remaining_krw: remainingUsdt == null ? null : Math.round(remainingUsdt * USDT_KRW_RATE),
     remaining_qta: remainingUsdt == null || !(refPrice > 0) ? null : Math.floor(remainingUsdt / refPrice),
     total_sold_usdt: Math.round(Number(total?.usdt || 0) * 10000) / 10000,
     total_sold_qta: Number(total?.qta || 0),
     total_trades: Number(total?.n || 0),
+    total_convert_usdt: Math.round(Number(total?.convert_usdt || 0) * 10000) / 10000,
     ref_price: refPrice,
     min_order_total: Number(market.min_order_total || 1),
     resets_at: kstReset,
@@ -645,14 +643,8 @@ async function matchOrder(
     // (bot BUY taker hitting member asks is capped per-ask by the mm-tick itself,
     //  but guard here too in case of a multi-ask sweep.)
     if (capSellerId) {
-      const nowKst = new Date(Date.now() + 9 * 3600 * 1000);
-      const kstMidnightUtcMs = Date.UTC(nowKst.getUTCFullYear(), nowKst.getUTCMonth(), nowKst.getUTCDate()) - 9 * 3600 * 1000;
-      const dayStartUtc = new Date(kstMidnightUtcMs).toISOString().slice(0, 19).replace('T', ' ');
-      const r = await DB.prepare(
-        `SELECT COALESCE(SUM(total),0) spent FROM trades
-          WHERE market_id=? AND buyer_id IN (?, ?) AND seller_id=? AND created_at >= ?`
-      ).bind(market.id, MM_BOT_A, MM_BOT_B, capSellerId, dayStartUtc).first<{ spent: number }>().catch(() => null);
-      memberSellRoomUsdt = Math.max(0, MM_MEMBER_BUY_BUDGET_USDT - Number(r?.spent || 0));
+      // ★ §14: spot + Convert share the budget.
+      memberSellRoomUsdt = Math.max(0, MM_MEMBER_BUY_BUDGET_USDT - await memberSoldTodayUsdt(DB as any, market.id, capSellerId));
     }
   }
   const perSellerSpent = new Map<string, number>();
@@ -702,14 +694,7 @@ async function matchOrder(
       const sid = String(match.user_id);
       let spent = perSellerSpent.get(sid);
       if (spent == null) {
-        const nowKst = new Date(Date.now() + 9 * 3600 * 1000);
-        const kstMidnightUtcMs = Date.UTC(nowKst.getUTCFullYear(), nowKst.getUTCMonth(), nowKst.getUTCDate()) - 9 * 3600 * 1000;
-        const dayStartUtc = new Date(kstMidnightUtcMs).toISOString().slice(0, 19).replace('T', ' ');
-        const r = await DB.prepare(
-          `SELECT COALESCE(SUM(total),0) spent FROM trades
-            WHERE market_id=? AND buyer_id IN (?, ?) AND seller_id=? AND created_at >= ?`
-        ).bind(market.id, MM_BOT_A, MM_BOT_B, sid, dayStartUtc).first<{ spent: number }>().catch(() => null);
-        spent = Number(r?.spent || 0);
+        spent = await memberSoldTodayUsdt(DB as any, market.id, sid); // ★ §14 spot + Convert
         perSellerSpent.set(sid, spent);
       }
       const room = MM_MEMBER_BUY_BUDGET_USDT - spent;
@@ -1623,10 +1608,7 @@ app.post('/qta-mm-tick', async (c) => {
     return id;
   }
 
-  // KST day start for the per-member daily company-buy cap.
-  const nowKst = new Date(Date.now() + 9 * 3600 * 1000);
-  const kstMidnightUtcMs = Date.UTC(nowKst.getUTCFullYear(), nowKst.getUTCMonth(), nowKst.getUTCDate()) - 9 * 3600 * 1000;
-  const dayStartUtc = new Date(kstMidnightUtcMs).toISOString().slice(0, 19).replace('T', ' ');
+  // (per-member daily company-buy cap now via memberSoldTodayUsdt — §14 shared with Convert)
 
   // ★ 24h floor: the company must NOT buy (nor let anyone buy) below this price.
   const floor = await qtaPriceFloor(DB, market);
@@ -1686,13 +1668,7 @@ app.post('/qta-mm-tick', async (c) => {
     async function companyBoughtFrom(sellerId: string): Promise<number> {
       const cached = spentBySeller.get(sellerId);
       if (cached != null) return cached;
-      const r = await DB.prepare(
-        `SELECT COALESCE(SUM(t.total),0) spent FROM trades t
-           WHERE t.market_id=? AND t.buyer_id IN (?, ?) AND t.seller_id=?
-             AND t.created_at >= ?`
-      ).bind(market.id, MM_BOT_A, MM_BOT_B, sellerId, dayStartUtc)
-        .first<{ spent: number }>().catch(() => null);
-      const v = Number(r?.spent || 0);
+      const v = await memberSoldTodayUsdt(DB as any, market.id, sellerId); // ★ §14 spot + Convert
       spentBySeller.set(sellerId, v);
       return v;
     }

@@ -11,7 +11,7 @@ import {
 import useStore from '../store/useStore';
 import { useI18n } from '../i18n';
 import api from '../utils/api';
-import { formatPrice, timeAgo } from '../utils/format';
+import { formatPrice, formatAmount, timeAgo } from '../utils/format';
 import { showToast } from '../components/common/Toast';
 import CoinIcon from '../components/common/CoinIcon';
 import AdminLayout, { type AdminTab } from '../components/layout/AdminLayout';
@@ -2142,7 +2142,7 @@ function ManualDepositModal({ onClose, onSuccess, t }: any) {
 // ============================================================================
 // Trades tab
 // ============================================================================
-function TradesTab({ t }: any) {
+function SpotTradesTable({ t }: any) {
   const [list, setList] = useState<any[]>([]);
   useEffect(() => {
     api.get('/admin/trades?limit=100').then(r => setList(r.data)).catch(() => {});
@@ -2180,6 +2180,124 @@ function TradesTab({ t }: any) {
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+// ============================================================================
+// ★ §14 Convert (Bybit-style QTA → USDT 스왑) — 관리자 원장 + 스위치 + 스프레드
+// ============================================================================
+function ConvertAdminPanel() {
+  const [data, setData] = useState<any>(null);
+  const [status, setStatus] = useState('filled');
+  const [q, setQ] = useState('');
+  const [spread, setSpread] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const load = async () => {
+    try {
+      const r = await api.get(`/admin/converts?status=${status}&q=${encodeURIComponent(q)}&limit=200`);
+      setData(r.data);
+      if (r.data?.settings && spread === '') setSpread(String(r.data.settings.spread_bps ?? 30));
+    } catch { /* ignore */ }
+  };
+  useEffect(() => { load(); }, [status]);
+
+  const toggle = async () => {
+    if (!data?.settings) return;
+    setBusy(true);
+    try {
+      await api.put('/admin/converts/settings', { enabled: !data.settings.enabled });
+      showToast('success', 'Convert', !data.settings.enabled ? 'Convert 활성화' : 'Convert 일시 중지');
+      await load();
+    } catch (e: any) { showToast('error', '실패', e?.response?.data?.error || 'error'); }
+    finally { setBusy(false); }
+  };
+  const saveSpread = async () => {
+    setBusy(true);
+    try {
+      await api.put('/admin/converts/settings', { spread_bps: Number(spread) });
+      showToast('success', 'Convert', `스프레드 ${spread} bps 저장`);
+      await load();
+    } catch (e: any) { showToast('error', '실패', e?.response?.data?.error || 'error'); }
+    finally { setBusy(false); }
+  };
+
+  const tot = data?.totals || {};
+  const st = data?.settings || {};
+  return (
+    <div className="card p-4 space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="font-semibold text-sm">🔁 Convert (QTA → USDT 즉시 스왑) — OWNER_RULES §14</div>
+          <div className="text-[11px] text-exchange-text-third">바이빗 Convert 방식: 호가창·체결·차트에 영향 없음(OTC) · 0 수수료 · 매도승인자만 · 현물 매도와 일 5만원 한도 공유 · QTA는 회사 트레저리(admin)로, USDT는 트레저리에서 지급</div>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={toggle} disabled={busy || !data} className={`px-3 py-1.5 rounded text-xs font-semibold ${st.enabled ? 'bg-exchange-buy/15 text-exchange-buy' : 'bg-exchange-sell/15 text-exchange-sell'}`}>
+            {st.enabled ? '● 운영 중 (클릭: 중지)' : '○ 중지됨 (클릭: 재개)'}
+          </button>
+          <div className="flex items-center gap-1 text-xs">
+            <span className="text-exchange-text-third">스프레드</span>
+            <input value={spread} onChange={e => setSpread(e.target.value.replace(/[^0-9]/g, ''))} className="w-16 bg-exchange-input border border-exchange-border rounded px-2 py-1 text-right tabular-nums" />
+            <span className="text-exchange-text-third">bps</span>
+            <button onClick={saveSpread} disabled={busy} className="px-2 py-1 rounded bg-exchange-yellow/15 text-exchange-yellow font-semibold">저장</button>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-xs">
+        <div className="rounded border border-exchange-border p-2"><div className="text-exchange-text-third">오늘 스왑</div><div className="font-semibold tabular-nums">{Number(tot.today_usdt || 0).toFixed(2)} USDT</div><div className="text-exchange-text-third tabular-nums">{formatAmount(tot.today_qta || 0)} QTA</div></div>
+        <div className="rounded border border-exchange-border p-2"><div className="text-exchange-text-third">누적 스왑</div><div className="font-semibold tabular-nums">{Number(tot.usdt || 0).toFixed(2)} USDT</div><div className="text-exchange-text-third tabular-nums">{formatAmount(tot.qta || 0)} QTA · {tot.n || 0}건</div></div>
+        <div className="rounded border border-exchange-border p-2"><div className="text-exchange-text-third">이용 회원</div><div className="font-semibold tabular-nums">{tot.members || 0}명</div></div>
+        <div className="rounded border border-exchange-border p-2"><div className="text-exchange-text-third">트레저리 USDT (지급 여력)</div><div className={`font-semibold tabular-nums ${Number(st.treasury?.usdt || 0) < 100 ? 'text-exchange-sell' : ''}`}>{Number(st.treasury?.usdt || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })}</div></div>
+        <div className="rounded border border-exchange-border p-2"><div className="text-exchange-text-third">트레저리 QTA</div><div className="font-semibold tabular-nums">{formatAmount(st.treasury?.qta || 0)}</div></div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        {['filled', 'failed', 'expired', 'cancelled', 'all'].map(k => (
+          <button key={k} onClick={() => setStatus(k)} className={`px-2.5 py-1 rounded ${status === k ? 'bg-exchange-yellow/15 text-exchange-yellow font-semibold' : 'bg-exchange-input text-exchange-text-secondary'}`}>{k}</button>
+        ))}
+        <input value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => e.key === 'Enter' && load()} placeholder="이메일/닉네임 검색" className="bg-exchange-input border border-exchange-border rounded px-2 py-1 text-xs w-48" />
+        <button onClick={load} className="px-2 py-1 rounded bg-exchange-input text-xs">조회</button>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-exchange-text-third border-b border-exchange-border">
+              <th className="text-left px-2 py-1.5">시각(KST)</th><th className="text-left px-2 py-1.5">회원</th>
+              <th className="text-right px-2 py-1.5">QTA</th><th className="text-right px-2 py-1.5">USDT</th>
+              <th className="text-right px-2 py-1.5">가격</th><th className="text-right px-2 py-1.5">기준가</th><th className="text-right px-2 py-1.5">bps</th>
+              <th className="text-left px-2 py-1.5">상태</th>
+            </tr>
+          </thead>
+          <tbody>
+            {!data?.rows?.length ? (
+              <tr><td colSpan={8} className="px-2 py-6 text-center text-exchange-text-third">데이터 없음</td></tr>
+            ) : data.rows.map((r: any) => (
+              <tr key={r.id} className="border-b border-exchange-border/50">
+                <td className="px-2 py-1.5 tabular-nums text-exchange-text-third">{new Date(String(r.filled_at || r.created_at).replace(' ', 'T') + 'Z').toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })}</td>
+                <td className="px-2 py-1.5"><div className="font-medium">{r.nickname}</div><div className="text-exchange-text-third">{r.email}{r.kyc_name ? ` · ${r.kyc_name}` : ''}</div></td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{formatAmount(r.from_amount)}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums font-semibold">{Number(r.to_amount).toFixed(4)}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{Number(r.price).toFixed(8)}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums text-exchange-text-third">{Number(r.ref_price || 0).toFixed(8)}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums text-exchange-text-third">{r.spread_bps}</td>
+                <td className="px-2 py-1.5"><span className={`px-1.5 py-0.5 rounded ${r.status === 'filled' ? 'bg-exchange-buy/15 text-exchange-buy' : 'bg-exchange-sell/15 text-exchange-sell'}`}>{r.status}</span>{r.error ? <span className="ml-1 text-exchange-text-third">{r.error}</span> : null}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function TradesTab({ t }: any) {
+  return (
+    <div className="space-y-4">
+      <ConvertAdminPanel />
+      <SpotTradesTable t={t} />
     </div>
   );
 }

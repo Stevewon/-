@@ -16,7 +16,7 @@ import {
   Wallet, Eye, EyeOff, RefreshCw, ArrowDownLeft, ArrowUpRight,
   TrendingUp, TrendingDown, Search, ChevronDown, ChevronUp,
   Clock, CheckCircle2, XCircle, AlertCircle, PieChart,
-  History, Receipt,
+  History, Receipt, ArrowDownUp,
 } from 'lucide-react';
 
 type Tab = 'assets' | 'deposits' | 'withdrawals';
@@ -332,6 +332,13 @@ export default function WalletPage() {
               style={{ gap: '6px', padding: '10px 16px', borderRadius: '10px', fontSize: '14px' }}
             >
               <TrendingUp size={16} /> {t('wallet.trade')}
+            </Link>
+            <Link
+              to="/convert"
+              className="inline-flex items-center bg-exchange-text/10 text-exchange-text hover:bg-exchange-text/20 transition-colors font-medium"
+              style={{ gap: '6px', padding: '10px 16px', borderRadius: '10px', fontSize: '14px' }}
+            >
+              <ArrowDownUp size={16} /> {t('wallet.convert')}
             </Link>
           </div>
         </div>

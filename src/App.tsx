@@ -15,6 +15,7 @@ import RegisterPage from './pages/RegisterPage';
 const MarketsPage = lazy(() => import('./pages/MarketsPage'));
 const EarnPage = lazy(() => import('./pages/EarnPage'));
 const WalletPage = lazy(() => import('./pages/WalletPage'));
+const ConvertPage = lazy(() => import('./pages/ConvertPage'));
 const AdminPage = lazy(() => import('./pages/AdminPage'));
 const AdminDepositsMobilePage = lazy(() => import('./pages/AdminDepositsMobilePage'));
 const HomePage = lazy(() => import('./pages/HomePage'));
@@ -128,6 +129,7 @@ export default function App() {
           <Route path="profile/notifications" element={<ProtectedRoute><NotificationSettingsPage /></ProtectedRoute>} />
           <Route path="profile/price-alerts" element={<ProtectedRoute><PriceAlertsPage /></ProtectedRoute>} />
           <Route path="wallet" element={<ProtectedRoute><WalletPage /></ProtectedRoute>} />
+          <Route path="convert" element={<ProtectedRoute><ConvertPage /></ProtectedRoute>} />
           <Route path="futures" element={<ProtectedRoute><FuturesPage /></ProtectedRoute>} />
           <Route path="margin" element={<ProtectedRoute><MarginPage /></ProtectedRoute>} />
           <Route path="admin" element={<AdminProtectedRoute><AdminPage /></AdminProtectedRoute>} />
