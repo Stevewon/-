@@ -214,6 +214,7 @@ export default function TradePanel({ symbol, initialPrice, forceSide, onComplete
                 <span className="tabular-nums">{Number(sellStatus.total_sold_usdt).toFixed(2)} USDT <span className="text-exchange-text-third">({formatPrice(sellStatus.total_sold_qta)} QTA · {sellStatus.total_trades})</span></span>
               </div>
               <div className="text-[10px] text-exchange-text-third">{t('trade.sellResetNote')}{sellStatus.approval_source === 'shareholder' ? ` · ${t('trade.sellApprovedShareholder')}` : ''}</div>
+              <a href="/convert" className="block text-[11px] text-exchange-yellow hover:underline">{t('convert.title')} → USDT ({t('convert.zeroFee')}) ›</a>
             </>
           )}
         </div>

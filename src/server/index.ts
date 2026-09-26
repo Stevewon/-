@@ -16,6 +16,7 @@ import futuresRoutes from './routes/futures';
 import marginRoutes from './routes/margin';
 import v1Routes from './routes/v1';
 import earnRoutes from './routes/earn';
+import convertRoutes from './routes/convert';
 import { installObservability, captureError } from './utils/observability';
 import { geoBlock, geoStatusHandler } from './middleware/geo-block';
 import { isQuantariumAsset } from './lib/asset-routing';
@@ -1991,6 +1992,7 @@ app.route('/api/auth', authRoutes);
 app.route('/api/market', marketRoutes);
 app.route('/api/orders', orderRoutes);
 app.route('/api/wallet', walletRoutes);
+app.route('/api/convert', convertRoutes);
 app.route('/api/admin', adminRoutes);
 app.route('/api/notifications', notificationRoutes);
 // Public notice board (read-only). Admin CRUD lives in /api/admin/notices.

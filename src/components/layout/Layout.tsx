@@ -1,5 +1,5 @@
 import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
-import { BarChart3, Wallet, LayoutGrid, Shield, LogIn, LogOut, User, ClipboardList, TrendingUp, Layers, Percent } from 'lucide-react';
+import { BarChart3, Wallet, LayoutGrid, Shield, LogIn, LogOut, User, ClipboardList, TrendingUp, Layers, Percent, ArrowDownUp } from 'lucide-react';
 import useStore from '../../store/useStore';
 import { useI18n } from '../../i18n';
 import QuantaLogo from '../common/QuantaLogo';
@@ -36,6 +36,7 @@ export default function Layout() {
       { path: '/margin', label: t('margin.title') || 'Margin', icon: Layers },
       { path: '/orders', label: t('nav.orders'), icon: ClipboardList },
       { path: '/wallet', label: t('nav.wallet'), icon: Wallet },
+      { path: '/convert', label: t('nav.convert'), icon: ArrowDownUp },
     ] : []),
     ...(user?.role === 'admin' ? [
       { path: '/admin', label: t('nav.admin'), icon: Shield },

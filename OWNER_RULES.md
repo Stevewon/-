@@ -253,6 +253,22 @@ QTA/USDT 마켓에만 적용. 회사(마켓메이커) = **mm-bot-a / mm-bot-b** 
 
 ---
 
+## 14. Convert — 바이빗식 QTA → USDT 즉시 스왑 (2026-09-26 지시)
+
+> "바이빗처럼 우리도 데일리로 얻은 QTA를 바로 USDT로 스왑할 수 있게 기능을 만들자. 이게 거래소 매도로 간주해서 실 거래그래프에도 영향을 미치나? 바이빗은 어떤 식인지 분석해서 우리도 같은 케이스로 적용해줘."
+
+- **바이빗 Convert 분석 결과(그대로 적용)**: ① 2단계 — [Quote] 가격 제시(약 10초 유효) → [Confirm] 그 가격 그대로 체결, 슬리피지 0, 수수료 0. ② **OTC/RFQ 모델** — 상대방은 바이빗 마켓메이커이고 **현물 호가창을 타지 않음**. 따라서 **체결 테이프·캔들 차트·24h 거래량에 전혀 반영되지 않음**(현물 매도로 간주되지 않음). ③ 가격은 현물 인덱스 기반이지만 MM 스프레드 때문에 현물 마지막 체결가와 약간 다를 수 있음.
+- **우리 구현(동일 케이스)**: 상대방 = **회사 트레저리(admin 계정)**. 회원 QTA → 트레저리 QTA 지갑, USDT는 트레저리 USDT 지갑에서 지급. `trades`에 행을 만들지 않고, `candles`·`orders`·`coins.price_usd`를 건드리지 않음 → **차트/거래그래프 영향 0**. 가격 = 회사 최우선 매수호가(mm-bot 벽) − 스프레드(`system_state.convert_spread_bps`, 기본 30bps). 견적 10초 유효, 수수료 0.
+- **★ 오너 규칙은 전부 그대로 적용(우회 불가)**: §12 **사전 매도승인 회원(지분자 자동)만** 견적 가능(`SELL_NOT_APPROVED`). §6 **하루 5만원(34.48 USDT) 한도는 현물 매도와 Convert가 하나의 예산을 공유**(`src/shared/sell-cap.ts` — trades + convert_orders 합산). 견적·체결 양 시점에서 재검사, 초과 요청은 남은 한도로 자동 축소. 트레저리 USDT 부족 시 `LIQUIDITY_UNAVAILABLE`(회원 손실 없음, 원자적 롤백).
+- **받은 USDT 성격**: `available_initial`을 올리지 않음 → 회원 소유 잔액(출금 가능). 다만 §7·§12 출금 규칙(금요일 10~16시 KST, 하루 1회, 5만원, 화이트리스트)은 그대로 적용. 소비된 QTA가 회사 지급분이었다면 `available_initial`은 available 이하로 자동 정리.
+- **회원 화면**: `/convert` (헤더 메뉴 Convert, Wallet 「Convert」버튼, Trade 매도위젯 링크). From QTA / To USDT / Available / Max / Quote → 10초 카운트다운 → Confirm. 일일 한도 위젯(현물·Convert 분리 표기), 작동 원리 4줄, 내역. 문구 영어(§0).
+- **관리자**: Admin → Trades 탭 상단 「Convert」패널 — 운영/중지 스위치(`system_state.convert_enabled`), 스프레드 bps 저장, 오늘/누적 스왑, 이용 회원 수, **트레저리 USDT 지급 여력**(100 미만 빨강), 원장(회원·QTA·USDT·가격·기준가·bps·상태·오류). Users→매도승인 목록의 오늘/누적 매도액도 Convert 포함. Audit `convert.settings`.
+- **트레저리 운영 주의**: Convert로 회사가 사준 QTA는 이미 admin 트레저리 장부에 있음(봇 경유 아님) → §8 봇→트레저리 장부 스윕 대상이 아니고, 핫월렛→메인지갑 온체인 스윕은 기존 루틴 그대로. **admin USDT 잔고가 곧 Convert 지급 여력**이므로 관리자 패널에서 확인.
+- **저장**: `convert_orders`(quoted→filled|expired|cancelled|failed, 가격·기준가·bps·트레저리·IP), `system_state.convert_enabled / convert_spread_bps`. 마이그레이션 0062.
+- **코드**: `src/server/routes/convert.ts`(/status·/quote·/accept·/history), `src/shared/sell-cap.ts`(+ cron-worker 복사본), `src/server/routes/order.ts`(모든 5만원 게이트가 공유 헬퍼 사용), `src/server/routes/admin.ts`(/converts, /converts/settings, /users/sellers 합산), `src/pages/ConvertPage.tsx`, `AdminPage.tsx` ConvertAdminPanel.
+
+---
+
 ## 변경 이력
 - 2026-08-31: 최초 작성. 관리자 인정 스테이킹(총금액 데일리·매칭 / 실입금 반환), 데일리 KST 자정 기준, 매칭 5단계 1회성 규칙 못박음.
 - 2026-09-04: **바이너리 규칙 근본 정정.** ① 좌우 볼륨은 무한대(하부 실적 전부 반영, 이전 볼륨 2× 하드캡·드롭 폐기). ② 매칭수당 총 한도 = 본인 몸값 × 2(USD 누계, 좌우 통합). ③ 데일리와 매칭 200% 한도는 별개. 전체 라인 볼륨 재산정(namim 좌 $2,000→$6,000 등), 매칭 지급 총액 불변(268,250 QTA).
@@ -278,3 +294,4 @@ QTA/USDT 마켓에만 적용. 회사(마켓메이커) = **mm-bot-a / mm-bot-b** 
 - 2026-09-22: **13번 신설 — KYC 이메일+SMS 6자리 이중 인증.** 요청 시에만 발송·쿨다운·일일 한도로 비용 통제, Twilio 미설정 시 개발모드, 관리자 KYC 카드에 인증 뱃지. 0061 마이그레이션.
 - 2026-09-22: **13번 보강 — 관리자 SMS(Twilio) 설정 패널.** SID/토큰 붙여넣기 → 검증·번호 자동구매·테스트·LIVE 전환 원클릭. 잔액/번호/발송 이력 표시.
 - 2026-09-22: **13번 보강 — SMS 발송사 Vonage 지원.** Twilio KCB Trust Hub 차단으로 전환. 관리자 패널 provider 선택(Vonage 권장), 잔액 검증, 발신자명 QuantaEX.
+- 2026-09-26: **14번 신설 — Convert(바이빗식 QTA→USDT 즉시 스왑).** 바이빗 분석: OTC/RFQ, 호가창 미경유 → 차트·거래량 무영향. 동일 적용: 트레저리 상대 체결, trades/candles 미기록, 견적 10초·0수수료·30bps. §12 매도승인·§6 5만원 한도는 현물과 공유(sell-cap 공용 헬퍼로 order.ts 5개 게이트 통합). /convert 페이지, Admin Trades Convert 패널(스위치·스프레드·원장·트레저리 여력), 0062 마이그레이션.

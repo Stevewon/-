@@ -5,6 +5,7 @@ import { authMiddleware, adminMiddleware } from '../middleware/auth';
 import { createNotification } from './notifications';
 import { logAdminAction } from '../utils/audit';
 import { canSellSql } from '../../shared/shareholder';
+import { soldUsdtSql } from '../../shared/sell-cap';
 import { loadTwilioConfig, twilioReady, twilioRequest, sendSmsWith, toE164, TWILIO_STATE_KEY, ensureKycVerifySchema, vonageBalance, VONAGE_DEFAULT_FROM } from '../lib/kyc-verify';
 import {
   loadPlan as loadQtaDayPlan, savePlan as saveQtaDayPlan, normalizePlan as normalizeQtaDayPlan,
@@ -254,12 +255,13 @@ app.get('/users/sellers', async (c) => {
              COALESCE(u.fee_exempt_exchange_holder,0) AS is_exchange_shareholder,
              COALESCE(u.fee_exempt_casino_holder,0) AS is_casino_shareholder,
              COALESCE(w.available,0) AS qta_available, COALESCE(w.locked,0) AS qta_locked,
-             COALESCE((SELECT SUM(t.total) FROM trades t WHERE t.seller_id = u.id AND t.buyer_id IN ('mm-bot-a','mm-bot-b') AND t.created_at >= ?),0) AS today_sold_usdt,
-             COALESCE((SELECT SUM(t.total) FROM trades t WHERE t.seller_id = u.id AND t.buyer_id IN ('mm-bot-a','mm-bot-b')),0) AS total_sold_usdt
+             ${soldUsdtSql('u', true)} AS today_sold_usdt,
+             ${soldUsdtSql('u', false)} AS total_sold_usdt,
+             COALESCE((SELECT SUM(cv.to_amount) FROM convert_orders cv WHERE cv.user_id = u.id AND cv.from_coin='QTA' AND cv.status='filled' AND cv.filled_at >= ?),0) AS today_convert_usdt
         FROM users u
         LEFT JOIN wallets w ON w.user_id = u.id AND w.coin_symbol = 'QTA'
        WHERE ${canSellSql('u')}
-       ORDER BY u.nickname`).bind(dayStartUtc).all()).results || [];
+       ORDER BY u.nickname`).bind(dayStartUtc, dayStartUtc, dayStartUtc).all()).results || [];
   } catch (e: any) {
     return c.json({ ok: false, error: String(e?.message || e), rows: [] });
   }
@@ -1546,6 +1548,72 @@ app.put('/qta-deposits/auto-return', async (c) => {
   ).bind(enabled ? 'on' : 'off').run();
   await logAdminAction(c, { action: 'qta_deposit.auto_return_switch', targetType: 'system', targetId: 'qta_auto_return', payload: { enabled } });
   return c.json({ ok: true, enabled });
+});
+
+// ============================================================================
+// ★ §14 Convert (Bybit-style QTA → USDT swap) — admin console
+//   GET  /admin/converts?status=filled|failed|all&q=&limit=   ledger + totals
+//   PUT  /admin/converts/settings { enabled?, spread_bps? }   switch + spread
+// ============================================================================
+app.get('/converts', async (c) => {
+  const db = c.env.DB;
+  const status = String(c.req.query('status') || 'filled');
+  const q = String(c.req.query('q') || '').trim().toLowerCase();
+  const limit = Math.min(500, Math.max(1, parseInt(c.req.query('limit') || '200', 10) || 200));
+  const where: string[] = [];
+  const args: any[] = [];
+  if (status && status !== 'all') { where.push('cv.status = ?'); args.push(status); }
+  if (q) { where.push('(LOWER(u.email) LIKE ? OR LOWER(u.nickname) LIKE ? OR LOWER(u.kyc_name) LIKE ?)'); args.push(`%${q}%`, `%${q}%`, `%${q}%`); }
+  let rows: any[] = [], totals: any = null, settings: any = { enabled: true, spread_bps: 30 };
+  try {
+    rows = (await db.prepare(`
+      SELECT cv.*, u.email, u.nickname, u.kyc_name
+        FROM convert_orders cv JOIN users u ON u.id = cv.user_id
+       ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+       ORDER BY cv.created_at DESC LIMIT ?`).bind(...args, limit).all()).results || [];
+    const nowKst = new Date(Date.now() + 9 * 3600 * 1000);
+    const dayStartUtc = new Date(Date.UTC(nowKst.getUTCFullYear(), nowKst.getUTCMonth(), nowKst.getUTCDate()) - 9 * 3600 * 1000).toISOString().slice(0, 19).replace('T', ' ');
+    totals = await db.prepare(`
+      SELECT COUNT(*) n, COALESCE(SUM(from_amount),0) qta, COALESCE(SUM(to_amount),0) usdt,
+             COALESCE(SUM(CASE WHEN filled_at >= ? THEN to_amount END),0) today_usdt,
+             COALESCE(SUM(CASE WHEN filled_at >= ? THEN from_amount END),0) today_qta,
+             COUNT(DISTINCT user_id) members
+        FROM convert_orders WHERE status='filled'`).bind(dayStartUtc, dayStartUtc).first();
+    const st = (await db.prepare("SELECT key, value FROM system_state WHERE key IN ('convert_enabled','convert_spread_bps')").all()).results || [];
+    for (const r of st as any[]) {
+      if (r.key === 'convert_enabled') settings.enabled = r.value !== 'off';
+      if (r.key === 'convert_spread_bps') settings.spread_bps = Number(r.value) || 0;
+    }
+    const tre = await db.prepare("SELECT COALESCE(SUM(CASE WHEN coin_symbol='USDT' THEN available END),0) usdt, COALESCE(SUM(CASE WHEN coin_symbol='QTA' THEN available END),0) qta FROM wallets WHERE user_id IN (SELECT id FROM users WHERE role='admin' OR email='admin@quantaex.io')").first();
+    settings.treasury = tre;
+  } catch (e: any) {
+    return c.json({ ok: false, error: String(e?.message || e), rows: [], totals, settings });
+  }
+  return c.json({ ok: true, rows, totals, settings });
+});
+
+app.put('/converts/settings', async (c) => {
+  const db = c.env.DB;
+  let body: any = {}; try { body = await c.req.json(); } catch { /* */ }
+  const out: any = {};
+  if (typeof body.enabled === 'boolean') {
+    await db.prepare(
+      `INSERT INTO system_state (key, value, updated_at) VALUES ('convert_enabled', ?, datetime('now'))
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`
+    ).bind(body.enabled ? 'on' : 'off').run();
+    out.enabled = body.enabled;
+  }
+  if (body.spread_bps != null) {
+    const bps = Math.round(Number(body.spread_bps));
+    if (!Number.isFinite(bps) || bps < 0 || bps > 1000) return c.json({ error: 'spread_bps must be 0..1000' }, 400);
+    await db.prepare(
+      `INSERT INTO system_state (key, value, updated_at) VALUES ('convert_spread_bps', ?, datetime('now'))
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`
+    ).bind(String(bps)).run();
+    out.spread_bps = bps;
+  }
+  await logAdminAction(c, { action: 'convert.settings', targetType: 'system', targetId: 'convert', payload: out });
+  return c.json({ ok: true, ...out });
 });
 
 // POST /admin/qta-deposits/:id/auto-return
