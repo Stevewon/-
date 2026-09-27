@@ -2207,16 +2207,18 @@ function StakersTab({ t, onUpdate }: any) {
   const [open, setOpen] = useState<string | null>(null);
   const [positions, setPositions] = useState<Record<string, any[]>>({});
 
-  const load = async () => {
+  const load = async (qOverride?: string) => {
     setLoading(true);
     try {
-      const r = await api.get('/admin/stakers', { params: { q, status, approval, sort } });
+      const r = await api.get('/admin/stakers', { params: { q: (qOverride ?? q).trim(), status, approval, sort } });
       setRows(r.data?.rows || []); setTotals(r.data?.totals || null);
       if (r.data?.ok === false) showToast('error', '조회 실패', r.data.error || '');
     } catch (e: any) { showToast('error', '조회 실패', e?.response?.data?.error || e.message); }
     finally { setLoading(false); }
   };
   useEffect(() => { load(); }, [status, approval, sort]);
+  // ★ live search: debounce 350 ms while typing (no Enter needed)
+  useEffect(() => { const h = window.setTimeout(() => load(q), 350); return () => window.clearTimeout(h); }, [q]);
 
   const toggleApproval = async (u: any) => {
     const isSh = !!u.is_exchange_shareholder || !!u.is_casino_shareholder;
@@ -2263,8 +2265,12 @@ function StakersTab({ t, onUpdate }: any) {
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs">
-          <input value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => e.key === 'Enter' && load()} placeholder="이메일 / 닉네임 / 실명 / 추천코드 / ID" className="bg-exchange-input border border-exchange-border rounded px-2.5 py-1.5 text-xs w-64" />
-          <button onClick={load} className="px-3 py-1.5 rounded bg-exchange-yellow/15 text-exchange-yellow font-semibold">검색</button>
+          <div className="relative">
+            <input autoFocus value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => e.key === 'Enter' && load()} placeholder="🔍 이메일 / 닉네임 / 실명 / 추천코드 / 전화 / ID — 입력하면 바로 검색" className="bg-exchange-input border border-exchange-yellow/40 rounded px-2.5 py-1.5 text-xs w-[26rem]" />
+            {q && <button onClick={() => setQ('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-exchange-text-third hover:text-exchange-text" title="지우기">✕</button>}
+          </div>
+          <button onClick={() => load()} className="px-3 py-1.5 rounded bg-exchange-yellow/15 text-exchange-yellow font-semibold">검색</button>
+          {q && <span className="text-exchange-text-third">"{q}" 결과 {rows.length}명</span>}
           <span className="text-exchange-text-third ml-2">상태</span>
           {(['active', 'all'] as const).map(k => <button key={k} onClick={() => setStatus(k)} className={`px-2.5 py-1 rounded ${status === k ? 'bg-exchange-yellow/15 text-exchange-yellow font-semibold' : 'bg-exchange-input text-exchange-text-secondary'}`}>{k === 'active' ? '진행 중' : '전체'}</button>)}
           <span className="text-exchange-text-third ml-2">매도승인</span>
@@ -2293,7 +2299,7 @@ function StakersTab({ t, onUpdate }: any) {
           </thead>
           <tbody>
             {rows.length === 0 ? (
-              <tr><td colSpan={10} className="px-3 py-8 text-center text-exchange-text-third">{loading ? '불러오는 중…' : '스테이킹한 회원이 없습니다'}</td></tr>
+              <tr><td colSpan={10} className="px-3 py-8 text-center text-exchange-text-third">{loading ? '불러오는 중…' : q ? `"${q}" 에 해당하는 스테이킹 회원이 없습니다 (상태·승인 필터도 확인)` : '스테이킹한 회원이 없습니다'}</td></tr>
             ) : rows.map(u => {
               const isSh = !!u.is_exchange_shareholder || !!u.is_casino_shareholder;
               const canSell = !!u.can_sell;
