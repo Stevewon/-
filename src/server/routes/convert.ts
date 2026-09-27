@@ -43,7 +43,8 @@ import {
 
 const app = new Hono<AppEnv>();
 
-export const CONVERT_QUOTE_TTL_SEC = 10;
+export const CONVERT_QUOTE_TTL_SEC = 15;
+const CONVERT_ACCEPT_GRACE_MS = 5000; // network latency tolerance on Confirm
 const DEFAULT_SPREAD_BPS = 30;
 const MIN_CONVERT_USDT = 1;          // ≥ 1 USDT out (market min_order_total)
 const QTA_MARKET_SQL = "SELECT id, min_order_total, price_decimals, amount_decimals FROM markets WHERE base_coin='QTA' AND quote_coin='USDT' LIMIT 1";
@@ -113,6 +114,9 @@ app.get('/status', authMiddleware, async (c) => {
   const user = c.get('user');
   const DB = c.env.DB;
   await ensureSchema(DB);
+  // housekeeping: stale quotes → expired (so history/admin never shows a
+  // never-confirmed quote as if it were pending).
+  await DB.prepare("UPDATE convert_orders SET status='expired', updated_at=datetime('now') WHERE user_id=? AND status='quoted' AND quote_expires_at < datetime('now','-1 minute')").bind(user.id).run().catch(() => {});
   const market = await DB.prepare(QTA_MARKET_SQL).first<any>();
   if (!market) return c.json({ error: 'market not found' }, 404);
   const [enabled, bps, approval, ref, wallet] = await Promise.all([
@@ -222,7 +226,7 @@ app.post('/quote', authMiddleware, rlQuote, async (c) => {
     from_amount: fromAmount, to_amount: toAmount, price, ref_price: ref, spread_bps: bps, fee: 0,
     inverse_price: price > 0 ? 1 / price : 0,
     clamped_to_daily_cap: clamped,
-    expires_at: expiresAt.toISOString(), ttl_sec: CONVERT_QUOTE_TTL_SEC,
+    expires_at: expiresAt.toISOString(), ttl_sec: CONVERT_QUOTE_TTL_SEC, server_now: new Date().toISOString(),
   });
 });
 
@@ -241,7 +245,7 @@ app.post('/accept', authMiddleware, rlAccept, async (c) => {
   const q = await DB.prepare('SELECT * FROM convert_orders WHERE id=? AND user_id=?').bind(quoteId, user.id).first<any>();
   if (!q) return c.json({ error: 'QUOTE_NOT_FOUND' }, 404);
   if (q.status !== 'quoted') return c.json({ error: 'QUOTE_ALREADY_USED', status: q.status }, 409);
-  if (new Date(String(q.quote_expires_at).replace(' ', 'T') + 'Z').getTime() < Date.now()) {
+  if (new Date(String(q.quote_expires_at).replace(' ', 'T') + 'Z').getTime() + CONVERT_ACCEPT_GRACE_MS < Date.now()) {
     await DB.prepare("UPDATE convert_orders SET status='expired', updated_at=datetime('now') WHERE id=? AND status='quoted'").bind(quoteId).run();
     return c.json({ error: 'QUOTE_EXPIRED', message: 'Quote expired. Please request a new quote.' }, 410);
   }
@@ -331,9 +335,14 @@ app.post('/accept', authMiddleware, rlAccept, async (c) => {
   ).run().catch(() => {});
 
   const { dayStartUtc } = kstDayStart();
-  const today = await memberSoldSince(DB as any, market.id, user.id, dayStartUtc);
+  const [today, usdtW, qtaW] = await Promise.all([
+    memberSoldSince(DB as any, market.id, user.id, dayStartUtc),
+    DB.prepare("SELECT available FROM wallets WHERE user_id=? AND coin_symbol='USDT'").bind(user.id).first<{ available: number }>().catch(() => null),
+    DB.prepare("SELECT available FROM wallets WHERE user_id=? AND coin_symbol='QTA'").bind(user.id).first<{ available: number }>().catch(() => null),
+  ]);
   return c.json({
     ok: true, id: quoteId, status: 'filled',
+    usdt_balance: Number(usdtW?.available || 0), qta_balance: Number(qtaW?.available || 0),
     from_coin: 'QTA', to_coin: 'USDT', from_amount: fromAmt, to_amount: toAmt, price: Number(q.price), fee: 0,
     filled_at: filledAt,
     today_sold_usdt: Math.round(today.usdt * 1e4) / 1e4,
