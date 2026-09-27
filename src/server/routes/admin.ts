@@ -3636,9 +3636,10 @@ app.get('/stakers', async (c) => {
   const where: string[] = ["u.id NOT IN ('mm-bot-a','mm-bot-b')"];
   const args: any[] = [];
   if (status !== 'all') { where.push("sp.status = 'active'"); }
-  if (q) {
-    where.push('(LOWER(u.email) LIKE ? OR LOWER(u.nickname) LIKE ? OR LOWER(COALESCE(u.kyc_name,\'\')) LIKE ? OR LOWER(COALESCE(u.referral_code,\'\')) LIKE ? OR u.id = ?)');
-    args.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, q);
+  for (const word of q.split(/\s+/).filter(Boolean)) {
+    where.push(`(LOWER(u.email) LIKE ? OR LOWER(COALESCE(u.nickname,'')) LIKE ? OR LOWER(COALESCE(u.kyc_name,'')) LIKE ? OR LOWER(COALESCE(u.referral_code,'')) LIKE ? OR LOWER(u.id) LIKE ? OR LOWER(COALESCE(u.kyc_phone,'')) LIKE ?)`);
+    const like = `%${word}%`;
+    args.push(like, like, like, like, like, like);
   }
   const having: string[] = [];
   if (approval === 'approved') having.push(`${canSellSql('u')}`);
@@ -3674,7 +3675,7 @@ app.get('/stakers', async (c) => {
        GROUP BY u.id
        ${having.length ? 'HAVING ' + having.join(' AND ') : ''}
        ORDER BY ${order}
-       LIMIT ?`).bind(...args, dayStartUtc, limit).all()).results || [];
+       LIMIT ?`).bind(dayStartUtc, ...args, limit).all()).results || [];
     totals = await db.prepare(`
       SELECT COUNT(DISTINCT sp.user_id) members, COUNT(*) positions, COALESCE(SUM(sp.principal_usd),0) total_usd,
              SUM(CASE WHEN ${canSellSql('u')} THEN 1 ELSE 0 END) approved_positions
