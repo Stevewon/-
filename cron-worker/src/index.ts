@@ -482,6 +482,21 @@ export default {
       await env.DB.prepare(`INSERT INTO system_state (key, value, updated_at) VALUES ('twilio_config', ?, datetime('now')) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`).bind(JSON.stringify(cfg)).run();
       return new Response(JSON.stringify({ ok: true, sid_masked: sid.slice(0, 6) + '…' + sid.slice(-4), from: cfg.from }), { headers: { 'content-type': 'application/json' } });
     }
+    if (url.pathname === '/convert-census') {
+      const out: any = { generated_at: new Date().toISOString() };
+      try {
+        out.converts = (await env.DB.prepare(`
+          SELECT cv.id, cv.user_id, u.email, u.nickname, cv.status, cv.from_amount, cv.to_amount, cv.price, cv.error, cv.treasury_user_id, cv.created_at, cv.filled_at,
+                 (SELECT available FROM wallets w WHERE w.user_id = cv.user_id AND w.coin_symbol='USDT') AS user_usdt_available,
+                 (SELECT available_initial FROM wallets w WHERE w.user_id = cv.user_id AND w.coin_symbol='USDT') AS user_usdt_initial,
+                 (SELECT available FROM wallets w WHERE w.user_id = cv.user_id AND w.coin_symbol='QTA') AS user_qta_available,
+                 (SELECT COUNT(*) FROM wallets w WHERE w.user_id = cv.user_id AND w.coin_symbol='USDT') AS usdt_wallet_rows
+            FROM convert_orders cv JOIN users u ON u.id = cv.user_id
+           ORDER BY cv.created_at DESC LIMIT 30`).all<any>()).results;
+        out.treasury = (await env.DB.prepare(`SELECT u.id, u.email, w.coin_symbol, w.available, w.locked FROM users u JOIN wallets w ON w.user_id=u.id WHERE (u.role='admin' OR u.email='admin@quantaex.io') AND w.coin_symbol IN ('USDT','QTA')`).all<any>()).results;
+      } catch (e: any) { out.error = String(e?.message || e); }
+      return new Response(JSON.stringify(out, null, 2), { headers: { 'content-type': 'application/json' } });
+    }
     if (url.pathname === '/withdraw-census') {
       // Owner question 2026-09-25: "금요일에 출금신청을 했다는데 왜 안 된다고 하지?"
       const out: any = { generated_at: new Date().toISOString(), kst_now: new Date(Date.now() + 9 * 3600e3).toISOString().replace('Z', '+09:00') };
