@@ -7,6 +7,7 @@ import CoinIcon from '../components/common/CoinIcon';
 import SkeletonLoader from '../components/common/SkeletonLoader';
 import DesktopPageLayout from '../components/common/DesktopPageLayout';
 import DepositModal from '../components/wallet/DepositModal';
+import UnclaimedBanner from '../components/wallet/UnclaimedBanner';
 import WithdrawModal from '../components/wallet/WithdrawModal';
 import { showToast } from '../components/common/Toast';
 import TransactionDetailModal from '../components/wallet/TransactionDetailModal';
@@ -340,6 +341,11 @@ export default function WalletPage() {
             >
               <ArrowDownUp size={16} /> {t('wallet.convert')}
             </Link>
+          </div>
+
+          {/* ★ Unclaimed staking dividends — explains "why is my QTA 0" */}
+          <div style={{ marginTop: '16px' }}>
+            <UnclaimedBanner compact onClaimed={() => fetchWallets()} />
           </div>
         </div>
 

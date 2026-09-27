@@ -277,6 +277,7 @@ QTA/USDT 마켓에만 적용. 회사(마켓메이커) = **mm-bot-a / mm-bot-b** 
 - **관리자**: Admin → Trades 탭 상단 「Convert」패널 — 운영/중지 스위치(`system_state.convert_enabled`), 스프레드 bps 저장, 오늘/누적 스왑, 이용 회원 수, **트레저리 USDT 지급 여력**(100 미만 빨강), 원장(회원·QTA·USDT·가격·기준가·bps·상태·오류). Users→매도승인 목록의 오늘/누적 매도액도 Convert 포함. Audit `convert.settings`.
 - **트레저리 운영 주의**: Convert로 회사가 사준 QTA는 이미 admin 트레저리 장부에 있음(봇 경유 아님) → §8 봇→트레저리 장부 스윕 대상이 아니고, 핫월렛→메인지갑 온체인 스윕은 기존 루틴 그대로. **admin USDT 잔고가 곧 Convert 지급 여력**이므로 관리자 패널에서 확인.
 - **저장**: `convert_orders`(quoted→filled|expired|cancelled|failed, 가격·기준가·bps·트레저리·IP), `system_state.convert_enabled / convert_spread_bps`. 마이그레이션 0062.
+- **★ 미청구 배당 안내 (2026-09-27, 오너 선택 ①)**: 전수조사 결과 활성 스테이커 26명 중 13명은 한 번도 청구하지 않아 지갑 QTA 0(미청구 71.7만 QTA). 배당은 금요일 청구 시에만 지갑에 들어가므로 Convert 화면·Wallet 화면 상단에 「You have N QTA of staking rewards not yet claimed」배너 표시(배당+매칭 분리, 창구 열려 있으면 「Claim now」버튼으로 즉시 claim-all, 닫혀 있으면 다음 금요일 시각). Convert의 QTA 잔액 0이면 청구 안내 문구. API `GET /earn/unclaimed`. 진단 `cron /dividend-census`. 금요일 청구 규칙(§7) 자체는 변경 없음.
 - **코드**: `src/server/routes/convert.ts`(/status·/quote·/accept·/history), `src/shared/sell-cap.ts`(+ cron-worker 복사본), `src/server/routes/order.ts`(모든 5만원 게이트가 공유 헬퍼 사용), `src/server/routes/admin.ts`(/converts, /converts/settings, /users/sellers 합산), `src/pages/ConvertPage.tsx`, `AdminPage.tsx` ConvertAdminPanel.
 
 ---
@@ -309,3 +310,4 @@ QTA/USDT 마켓에만 적용. 회사(마켓메이커) = **mm-bot-a / mm-bot-b** 
 - 2026-09-26: **14번 신설 — Convert(바이빗식 QTA→USDT 즉시 스왑).** 바이빗 분석: OTC/RFQ, 호가창 미경유 → 차트·거래량 무영향. 동일 적용: 트레저리 상대 체결, trades/candles 미기록, 견적 10초·0수수료·30bps. §12 매도승인·§6 5만원 한도는 현물과 공유(sell-cap 공용 헬퍼로 order.ts 5개 게이트 통합). /convert 페이지, Admin Trades Convert 패널(스위치·스프레드·원장·트레저리 여력), 0062 마이그레이션.
 - 2026-09-26: **§7 개정 — 출금 신청 금액 상한(5만원) 폐지.** "금요일 출금신청은 5만원 한도가 없어, 찾을 수 있는 만큼 10테더 단위로." 지갑·배당 출금 모두 금액 게이트 제거, USDT 10단위·최소 10, 하루 1회·금요일 창구·KYC·화이트리스트·회사지급분 불가는 유지. UI Max/퍼센트 버튼 10단위 스냅, 안내문 교체(5개 언어).
 - 2026-09-27: **§12 보강 — 관리자「스테이킹 회원」탭.** 누가·언제·얼마 스테이킹했는지 전체 표 + 포지션 상세 + 행 단위 매도승인 원클릭. /admin/stakers.
+- 2026-09-27: **§14 보강 — 미청구 배당 배너.** "스왑하려는데 QTA가 안 보인다" 전수조사(26명/27포지션, 미청구 717,131 QTA, 미청구자 13명) → 원인은 미청구. Convert·Wallet에 미청구 배너 + Claim now(창구 중) + 다음 창구 시각, /earn/unclaimed, cron /dividend-census.

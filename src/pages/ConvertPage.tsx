@@ -20,6 +20,7 @@ import { formatAmount } from '../utils/format';
 import CoinIcon from '../components/common/CoinIcon';
 import DesktopPageLayout from '../components/common/DesktopPageLayout';
 import { showToast } from '../components/common/Toast';
+import UnclaimedBanner from '../components/wallet/UnclaimedBanner';
 
 type Status = {
   enabled: boolean; approved: boolean; approval_source: string | null;
@@ -160,6 +161,9 @@ export default function ConvertPage() {
           <Link to="/trade/QTA-USDT" className="text-xs text-exchange-text-third hover:text-exchange-text inline-flex items-center gap-0.5">{t('nav.trade')} <ChevronRight size={12} /></Link>
         </div>
 
+        {/* ★ Unclaimed dividends are NOT in the wallet until claimed (Friday window) */}
+        <UnclaimedBanner onClaimed={() => { loadStatus(); if (typeof fetchWallets === 'function') fetchWallets().catch?.(() => {}); }} />
+
         {/* Card */}
         <div className="card p-4 space-y-3">
           {/* From */}
@@ -181,6 +185,9 @@ export default function ConvertPage() {
               />
               <button type="button" onClick={setMax} className="text-exchange-yellow text-sm font-semibold shrink-0">Max</button>
             </div>
+            {status && status.qta_available <= 0 && (
+              <div className="mt-2 text-[11px] text-exchange-text-third leading-relaxed">{t('convert.zeroBalanceHint')}</div>
+            )}
           </div>
 
           <div className="flex justify-center -my-1">

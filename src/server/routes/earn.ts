@@ -543,6 +543,46 @@ app.get('/positions', authMiddleware, async (c) => {
 // member can SEE their matching history (claimed + unclaimed).
 // ★ OWNER RULE (2026-09-03): "내역은 각 회원이 볼수있게 해주고".
 // --------------------------------------------------------------------------
+// --------------------------------------------------------------------------
+// GET /unclaimed — how much dividend / match QTA this member has ACCRUED but
+// not yet CLAIMED into the wallet. Owner 2026-09-27 (census): members saw
+// "stacked QTA" on Earn but 0 in Convert/Wallet because claiming is a manual
+// Friday-window step. Convert + Wallet render a banner from this endpoint.
+// --------------------------------------------------------------------------
+app.get('/unclaimed', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const now = Date.now();
+  const basis = await qtaStakeBasisPrice(c);
+  const { results } = await c.env.DB.prepare(
+    `SELECT * FROM staking_positions WHERE user_id = ? AND status = 'active'`
+  ).bind(user.id).all<any>();
+  let dividend = 0, accrued = 0, paid = 0;
+  for (const p of (results || []) as any[]) {
+    const tot = accruedQta(p, now, basis);
+    const pd = Number(p.paid_dividend_qta || 0);
+    accrued += tot; paid += pd; dividend += Math.max(0, tot - pd);
+  }
+  const matchAgg = await c.env.DB.prepare(
+    `SELECT COALESCE(SUM(bonus_qta),0) AS qta FROM binary_match_bonuses WHERE user_id = ? AND COALESCE(claimed,0) = 0`
+  ).bind(user.id).first<any>().catch(() => null);
+  const match = Number(matchAgg?.qta || 0);
+  // next Friday 10:00 KST window
+  const kst = new Date(now + KST_OFFSET_MS);
+  let add = (CLAIM_WINDOW_WEEKDAY - kst.getUTCDay() + 7) % 7;
+  if (add === 0 && kst.getUTCHours() >= CLAIM_WINDOW_END_HR) add = 7;
+  const openKst = Date.UTC(kst.getUTCFullYear(), kst.getUTCMonth(), kst.getUTCDate() + add, CLAIM_WINDOW_START_HR, 0, 0);
+  const closeKst = Date.UTC(kst.getUTCFullYear(), kst.getUTCMonth(), kst.getUTCDate() + add, CLAIM_WINDOW_END_HR, 0, 0);
+  return c.json({
+    active_positions: (results || []).length,
+    accrued_qta: accrued, claimed_qta: paid,
+    unclaimed_dividend_qta: dividend, unclaimed_match_qta: match,
+    unclaimed_total_qta: dividend + match,
+    window_open: claimWindowOpen(now),
+    next_window_opens_at: new Date(openKst - KST_OFFSET_MS).toISOString(),
+    next_window_closes_at: new Date(closeKst - KST_OFFSET_MS).toISOString(),
+  });
+});
+
 app.get('/match-history', authMiddleware, async (c) => {
   const user = c.get('user');
   const { results } = await c.env.DB.prepare(
