@@ -244,6 +244,7 @@ QTA/USDT 마켓에만 적용. 회사(마켓메이커) = **mm-bot-a / mm-bot-b** 
   - 지분자 지정 = 매도 자동 승인 (별도 토글 불필요, 화면에 "자동" 표시).
 - **매도 한도·표시**: §6 그대로 — 승인 회원은 **시세로 하루 5만원(=34.48 USDT, 1,450원 고정)**까지 회사가 매입. 거래 화면 매도 탭에 **일일 한도 / 오늘 매도(USDT·QTA) / 남은 한도(USDT ≈ QTA) / 누적 매도(전체 USDT·QTA·건수)** 실시간 위젯(15초 갱신, `GET /orders/qta-sell-status`). 미승인 회원은 매도 탭에 "사전 승인 필요" 안내 + 매도 버튼 비활성.
 - **출금 신청 창구**: 본인 지갑으로의 출금 신청(`POST /wallet/withdraw`, 모든 코인)은 **매주 금요일 10:00~16:00 KST에만** 접수 (배당 청구 §7 창구와 동일). 그 외 → `WITHDRAW_WINDOW_CLOSED` 403 + 다음 창구 시각 안내. §7 상한(하루 1회·5만원) 병행. 회사 계정 제외. 출금 모달 상단에 창구 열림/닫힘·다음 시각 표시. `GET /wallet/withdraw-window`.
+- **★ 관리자 「스테이킹 회원」탭 (2026-09-27)**: "아이디를 알아야 승인을 하지" — Admin → 운영 → 스테이킹 회원. 스테이킹한 모든 회원의 닉네임·실명·이메일·추천코드·KYC·**스테이킹 총액(실/인정)**·포지션 수·**첫/최근 스테이킹 시각**·보유 QTA·받은 배당·매도액(오늘/누적)을 한 표에, 행 클릭 시 포지션별(시각·상품·금액·기간·만기·배당·상태) 상세. **각 행 「매도 승인」버튼**으로 §12 승인/해제(지분자는 자동 표시). 검색(이메일/닉네임/실명/추천코드/ID), 필터(진행 중/전체, 승인/미승인), 정렬(최근/금액/이름). API `GET /admin/stakers`, `GET /admin/stakers/:id/positions`.
 - **코드**: `src/shared/shareholder.ts`(canSellSql/loadSellApproval, cron 복사본 동일), `src/server/routes/order.ts`(POST 게이트·matchOrder·mm-tick·/qta-sell-status), `src/server/routes/wallet.ts`(withdrawWindowOpen·/withdraw-window), `src/server/routes/admin.ts`(/users/:id/sell-approval·/users/sellers), `src/components/trade/TradePanel.tsx`, `src/components/wallet/WithdrawModal.tsx`, `src/pages/AdminPage.tsx`, 마이그레이션 0060.
 
 ---
@@ -307,3 +308,4 @@ QTA/USDT 마켓에만 적용. 회사(마켓메이커) = **mm-bot-a / mm-bot-b** 
 - 2026-09-22: **13번 보강 — SMS 발송사 Vonage 지원.** Twilio KCB Trust Hub 차단으로 전환. 관리자 패널 provider 선택(Vonage 권장), 잔액 검증, 발신자명 QuantaEX.
 - 2026-09-26: **14번 신설 — Convert(바이빗식 QTA→USDT 즉시 스왑).** 바이빗 분석: OTC/RFQ, 호가창 미경유 → 차트·거래량 무영향. 동일 적용: 트레저리 상대 체결, trades/candles 미기록, 견적 10초·0수수료·30bps. §12 매도승인·§6 5만원 한도는 현물과 공유(sell-cap 공용 헬퍼로 order.ts 5개 게이트 통합). /convert 페이지, Admin Trades Convert 패널(스위치·스프레드·원장·트레저리 여력), 0062 마이그레이션.
 - 2026-09-26: **§7 개정 — 출금 신청 금액 상한(5만원) 폐지.** "금요일 출금신청은 5만원 한도가 없어, 찾을 수 있는 만큼 10테더 단위로." 지갑·배당 출금 모두 금액 게이트 제거, USDT 10단위·최소 10, 하루 1회·금요일 창구·KYC·화이트리스트·회사지급분 불가는 유지. UI Max/퍼센트 버튼 10단위 스냅, 안내문 교체(5개 언어).
+- 2026-09-27: **§12 보강 — 관리자「스테이킹 회원」탭.** 누가·언제·얼마 스테이킹했는지 전체 표 + 포지션 상세 + 행 단위 매도승인 원클릭. /admin/stakers.

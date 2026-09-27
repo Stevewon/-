@@ -3615,6 +3615,92 @@ async function qtaPriceUsd(db: any): Promise<number> {
   return 0.00357142857; // fallback ≈ 5원 @1,400
 }
 
+// ============================================================================
+// ★ GET /admin/stakers — EVERY member who has staked: who / when / how much,
+//   plus KYC, sell-approval, shareholder flags and QTA wallet — so the operator
+//   can find the account and grant §12 sell approval from ONE screen.
+//   Owner 2026-09-27: "스테이킹한 사람들 어드민에서 볼 수 있게 … 아이디를 알아야
+//   승인을 하지! 언제 누가 얼만큼을 스테이킹 했는지 … 그 사람들 중에 매도승인".
+//   ?q=          email / nickname / kyc_name / referral_code / id  (LIKE)
+//   ?status=     active | all   (default active)
+//   ?approval=   all | approved | unapproved
+//   ?sort=       recent | amount | name   (default recent)
+// ============================================================================
+app.get('/stakers', async (c) => {
+  const db = c.env.DB;
+  const q = String(c.req.query('q') || '').trim().toLowerCase();
+  const status = String(c.req.query('status') || 'active');
+  const approval = String(c.req.query('approval') || 'all');
+  const sort = String(c.req.query('sort') || 'recent');
+  const limit = Math.min(1000, Math.max(1, parseInt(c.req.query('limit') || '500', 10) || 500));
+  const where: string[] = ["u.id NOT IN ('mm-bot-a','mm-bot-b')"];
+  const args: any[] = [];
+  if (status !== 'all') { where.push("sp.status = 'active'"); }
+  if (q) {
+    where.push('(LOWER(u.email) LIKE ? OR LOWER(u.nickname) LIKE ? OR LOWER(COALESCE(u.kyc_name,\'\')) LIKE ? OR LOWER(COALESCE(u.referral_code,\'\')) LIKE ? OR u.id = ?)');
+    args.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, q);
+  }
+  const having: string[] = [];
+  if (approval === 'approved') having.push(`${canSellSql('u')}`);
+  if (approval === 'unapproved') having.push(`NOT ${canSellSql('u')}`);
+  const order = sort === 'amount' ? 'total_usd DESC' : sort === 'name' ? 'u.nickname ASC' : 'last_staked_at DESC';
+  const nowKst = new Date(Date.now() + 9 * 3600 * 1000);
+  const dayStartUtc = new Date(Date.UTC(nowKst.getUTCFullYear(), nowKst.getUTCMonth(), nowKst.getUTCDate()) - 9 * 3600 * 1000).toISOString().slice(0, 19).replace('T', ' ');
+  let rows: any[] = [];
+  let totals: any = null;
+  try {
+    rows = (await db.prepare(`
+      SELECT u.id, u.email, u.nickname, u.kyc_name, u.referral_code, u.kyc_status, u.created_at AS joined_at,
+             COALESCE(u.qta_sell_approved,0) AS qta_sell_approved, u.qta_sell_approved_at,
+             COALESCE(u.fee_exempt_exchange_holder,0) AS is_exchange_shareholder,
+             COALESCE(u.fee_exempt_casino_holder,0) AS is_casino_shareholder,
+             ${canSellSql('u')} AS can_sell,
+             COUNT(sp.id) AS positions,
+             SUM(CASE WHEN sp.status='active' THEN 1 ELSE 0 END) AS active_positions,
+             COALESCE(SUM(sp.principal_usd),0) AS total_usd,
+             COALESCE(SUM(COALESCE(sp.real_principal_usd, CASE WHEN sp.granted_by IS NULL THEN sp.principal_usd ELSE 0 END)),0) AS real_usd,
+             COALESCE(SUM(COALESCE(sp.bonus_principal_usd,0)),0) AS bonus_usd,
+             COALESCE(SUM(sp.principal_qta),0) AS total_qta,
+             MIN(sp.created_at) AS first_staked_at, MAX(sp.created_at) AS last_staked_at,
+             SUM(CASE WHEN sp.granted_by IS NOT NULL THEN 1 ELSE 0 END) AS admin_granted,
+             (SELECT COALESCE(available,0) FROM wallets w WHERE w.user_id=u.id AND w.coin_symbol='QTA') AS qta_available,
+             (SELECT COALESCE(locked,0) FROM wallets w WHERE w.user_id=u.id AND w.coin_symbol='QTA') AS qta_locked,
+             (SELECT COALESCE(available,0) FROM wallets w WHERE w.user_id=u.id AND w.coin_symbol='USDT') AS usdt_available,
+             (SELECT COALESCE(SUM(qta_amount),0) FROM staking_dividends d WHERE d.user_id=u.id) AS dividends_qta,
+             ${soldUsdtSql('u', true)} AS today_sold_usdt,
+             ${soldUsdtSql('u', false)} AS total_sold_usdt
+        FROM staking_positions sp JOIN users u ON u.id = sp.user_id
+       WHERE ${where.join(' AND ')}
+       GROUP BY u.id
+       ${having.length ? 'HAVING ' + having.join(' AND ') : ''}
+       ORDER BY ${order}
+       LIMIT ?`).bind(...args, dayStartUtc, limit).all()).results || [];
+    totals = await db.prepare(`
+      SELECT COUNT(DISTINCT sp.user_id) members, COUNT(*) positions, COALESCE(SUM(sp.principal_usd),0) total_usd,
+             SUM(CASE WHEN ${canSellSql('u')} THEN 1 ELSE 0 END) approved_positions
+        FROM staking_positions sp JOIN users u ON u.id = sp.user_id
+       WHERE sp.status='active' AND u.id NOT IN ('mm-bot-a','mm-bot-b')`).first();
+    const approvedMembers = await db.prepare(`
+      SELECT COUNT(*) n FROM (SELECT DISTINCT sp.user_id FROM staking_positions sp JOIN users u ON u.id=sp.user_id WHERE sp.status='active' AND ${canSellSql('u')})`).first<any>();
+    if (totals) totals.approved_members = Number(approvedMembers?.n || 0);
+  } catch (e: any) {
+    return c.json({ ok: false, error: String(e?.message || e), rows: [], totals });
+  }
+  return c.json({ ok: true, count: rows.length, rows, totals });
+});
+
+// GET /admin/stakers/:id/positions — a member's individual stakes (when / how much / product / term).
+app.get('/stakers/:id/positions', async (c) => {
+  const db = c.env.DB;
+  const uid = c.req.param('id');
+  const { results } = await db.prepare(`
+    SELECT sp.id, sp.product_id, sp.coin_symbol, sp.status, sp.principal_usd, sp.real_principal_usd, sp.bonus_principal_usd,
+           sp.principal_qta, sp.term_days, sp.term_end_at, sp.granted_by, sp.created_at, sp.redeemed_at,
+           (SELECT COALESCE(SUM(qta_amount),0) FROM staking_dividends d WHERE d.position_id = sp.id) AS dividends_qta
+      FROM staking_positions sp WHERE sp.user_id = ? ORDER BY sp.created_at DESC`).bind(uid).all<any>().catch(() => ({ results: [] as any[] }));
+  return c.json({ ok: true, positions: results || [] });
+});
+
 // GET /admin/staking-grants — list admin-granted positions with progress.
 app.get('/staking-grants', async (c) => {
   const { results } = await c.env.DB.prepare(

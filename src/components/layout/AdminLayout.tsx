@@ -5,7 +5,7 @@ import {
   BarChart3, Coins, Megaphone, Receipt, FileText, Server,
   RefreshCw, Bell, ExternalLink, LogOut, Menu, X, Monitor,
   Wallet as WalletIcon, ListChecks, Link2, ShieldAlert, Repeat,
-  TrendingUp, Layers, Zap, Percent, KeyRound,
+  TrendingUp, Layers, Zap, Percent, KeyRound, PiggyBank,
 } from 'lucide-react';
 import useStore from '../../store/useStore';
 import { useI18n } from '../../i18n';
@@ -13,7 +13,7 @@ import QuantaLogo from '../common/QuantaLogo';
 import DepositBell from '../admin/DepositBell';
 
 export type AdminTab =
-  | 'overview' | 'users' | 'kyc' | 'deposits' | 'withdrawals'
+  | 'overview' | 'users' | 'stakers' | 'kyc' | 'deposits' | 'withdrawals'
   | 'trades' | 'coins' | 'broadcast' | 'notices' | 'fees' | 'audit' | 'system'
   // Sprint 4 Phase C — QTA chain admin
   | 'chainWallets' | 'chainQueue' | 'chainHealth' | 'risk'
@@ -62,6 +62,7 @@ export default function AdminLayout({
       title: t('admin.groupOps'),
       items: [
         { key: 'users',       label: t('admin.users'),       icon: Users },
+        { key: 'stakers',     label: '스테이킹 회원',              icon: PiggyBank },
         { key: 'kyc',         label: t('admin.kyc'),         icon: ShieldCheck },
         { key: 'deposits',    label: t('admin.deposits'),    icon: ArrowDownToLine },
         { key: 'withdrawals', label: t('admin.withdrawals'), icon: ArrowUpFromLine },

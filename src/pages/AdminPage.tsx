@@ -93,6 +93,7 @@ export default function AdminPage() {
     >
       {tab === 'overview'    && <Overview stats={stats} trends={trends} topMarkets={topMarkets} activity={activity} t={t} onJump={(k: Tab) => setTab(k)} />}
       {tab === 'users'       && <UsersTab t={t} onUpdate={refresh} />}
+      {tab === 'stakers'     && <StakersTab t={t} onUpdate={refresh} />}
       {tab === 'kyc'         && <KycTab t={t} onUpdate={refresh} />}
       {tab === 'deposits'    && <DepositsTab t={t} onUpdate={refresh} />}
       {tab === 'withdrawals' && <WithdrawalsTab t={t} onUpdate={refresh} />}
@@ -2180,6 +2181,190 @@ function SpotTradesTable({ t }: any) {
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+// ============================================================================
+// ★ 스테이킹 회원 탭 — 누가 / 언제 / 얼마를 스테이킹했는지 + 매도승인 원클릭
+//   Owner 2026-09-27: "아이디를 알아야 승인을 하지! 언제 누가 얼만큼을 스테이킹
+//   했는지 볼 수 있게 하고 그 사람들 중에 매도승인을 할 수 있게."
+// ============================================================================
+function fmtKst(v: any) {
+  if (!v) return '-';
+  const d = new Date(String(v).replace(' ', 'T') + (String(v).endsWith('Z') ? '' : 'Z'));
+  return isNaN(d.getTime()) ? String(v) : d.toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', year: '2-digit', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+}
+function StakersTab({ t, onUpdate }: any) {
+  const [rows, setRows] = useState<any[]>([]);
+  const [totals, setTotals] = useState<any>(null);
+  const [q, setQ] = useState('');
+  const [status, setStatus] = useState<'active' | 'all'>('active');
+  const [approval, setApproval] = useState<'all' | 'approved' | 'unapproved'>('all');
+  const [sort, setSort] = useState<'recent' | 'amount' | 'name'>('recent');
+  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [open, setOpen] = useState<string | null>(null);
+  const [positions, setPositions] = useState<Record<string, any[]>>({});
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const r = await api.get('/admin/stakers', { params: { q, status, approval, sort } });
+      setRows(r.data?.rows || []); setTotals(r.data?.totals || null);
+      if (r.data?.ok === false) showToast('error', '조회 실패', r.data.error || '');
+    } catch (e: any) { showToast('error', '조회 실패', e?.response?.data?.error || e.message); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, [status, approval, sort]);
+
+  const toggleApproval = async (u: any) => {
+    const isSh = !!u.is_exchange_shareholder || !!u.is_casino_shareholder;
+    if (isSh && !u.qta_sell_approved) { showToast('info', '지분자', '지분자는 자동 매도승인 상태입니다.'); return; }
+    const cur = !!u.qta_sell_approved;
+    const msg = cur
+      ? `${u.nickname} (${u.email})\nQTA 매도 승인을 해제할까요?\n해제 즉시 미체결 매도주문 전량 취소·환불됩니다.`
+      : `${u.nickname} (${u.email})\n스테이킹 $${Number(u.total_usd).toLocaleString()} · 보유 QTA ${formatAmount(u.qta_available)}\n\nQTA 매도를 승인할까요?\n• 하루 5만원(34.48 USDT)까지 회사 매입 (현물 + Convert 합산)\n• 승인 즉시 매도/Convert 가능`;
+    if (!confirm(msg)) return;
+    setBusy(u.id);
+    try {
+      const res = await api.post(`/admin/users/${u.id}/sell-approval`, { approved: !cur });
+      showToast('success', '매도 승인', `${u.nickname}: ${res.data?.approved ? '승인 ON' : '승인 OFF'}${res.data?.cancelled_orders ? ` · 주문 ${res.data.cancelled_orders}건 취소` : ''}`);
+      await load(); onUpdate?.();
+    } catch (e: any) { showToast('error', '실패', e?.response?.data?.error || 'Update failed'); }
+    finally { setBusy(null); }
+  };
+
+  const toggleOpen = async (uid: string) => {
+    if (open === uid) { setOpen(null); return; }
+    setOpen(uid);
+    if (!positions[uid]) {
+      try { const r = await api.get(`/admin/stakers/${uid}/positions`); setPositions(p => ({ ...p, [uid]: r.data?.positions || [] })); } catch { /* */ }
+    }
+  };
+
+  const copy = (v: string) => { navigator.clipboard?.writeText(v).then(() => showToast('success', '복사', v)).catch(() => {}); };
+
+  return (
+    <div className="space-y-3">
+      <div className="card p-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <div className="font-semibold text-sm">🐷 스테이킹 회원 — 누가 · 언제 · 얼마 · 매도승인</div>
+            <div className="text-[11px] text-exchange-text-third">스테이킹한 모든 회원. 이메일/닉네임/실명/추천코드로 검색 → 행의 「매도 승인」버튼으로 §12 승인. 지분자는 자동 승인.</div>
+          </div>
+          {totals && (
+            <div className="flex gap-2 text-xs">
+              <div className="rounded border border-exchange-border px-2.5 py-1.5"><span className="text-exchange-text-third">스테이커</span> <b>{totals.members}</b>명</div>
+              <div className="rounded border border-exchange-border px-2.5 py-1.5"><span className="text-exchange-text-third">포지션</span> <b>{totals.positions}</b></div>
+              <div className="rounded border border-exchange-border px-2.5 py-1.5"><span className="text-exchange-text-third">총액</span> <b>${Number(totals.total_usd).toLocaleString('en-US', { maximumFractionDigits: 0 })}</b></div>
+              <div className="rounded border border-exchange-buy/40 bg-exchange-buy/10 px-2.5 py-1.5"><span className="text-exchange-text-third">매도승인</span> <b className="text-exchange-buy">{totals.approved_members}</b>명</div>
+            </div>
+          )}
+        </div>
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <input value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => e.key === 'Enter' && load()} placeholder="이메일 / 닉네임 / 실명 / 추천코드 / ID" className="bg-exchange-input border border-exchange-border rounded px-2.5 py-1.5 text-xs w-64" />
+          <button onClick={load} className="px-3 py-1.5 rounded bg-exchange-yellow/15 text-exchange-yellow font-semibold">검색</button>
+          <span className="text-exchange-text-third ml-2">상태</span>
+          {(['active', 'all'] as const).map(k => <button key={k} onClick={() => setStatus(k)} className={`px-2.5 py-1 rounded ${status === k ? 'bg-exchange-yellow/15 text-exchange-yellow font-semibold' : 'bg-exchange-input text-exchange-text-secondary'}`}>{k === 'active' ? '진행 중' : '전체'}</button>)}
+          <span className="text-exchange-text-third ml-2">매도승인</span>
+          {(['all', 'unapproved', 'approved'] as const).map(k => <button key={k} onClick={() => setApproval(k)} className={`px-2.5 py-1 rounded ${approval === k ? 'bg-exchange-yellow/15 text-exchange-yellow font-semibold' : 'bg-exchange-input text-exchange-text-secondary'}`}>{k === 'all' ? '전체' : k === 'approved' ? '승인됨' : '미승인'}</button>)}
+          <span className="text-exchange-text-third ml-2">정렬</span>
+          {(['recent', 'amount', 'name'] as const).map(k => <button key={k} onClick={() => setSort(k)} className={`px-2.5 py-1 rounded ${sort === k ? 'bg-exchange-yellow/15 text-exchange-yellow font-semibold' : 'bg-exchange-input text-exchange-text-secondary'}`}>{k === 'recent' ? '최근 스테이킹' : k === 'amount' ? '금액순' : '이름순'}</button>)}
+          {loading && <RefreshCw size={12} className="animate-spin text-exchange-text-third" />}
+        </div>
+      </div>
+
+      <div className="card overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-exchange-text-third border-b border-exchange-border">
+              <th className="text-left px-3 py-2">회원 (클릭: 포지션 상세)</th>
+              <th className="text-left px-3 py-2">KYC</th>
+              <th className="text-right px-3 py-2">스테이킹 총액</th>
+              <th className="text-right px-3 py-2">포지션</th>
+              <th className="text-left px-3 py-2">첫 스테이킹</th>
+              <th className="text-left px-3 py-2">최근 스테이킹</th>
+              <th className="text-right px-3 py-2">보유 QTA</th>
+              <th className="text-right px-3 py-2">받은 배당 QTA</th>
+              <th className="text-right px-3 py-2">매도액 오늘/누적</th>
+              <th className="text-left px-3 py-2">매도 승인</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 ? (
+              <tr><td colSpan={10} className="px-3 py-8 text-center text-exchange-text-third">{loading ? '불러오는 중…' : '스테이킹한 회원이 없습니다'}</td></tr>
+            ) : rows.map(u => {
+              const isSh = !!u.is_exchange_shareholder || !!u.is_casino_shareholder;
+              const canSell = !!u.can_sell;
+              return (
+                <Fragment key={u.id}>
+                  <tr className={`border-b border-exchange-border/50 hover:bg-exchange-hover/30 ${open === u.id ? 'bg-exchange-hover/20' : ''}`}>
+                    <td className="px-3 py-2 cursor-pointer" onClick={() => toggleOpen(u.id)}>
+                      <div className="font-medium flex items-center gap-1.5">
+                        {u.nickname}{u.kyc_name ? <span className="text-exchange-text-third">· {u.kyc_name}</span> : null}
+                        {isSh && <span className="px-1 rounded bg-exchange-yellow/15 text-exchange-yellow text-[10px]">지분자</span>}
+                        {u.admin_granted > 0 && <span className="px-1 rounded bg-exchange-input text-exchange-text-third text-[10px]">인정 {u.admin_granted}</span>}
+                      </div>
+                      <div className="text-exchange-text-third flex items-center gap-1.5">
+                        <span>{u.email}</span>
+                        <button onClick={(e) => { e.stopPropagation(); copy(u.email); }} className="hover:text-exchange-text" title="이메일 복사">⧉</button>
+                        {u.referral_code && <span className="text-[10px]">{u.referral_code}</span>}
+                      </div>
+                    </td>
+                    <td className="px-3 py-2"><span className={`px-1.5 py-0.5 rounded text-[10px] ${u.kyc_status === 'approved' ? 'bg-exchange-buy/15 text-exchange-buy' : u.kyc_status === 'pending' ? 'bg-exchange-yellow/15 text-exchange-yellow' : 'bg-exchange-input text-exchange-text-third'}`}>{u.kyc_status || 'none'}</span></td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      <div className="font-semibold">${Number(u.total_usd).toLocaleString('en-US', { maximumFractionDigits: 0 })}</div>
+                      {Number(u.bonus_usd) > 0 && <div className="text-[10px] text-exchange-text-third">실 ${Number(u.real_usd).toLocaleString('en-US', { maximumFractionDigits: 0 })} + 인정 ${Number(u.bonus_usd).toLocaleString('en-US', { maximumFractionDigits: 0 })}</div>}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">{u.active_positions}<span className="text-exchange-text-third">/{u.positions}</span></td>
+                    <td className="px-3 py-2 tabular-nums text-exchange-text-secondary">{fmtKst(u.first_staked_at)}</td>
+                    <td className="px-3 py-2 tabular-nums text-exchange-text-secondary">{fmtKst(u.last_staked_at)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{formatAmount(u.qta_available)}{Number(u.qta_locked) > 0 && <span className="text-exchange-text-third"> (+{formatAmount(u.qta_locked)})</span>}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-exchange-text-secondary">{formatAmount(u.dividends_qta)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-exchange-text-secondary">{Number(u.today_sold_usdt).toFixed(2)} / {Number(u.total_sold_usdt).toFixed(2)}</td>
+                    <td className="px-3 py-2">
+                      <button
+                        onClick={() => toggleApproval(u)}
+                        disabled={busy === u.id}
+                        className={`px-2.5 py-1 rounded text-[11px] font-semibold whitespace-nowrap ${canSell ? (isSh && !u.qta_sell_approved ? 'bg-exchange-yellow/15 text-exchange-yellow' : 'bg-exchange-buy/15 text-exchange-buy') : 'bg-exchange-sell/15 text-exchange-sell hover:bg-exchange-buy/20 hover:text-exchange-buy'}`}
+                      >
+                        {busy === u.id ? '…' : canSell ? (isSh && !u.qta_sell_approved ? '자동(지분자)' : '✓ 승인됨 · 해제') : '매도 승인'}
+                      </button>
+                      {u.qta_sell_approved_at ? <div className="text-[10px] text-exchange-text-third mt-0.5">{fmtKst(u.qta_sell_approved_at)}</div> : null}
+                    </td>
+                  </tr>
+                  {open === u.id && (
+                    <tr className="border-b border-exchange-border/50 bg-exchange-input/30">
+                      <td colSpan={10} className="px-4 py-2">
+                        {!positions[u.id] ? <div className="text-exchange-text-third">불러오는 중…</div> : positions[u.id].length === 0 ? <div className="text-exchange-text-third">포지션 없음</div> : (
+                          <table className="w-full text-[11px]">
+                            <thead><tr className="text-exchange-text-third"><th className="text-left px-2 py-1">스테이킹 시각(KST)</th><th className="text-left px-2 py-1">상품</th><th className="text-right px-2 py-1">금액 USD</th><th className="text-right px-2 py-1">QTA</th><th className="text-right px-2 py-1">기간</th><th className="text-left px-2 py-1">만기</th><th className="text-right px-2 py-1">배당 QTA</th><th className="text-left px-2 py-1">상태</th></tr></thead>
+                            <tbody>
+                              {positions[u.id].map((p: any) => (
+                                <tr key={p.id} className="border-t border-exchange-border/40">
+                                  <td className="px-2 py-1 tabular-nums">{fmtKst(p.created_at)}</td>
+                                  <td className="px-2 py-1">{p.product_id}{p.granted_by ? <span className="ml-1 px-1 rounded bg-exchange-input text-exchange-text-third">인정</span> : null}</td>
+                                  <td className="px-2 py-1 text-right tabular-nums">${Number(p.principal_usd).toLocaleString('en-US', { maximumFractionDigits: 2 })}{Number(p.bonus_principal_usd) > 0 ? <span className="text-exchange-text-third"> (실 {Number(p.real_principal_usd || 0).toLocaleString()} + 인정 {Number(p.bonus_principal_usd).toLocaleString()})</span> : null}</td>
+                                  <td className="px-2 py-1 text-right tabular-nums">{formatAmount(p.principal_qta)}</td>
+                                  <td className="px-2 py-1 text-right tabular-nums">{p.term_days}일</td>
+                                  <td className="px-2 py-1 tabular-nums">{fmtKst(p.term_end_at)}</td>
+                                  <td className="px-2 py-1 text-right tabular-nums">{formatAmount(p.dividends_qta)}</td>
+                                  <td className="px-2 py-1"><span className={`px-1.5 rounded ${p.status === 'active' ? 'bg-exchange-buy/15 text-exchange-buy' : 'bg-exchange-input text-exchange-text-third'}`}>{p.status}</span></td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
