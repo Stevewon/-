@@ -3650,7 +3650,7 @@ app.get('/stakers', async (c) => {
   let rows: any[] = [];
   let totals: any = null;
   try {
-    rows = (await db.prepare(`
+    const sql = `
       SELECT u.id, u.email, u.nickname, u.kyc_name, u.referral_code, u.kyc_status, u.created_at AS joined_at,
              COALESCE(u.qta_sell_approved,0) AS qta_sell_approved, u.qta_sell_approved_at,
              COALESCE(u.fee_exempt_exchange_holder,0) AS is_exchange_shareholder,
@@ -3675,7 +3675,15 @@ app.get('/stakers', async (c) => {
        GROUP BY u.id
        ${having.length ? 'HAVING ' + having.join(' AND ') : ''}
        ORDER BY ${order}
-       LIMIT ?`).bind(dayStartUtc, ...args, limit).all()).results || [];
+       LIMIT ?`;
+    // soldUsdtSql('u', true) contributes TWO '?' (trades + convert_orders) that
+    // appear in the SELECT list — i.e. BEFORE the WHERE placeholders. Bind in
+    // textual order and self-check the count so a mismatch can never again
+    // silently shift the search term into the wrong slot.
+    const binds = [dayStartUtc, dayStartUtc, ...args, limit];
+    const placeholders = (sql.match(/\?/g) || []).length;
+    if (placeholders !== binds.length) throw new Error(`bind mismatch: sql has ${placeholders} placeholders, ${binds.length} values`);
+    rows = (await db.prepare(sql).bind(...binds).all()).results || [];
     totals = await db.prepare(`
       SELECT COUNT(DISTINCT sp.user_id) members, COUNT(*) positions, COALESCE(SUM(sp.principal_usd),0) total_usd,
              SUM(CASE WHEN ${canSellSql('u')} THEN 1 ELSE 0 END) approved_positions

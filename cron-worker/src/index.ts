@@ -482,6 +482,22 @@ export default {
       await env.DB.prepare(`INSERT INTO system_state (key, value, updated_at) VALUES ('twilio_config', ?, datetime('now')) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`).bind(JSON.stringify(cfg)).run();
       return new Response(JSON.stringify({ ok: true, sid_masked: sid.slice(0, 6) + '…' + sid.slice(-4), from: cfg.from }), { headers: { 'content-type': 'application/json' } });
     }
+    if (url.pathname === '/stakers-probe') {
+      // Read-only: verify the admin Stakers search SQL against the live DB.
+      const q = (url.searchParams.get('q') || '').trim().toLowerCase();
+      const out: any = { q };
+      try {
+        const like = `%${q}%`;
+        out.matches = (await env.DB.prepare(`
+          SELECT u.id, u.email, u.nickname, u.kyc_name, u.referral_code, COUNT(sp.id) positions, COALESCE(SUM(sp.principal_usd),0) total_usd,
+                 SUM(CASE WHEN sp.status='active' THEN 1 ELSE 0 END) active_positions
+            FROM staking_positions sp JOIN users u ON u.id = sp.user_id
+           WHERE (LOWER(u.email) LIKE ? OR LOWER(COALESCE(u.nickname,'')) LIKE ? OR LOWER(COALESCE(u.kyc_name,'')) LIKE ? OR LOWER(COALESCE(u.referral_code,'')) LIKE ? OR LOWER(u.id) LIKE ? OR LOWER(COALESCE(u.kyc_phone,'')) LIKE ?)
+           GROUP BY u.id ORDER BY total_usd DESC LIMIT 20`).bind(like, like, like, like, like, like).all<any>()).results;
+        out.total_stakers = await env.DB.prepare(`SELECT COUNT(DISTINCT user_id) n, SUM(CASE WHEN status='active' THEN 1 ELSE 0 END) active FROM staking_positions`).first();
+      } catch (e: any) { out.error = String(e?.message || e); }
+      return new Response(JSON.stringify(out, null, 2), { headers: { 'content-type': 'application/json' } });
+    }
     if (url.pathname === '/convert-census') {
       const out: any = { generated_at: new Date().toISOString() };
       try {
