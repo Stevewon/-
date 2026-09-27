@@ -1371,15 +1371,15 @@ function WithdrawDividendModal({ qtaBalance, qtaPrice, usdtPrice, onClose, onDon
   const effQtaPrice = fixedWin ? fixedQtaUsdNow() : qtaPrice;   // QTA price used for conversion
   const effUsdtPrice = fixedWin ? 1 : (usdtPrice > 0 ? usdtPrice : 1);
 
-  // ★★★ PERMANENT OWNER ORDER (2026-09-12): max KRW 50,000 (≈ $34.48) per
-  //   request, ONE request per KST day. (Old $50 minimum retired.)
-  const MAX_WITHDRAW_USD = 50_000 / 1450;
+  // ★ §7-2 (owner 2026-09-26): NO amount cap on withdrawal requests. Still
+  //   ONE request per KST day + Friday window + 100-QTA unit.
   const num = parseFloat(amount) || 0;
   const in100 = num % 100 === 0 && num > 0;
   const enough = num <= qtaBalance;
   const addrOk = /^0x[0-9a-fA-F]{40}$/.test(address);
   const requestUsd = num * effQtaPrice;
-  const belowMinUsd = num > 0 && effQtaPrice > 0 && requestUsd > MAX_WITHDRAW_USD + 1e-9; // (name kept; now = OVER the daily cap)
+  const belowMinUsd = false; // §7-2: no amount cap
+  void requestUsd;
   const feeQta = num * 0.05;
   const netQta = num - feeQta;
   // ★ 100-QTA 단위는 더 이상 버튼을 "무조건 비활성화"하지 않는다. 버튼은 눌리게 두고,

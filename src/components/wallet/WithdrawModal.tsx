@@ -116,10 +116,12 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
   //   • Minimum withdrawal = $50 USD equivalent, valued at the coin's live
   //     USD price that day. Below $50 -> hard-blocked with a warning.
   const WITHDRAW_FEE_RATE = 0.05;         // 5%
-  // ★★★ PERMANENT OWNER ORDER (2026-09-12): max KRW 50,000 per request, one
-  //   request per KST day. (Old $50 minimum retired.) Mirrors wallet.ts.
-  const MAX_WITHDRAW_KRW = 50_000;
-  const MAX_WITHDRAW_USD = MAX_WITHDRAW_KRW / 1450;   // ≈ $34.48
+  // ★ §7-2 (owner 2026-09-26): NO amount cap on withdrawal requests — members
+  //   may withdraw everything withdrawable. USDT in multiples of 10 (min 10).
+  //   Still one request per KST day + Friday window. Mirrors wallet.ts.
+  const USDT_UNIT = 10;
+  const USDT_MIN = 10;
+  const isUsdt = coin.toUpperCase() === 'USDT';
 
   const numAmount = parseFloat(amount) || 0;
   // ★ 6원 peg during the event window (QTA -> $0.00413793, USDT -> $1.0),
@@ -133,8 +135,10 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
   // Minimum amount in the withdrawn coin = $50 / live price. Guard against a
   // zero/missing price (fall back so the field still works, never letting the
   // $50 floor evaporate to 0).
-  const maxAmountCoin = priceUsd > 0 ? MAX_WITHDRAW_USD / priceUsd : Infinity;
-  const belowMinUsd = numAmount > 0 && valueUsd > MAX_WITHDRAW_USD + 1e-9; // (name kept; now = OVER the daily cap)
+  // Unit rule for USDT: multiple of 10, at least 10.
+  const unitInvalid = isUsdt && numAmount > 0 && (numAmount < USDT_MIN - 1e-9 || Math.abs(numAmount / USDT_UNIT - Math.round(numAmount / USDT_UNIT)) > 1e-9);
+  const belowMinUsd = unitInvalid; // (name kept for minimal diff; now = unit/min violation)
+  void valueUsd;
 
   // ── Payout-coin choice (boss's 2026-08-26 rule): the user CHOOSES to
   //    receive their withdrawal value as QTA or USDT, converted at THIS
@@ -207,7 +211,9 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
     (!isQta || qtaAck); // Quantarium assets require the acknowledgement
 
   const setPercent = (p: number) => {
-    const v = (withdrawable * p) / 100;
+    let v = (withdrawable * p) / 100;
+    // USDT: snap DOWN to the 10-USDT grid so "100%" is the largest valid request.
+    if (isUsdt) v = Math.floor(v / USDT_UNIT) * USDT_UNIT;
     setAmount(v > 0 ? String(Number(v.toFixed(8))) : '');
   };
 
@@ -508,6 +514,7 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
             <div className={`rounded-lg border px-3 py-2 text-xs leading-relaxed ${windowInfo?.open ? 'border-exchange-buy/40 bg-exchange-buy/10 text-exchange-text' : 'border-exchange-yellow/40 bg-exchange-yellow/10 text-exchange-text'}`}>
               <div className="font-semibold">{windowInfo?.open ? t('wallet.windowOpenTitle') : t('wallet.windowClosedTitle')}</div>
               <div className="text-exchange-text-secondary">{t('wallet.windowClosedBody')}{!windowInfo?.open && windowInfo?.opens_at ? ` ${t('wallet.windowNext')}: ${new Date(windowInfo.opens_at).toLocaleString('en-US', { timeZone: 'Asia/Seoul', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })} KST` : ''}</div>
+              <div className="text-exchange-text-secondary mt-0.5">{t('wallet.noCapNotice')}</div>
             </div>
 
             {/* Amount */}
@@ -515,7 +522,7 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
               <label className="text-xs text-exchange-text-third mb-1.5 block font-medium flex justify-between">
                 <span>{t('wallet.withdrawAmount')}</span>
                 <span className="text-exchange-text-third">
-                  {t('wallet.max')}: <span className="tabular-nums">KRW 50,000{maxAmountCoin !== Infinity ? ` ≈ ${formatAmount(maxAmountCoin)} ${coin}` : ''}</span>
+                  {t('wallet.max')}: <span className="tabular-nums">{formatAmount(isUsdt ? Math.floor(withdrawable / USDT_UNIT) * USDT_UNIT : withdrawable)} {coin}</span>{isUsdt ? <span className="ml-1 text-exchange-text-third">· {t('wallet.usdtUnitHint')}</span> : null}
                 </span>
               </label>
               <div className="relative">
@@ -552,7 +559,7 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
                         ? t('wallet.insufficientWithdrawable')
                         : t('wallet.insufficientBalance'))
                     : belowMinUsd
-                    ? t('wallet.overMaxKrw')
+                    ? t('wallet.usdtUnitInvalid')
                     : t('wallet.amountMustExceedFee')}
                 </p>
               )}
@@ -598,7 +605,7 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
               onClick={() => {
                 // ★ Hard warning popup for over-cap attempts (owner rule 2026-09-12).
                 if (belowMinUsd) {
-                  showToast('error', t('wallet.maxWarnTitle'), t('wallet.maxWarnBody'));
+                  showToast('error', t('wallet.usdtUnitTitle'), t('wallet.usdtUnitInvalid'));
                   return;
                 }
                 if (!canProceed) return;

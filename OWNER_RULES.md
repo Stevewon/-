@@ -144,9 +144,17 @@ QTA/USDT 마켓에만 적용. 회사(마켓메이커) = **mm-bot-a / mm-bot-b** 
 
 ---
 
-## 7. ★★★ 영구명령 — 출금 신청 하루 1회·한국돈 5만원 절대 상한 (2026-09-12) ★★★
+## 7. ★★★ 출금 신청 — 하루 1회 · 금액 상한 없음 · 10 USDT 단위 (2026-09-12 제정 → 2026-09-26 개정) ★★★
 
-> **"하루 1일 1회, 한국돈으로 5만원으로 통제하라."** — 영구명령. 어떤 코인·어떤 경로든 동일. 우회 경로 발견 시 즉시 봉합이 최우선.
+> **2026-09-26 개정: "금요일 출금신청은 5만원 한도가 없어! 찾을 수 있는 만큼 10테더 단위로 신청해서 찾게 해주라."**
+> (2026-09-12 원문: "하루 1일 1회, 한국돈으로 5만원으로 통제하라." → **금액 상한 부분은 폐지**, 하루 1회는 유지.)
+
+- **★ 개정 내용(§7-2)**: 출금 **신청 금액 상한(5만원/34.48 USD) 폐지** — 회원은 출금 가능 잔액(`available − available_initial`) **전부를 한 번에** 신청할 수 있음. **USDT는 10 USDT 단위·최소 10 USDT**(`WITHDRAW_UNIT_INVALID`). QTA 배당 청구 출금은 기존 100 QTA 단위 유지. 지갑 출금·배당 청구 출금 모두 적용. `WITHDRAW_MAX_EXCEEDED` / `WITHDRAW_DAILY_LIMIT_REACHED` 코드는 더 이상 발생하지 않음.
+- **혼동 주의**: §6의 "하루 5만원"은 **회원이 회사에 QTA를 파는(매도·Convert) 한도**이며 출금과 무관 — 그대로 유효.
+- **유지되는 조건**: KST 하루 **신청 1회**(두 테이블 합산), **금요일 10~16시 KST 창구**(§12), KYC 승인, USDT 화이트리스트+24h 쿨다운, 회사 지급분 출금 불가, 5% 수수료.
+- **UI**: WithdrawModal — Max = 출금가능액(USDT는 10단위로 내림), 25/50/75/100% 버튼도 10단위 스냅, "No maximum" 안내. EarnPage 배당 출금 상한 경고 제거.
+
+<details><summary>2026-09-12 원문(폐지된 금액 상한 부분 포함, 기록용)</summary>
 
 - **횟수**: 회원 1인당 **KST 하루(00:00~24:00) 출금 신청 1회**. 두 번째 신청은 `WITHDRAW_DAILY_COUNT_REACHED`로 거부.
 - **금액**: 1회 = 하루 최대 **50,000원 = 50000/1450 ≈ 34.48 USD** (테더 1,450원 고정 환율). 초과 시 `WITHDRAW_MAX_EXCEEDED` 거부. 코인별 USD 환산 기준(USDT는 $1).
@@ -154,6 +162,9 @@ QTA/USDT 마켓에만 적용. 회사(마켓메이커) = **mm-bot-a / mm-bot-b** 
 - **대상 경로 전부**: 지갑 일반 출금(`POST /wallet/withdraw`, `withdrawals` 테이블), 스테이킹 배당/매칭 청구 출금(`POST /earn/withdraw-dividend`, `qta_withdrawals` 테이블). 횟수·금액 누계는 **두 테이블 합산**, `rejected/failed/cancelled` 제외.
 - **기존 조건 유지**: KYC 승인 필수, USDT 화이트리스트+24h 쿨다운, 회사 지급분(`available_initial`) 출금 불가, 5% 수수료, 배당 청구는 금요일 10~16시 KST 창구.
 - **코드**: `src/server/routes/wallet.ts` 상단 `WITHDRAW_MAX_KRW_PER_DAY / WITHDRAW_MAX_REQUESTS_PER_DAY`, `src/server/routes/earn.ts` withdraw-dividend, UI `WithdrawModal.tsx` / `EarnPage.tsx`.
+</details>
+
+- **코드(현행)**: `src/server/routes/wallet.ts` `WITHDRAW_MAX_REQUESTS_PER_DAY=1 / WITHDRAW_USDT_UNIT=10 / WITHDRAW_USDT_MIN=10`, `GET /wallet/withdraw-window`가 `usdt_unit/usdt_min/amount_cap:null` 노출, `src/server/routes/earn.ts` withdraw-dividend(횟수만 검사), UI `WithdrawModal.tsx` / `EarnPage.tsx`.
 
 ---
 
@@ -295,3 +306,4 @@ QTA/USDT 마켓에만 적용. 회사(마켓메이커) = **mm-bot-a / mm-bot-b** 
 - 2026-09-22: **13번 보강 — 관리자 SMS(Twilio) 설정 패널.** SID/토큰 붙여넣기 → 검증·번호 자동구매·테스트·LIVE 전환 원클릭. 잔액/번호/발송 이력 표시.
 - 2026-09-22: **13번 보강 — SMS 발송사 Vonage 지원.** Twilio KCB Trust Hub 차단으로 전환. 관리자 패널 provider 선택(Vonage 권장), 잔액 검증, 발신자명 QuantaEX.
 - 2026-09-26: **14번 신설 — Convert(바이빗식 QTA→USDT 즉시 스왑).** 바이빗 분석: OTC/RFQ, 호가창 미경유 → 차트·거래량 무영향. 동일 적용: 트레저리 상대 체결, trades/candles 미기록, 견적 10초·0수수료·30bps. §12 매도승인·§6 5만원 한도는 현물과 공유(sell-cap 공용 헬퍼로 order.ts 5개 게이트 통합). /convert 페이지, Admin Trades Convert 패널(스위치·스프레드·원장·트레저리 여력), 0062 마이그레이션.
+- 2026-09-26: **§7 개정 — 출금 신청 금액 상한(5만원) 폐지.** "금요일 출금신청은 5만원 한도가 없어, 찾을 수 있는 만큼 10테더 단위로." 지갑·배당 출금 모두 금액 게이트 제거, USDT 10단위·최소 10, 하루 1회·금요일 창구·KYC·화이트리스트·회사지급분 불가는 유지. UI Max/퍼센트 버튼 10단위 스냅, 안내문 교체(5개 언어).
