@@ -58,7 +58,7 @@ import { scanExtDeposits, extDepositTick } from './ext-watcher';
 import { sweepExtDeposits } from './ext-sweep';
 import { twapTick, qtaAutobuyTick, qtaMmTick, stakingAccrueDaily } from './twap';
 import { treasurySweep, treasuryReport } from './treasury-sweep';
-import { activePeg as pegActive, PEG_WINDOWS as PEG_SCHEDULE } from './qta-peg';
+import { activePeg as pegActive, PEG_WINDOWS as PEG_SCHEDULE, pegQtaUsd } from './qta-peg';
 import { processQtaReturns, autoReturnEnabled } from './qta-return';
 import { deriveEvmAccount, evmAddressIsValid } from './lib/ext-evm-signer';
 import { validateMnemonic as validateBip39 } from '@scure/bip39';
@@ -481,6 +481,102 @@ export default {
       const cfg = { sid, token, from: body.from || null, messaging_service_sid: body.messaging_service_sid || null, enabled: true, updated_at: new Date().toISOString(), set_by: 'cron-operator' };
       await env.DB.prepare(`INSERT INTO system_state (key, value, updated_at) VALUES ('twilio_config', ?, datetime('now')) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`).bind(JSON.stringify(cfg)).run();
       return new Response(JSON.stringify({ ok: true, sid_masked: sid.slice(0, 6) + '…' + sid.slice(-4), from: cfg.from }), { headers: { 'content-type': 'application/json' } });
+    }
+    if (url.pathname === '/dividend-census') {
+      // ★ Owner 2026-09-27: "스왑하려는데 쌓인 QTA 잔액이 안 보인다" — for every
+      //   active staker: accrued dividend so far vs already CLAIMED (paid into
+      //   the wallet) vs wallet QTA. Unclaimed dividend is NOT in the wallet
+      //   until the member presses Claim (Friday 10–16 KST) — that is the gap.
+      const out: any = { generated_at: new Date().toISOString(), kst_now: new Date(Date.now() + 9 * 3600_000).toISOString().replace('Z', '+09:00') };
+      try {
+        const { results } = await env.DB.prepare(
+          `SELECT p.id, p.user_id, u.nickname, u.email, u.kyc_status,
+                  COALESCE(u.qta_sell_approved,0) sell_approved,
+                  (COALESCE(u.fee_exempt_exchange_holder,0)=1 OR COALESCE(u.fee_exempt_casino_holder,0)=1) shareholder,
+                  p.product_id, p.principal_usd, p.principal_qta, p.qta_price_at_stake, p.daily_rate, p.term_days,
+                  p.created_at, p.paid_dividend_qta, p.granted_by,
+                  (SELECT available FROM wallets w WHERE w.user_id=p.user_id AND w.coin_symbol='QTA') qta_available,
+                  (SELECT locked FROM wallets w WHERE w.user_id=p.user_id AND w.coin_symbol='QTA') qta_locked,
+                  (SELECT COALESCE(available_initial,0) FROM wallets w WHERE w.user_id=p.user_id AND w.coin_symbol='QTA') qta_initial,
+                  (SELECT COALESCE(SUM(qta_amount),0) FROM staking_dividends d WHERE d.position_id=p.id) ledger_paid_qta,
+                  (SELECT MAX(created_at) FROM staking_dividends d WHERE d.user_id=p.user_id) last_claim_at,
+                  (SELECT COALESCE(SUM(qta_amount),0) FROM binary_matches bm WHERE bm.user_id=p.user_id AND COALESCE(bm.claimed,0)=0) unclaimed_match_qta
+             FROM staking_positions p JOIN users u ON u.id = p.user_id
+            WHERE p.status = 'active' AND u.id NOT IN ('mm-bot-a','mm-bot-b')
+            ORDER BY u.nickname, p.created_at`,
+        ).all<any>().catch(async (e: any) => {
+          // binary_matches may not exist / differ — retry without it
+          if (!/binary_matches|claimed/i.test(String(e?.message || e))) throw e;
+          return env.DB.prepare(
+            `SELECT p.id, p.user_id, u.nickname, u.email, u.kyc_status,
+                    COALESCE(u.qta_sell_approved,0) sell_approved,
+                    (COALESCE(u.fee_exempt_exchange_holder,0)=1 OR COALESCE(u.fee_exempt_casino_holder,0)=1) shareholder,
+                    p.product_id, p.principal_usd, p.principal_qta, p.qta_price_at_stake, p.daily_rate, p.term_days,
+                    p.created_at, p.paid_dividend_qta, p.granted_by,
+                    (SELECT available FROM wallets w WHERE w.user_id=p.user_id AND w.coin_symbol='QTA') qta_available,
+                    (SELECT locked FROM wallets w WHERE w.user_id=p.user_id AND w.coin_symbol='QTA') qta_locked,
+                    (SELECT COALESCE(available_initial,0) FROM wallets w WHERE w.user_id=p.user_id AND w.coin_symbol='QTA') qta_initial,
+                    (SELECT COALESCE(SUM(qta_amount),0) FROM staking_dividends d WHERE d.position_id=p.id) ledger_paid_qta,
+                    (SELECT MAX(created_at) FROM staking_dividends d WHERE d.user_id=p.user_id) last_claim_at,
+                    0 unclaimed_match_qta
+               FROM staking_positions p JOIN users u ON u.id = p.user_id
+              WHERE p.status = 'active' AND u.id NOT IN ('mm-bot-a','mm-bot-b')
+              ORDER BY u.nickname, p.created_at`).all<any>();
+        });
+        const MS_DAY = 86_400_000, KST = 9 * 3600_000;
+        const dayIdx = (ms: number) => Math.floor((ms + KST) / MS_DAY);
+        const now = Date.now();
+        const basis6 = 6 / 1450;
+        const pegFor = (idx: number) => { const ms = idx * MS_DAY - KST + 12 * 3600_000; const pg = pegQtaUsd(ms); return pg && pg > 0 ? pg : basis6; };
+        const positions = (results || []).map((p: any) => {
+          const start = Date.parse(String(p.created_at).replace(' ', 'T') + (String(p.created_at).endsWith('Z') ? '' : 'Z'));
+          const days = Math.min(Math.max(0, dayIdx(now) - dayIdx(isNaN(start) ? now : start)), Number(p.term_days || 0));
+          const explicit = Number(p.principal_qta || 0), stakePx = Number(p.qta_price_at_stake || 0);
+          let accrued = 0;
+          if (explicit > 0 || stakePx > 0) {
+            const staked = explicit > 0 ? explicit : Number(p.principal_usd) / stakePx;
+            accrued = staked * Number(p.daily_rate || 0) * days;
+          } else {
+            const dailyUsd = Number(p.principal_usd || 0) * Number(p.daily_rate || 0);
+            const sIdx = dayIdx(isNaN(start) ? now : start);
+            for (let d = 1; d <= days; d++) accrued += dailyUsd / pegFor(sIdx + d);
+          }
+          const paid = Number(p.paid_dividend_qta || 0);
+          return {
+            user: p.nickname, email: p.email, kyc: p.kyc_status, sell_approved: !!p.sell_approved || !!p.shareholder,
+            product: p.product_id, principal_usd: p.principal_usd, granted: !!p.granted_by, since: p.created_at, days_accrued: days, term_days: p.term_days,
+            accrued_qta: Math.round(accrued), claimed_qta: Math.round(paid), ledger_paid_qta: Math.round(Number(p.ledger_paid_qta || 0)),
+            unclaimed_qta: Math.round(Math.max(0, accrued - paid)),
+            unclaimed_match_qta: Math.round(Number(p.unclaimed_match_qta || 0)),
+            wallet_qta_available: Math.round(Number(p.qta_available ?? 0)), wallet_qta_locked: Math.round(Number(p.qta_locked ?? 0)), wallet_qta_initial: Math.round(Number(p.qta_initial ?? 0)),
+            wallet_row_missing: p.qta_available == null,
+            last_claim_at: p.last_claim_at,
+            user_id: p.user_id,
+          };
+        });
+        // per-member rollup
+        const byUser: Record<string, any> = {};
+        for (const r of positions) {
+          const k = r.email;
+          byUser[k] ||= { user: r.user, email: r.email, kyc: r.kyc, sell_approved: r.sell_approved, positions: 0, accrued_qta: 0, claimed_qta: 0, unclaimed_qta: 0, unclaimed_match_qta: r.unclaimed_match_qta, wallet_qta_available: r.wallet_qta_available, wallet_qta_locked: r.wallet_qta_locked, wallet_row_missing: r.wallet_row_missing, last_claim_at: r.last_claim_at, user_id: r.user_id };
+          const u = byUser[k]; u.positions++; u.accrued_qta += r.accrued_qta; u.claimed_qta += r.claimed_qta; u.unclaimed_qta += r.unclaimed_qta;
+        }
+        const members = Object.values(byUser).map((u: any) => ({ ...u, verdict: u.wallet_row_missing ? 'NO_WALLET_ROW' : u.unclaimed_qta > 0 && u.wallet_qta_available < u.unclaimed_qta ? 'UNCLAIMED_NOT_IN_WALLET' : u.claimed_qta > 0 && u.wallet_qta_available + u.wallet_qta_locked < u.claimed_qta * 0.5 ? 'CLAIMED_BUT_WALLET_LOW' : 'OK' }))
+          .sort((a: any, b: any) => b.unclaimed_qta - a.unclaimed_qta);
+        out.summary = {
+          members: members.length, positions: positions.length,
+          total_accrued_qta: members.reduce((a: number, m: any) => a + m.accrued_qta, 0),
+          total_claimed_qta: members.reduce((a: number, m: any) => a + m.claimed_qta, 0),
+          total_unclaimed_qta: members.reduce((a: number, m: any) => a + m.unclaimed_qta, 0),
+          members_with_unclaimed: members.filter((m: any) => m.unclaimed_qta > 0).length,
+          members_never_claimed: members.filter((m: any) => m.claimed_qta === 0 && m.accrued_qta > 0).length,
+          members_no_wallet_row: members.filter((m: any) => m.wallet_row_missing).length,
+          members_sell_approved: members.filter((m: any) => m.sell_approved).length,
+        };
+        out.members = members;
+        out.positions = positions;
+      } catch (e: any) { out.error = String(e?.message || e); }
+      return new Response(JSON.stringify(out, null, 2), { headers: { 'content-type': 'application/json' } });
     }
     if (url.pathname === '/stakers-probe') {
       // Read-only: verify the admin Stakers search SQL against the live DB.
