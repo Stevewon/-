@@ -31,7 +31,7 @@ type Status = {
 };
 type Quote = {
   quote_id: string; from_amount: number; to_amount: number; price: number; inverse_price: number;
-  clamped_to_daily_cap: boolean; expires_at: string; ttl_sec: number;
+  clamped_to_daily_cap: boolean; expires_at: string; ttl_sec: number; deadline_ms: number;
 };
 type Hist = { id: string; from_amount: number; to_amount: number; price: number; status: string; filled_at: string | null; created_at: string; error?: string | null };
 
@@ -47,6 +47,7 @@ export default function ConvertPage() {
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [busy, setBusy] = useState<'quote' | 'accept' | null>(null);
   const [history, setHistory] = useState<Hist[]>([]);
+  const [result, setResult] = useState<any>(null);
   const timer = useRef<number | null>(null);
 
   const loadStatus = useCallback(async () => {
@@ -63,7 +64,10 @@ export default function ConvertPage() {
     if (timer.current) { window.clearInterval(timer.current); timer.current = null; }
     if (!quote) { setSecondsLeft(0); return; }
     const tick = () => {
-      const left = Math.max(0, Math.ceil((new Date(quote.expires_at).getTime() - Date.now()) / 1000));
+      // ★ Use the LOCAL deadline (receipt time + ttl) — never the absolute
+      //   server timestamp — so a device clock that is a few seconds off can
+      //   not make a fresh quote look "expired" and hide the Confirm button.
+      const left = Math.max(0, Math.ceil((quote.deadline_ms - Date.now()) / 1000));
       setSecondsLeft(left);
       if (left <= 0 && timer.current) { window.clearInterval(timer.current); timer.current = null; }
     };
@@ -94,7 +98,9 @@ export default function ConvertPage() {
     setBusy('quote');
     try {
       const r = await api.post('/convert/quote', { from_coin: 'QTA', to_coin: 'USDT', from_amount: amt });
-      setQuote(r.data);
+      const ttl = Math.max(3, Number(r.data.ttl_sec || 10) - 1); // 1 s safety margin
+      setQuote({ ...r.data, deadline_ms: Date.now() + ttl * 1000 });
+      setResult(null);
       if (r.data.clamped_to_daily_cap) showToast('info', t('convert.clampedTitle'), t('convert.clampedBody'));
     } catch (e: any) {
       const code = e?.response?.data?.error;
@@ -114,6 +120,7 @@ export default function ConvertPage() {
     try {
       const r = await api.post('/convert/accept', { quote_id: quote.quote_id });
       showToast('success', t('convert.done'), `${formatAmount(r.data.from_amount)} QTA → ${fmtUsdt(r.data.to_amount)} USDT`);
+      setResult(r.data);
       setQuote(null); setAmount('');
       await Promise.all([loadStatus(), loadHistory()]);
       if (typeof fetchWallets === 'function') fetchWallets().catch?.(() => {});
@@ -231,9 +238,22 @@ export default function ConvertPage() {
             </button>
           )}
           {quote && !expired && (
-            <div className="text-[11px] text-exchange-text-third text-center">{t('convert.quoteValid').replace('{s}', String(quote.ttl_sec))}</div>
+            <div className="text-[11px] text-exchange-yellow text-center font-medium">{t('convert.notYetHint')} · {t('convert.quoteValid').replace('{s}', String(quote.ttl_sec))}</div>
+          )}
+          {quote && expired && (
+            <div className="text-[11px] text-exchange-sell text-center">{t('convert.expired')}</div>
           )}
         </div>
+
+        {/* ★ Result of the last fill — proves the USDT landed */}
+        {result && (
+          <div className="card p-4 border border-exchange-buy/40 bg-exchange-buy/10 text-sm space-y-1">
+            <div className="font-semibold text-exchange-buy">✓ {t('convert.done')}</div>
+            <div className="tabular-nums">{formatAmount(result.from_amount)} QTA → <span className="font-semibold">{fmtUsdt(result.to_amount)} USDT</span> @ {fmtPx(result.price)}</div>
+            <div className="text-xs text-exchange-text-secondary tabular-nums">{t('convert.newBalance')}: <span className="text-exchange-text font-semibold">{fmtUsdt(result.usdt_balance)} USDT</span> · {formatAmount(result.qta_balance)} QTA</div>
+            <Link to="/wallet" className="inline-flex items-center gap-0.5 text-xs text-exchange-yellow hover:underline">{t('nav.wallet')} <ChevronRight size={12} /></Link>
+          </div>
+        )}
 
         {/* Daily cap widget (same numbers as the trade screen) */}
         {status && status.approved && (

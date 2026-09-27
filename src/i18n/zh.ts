@@ -511,6 +511,8 @@ const zh = {
   'convert.how3': 'Pre-approved members only. Convert and spot sells share the same daily limit of KRW 50,000 (≈ 34.48 USDT), reset 00:00 KST.',
   'convert.how4': 'Received USDT is credited instantly to your Spot wallet and can be withdrawn under the standard withdrawal policy.',
   'convert.history': 'Convert history',
+  'convert.newBalance': 'New balance',
+  'convert.notYetHint': 'Not converted yet — tap Confirm to complete the swap',
   'wallet.convert': 'Convert',
   'wallet.testDeposit': '模拟充值',
   'wallet.demo': '演示',
