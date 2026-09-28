@@ -19,19 +19,8 @@ import { X, Lock, Loader2, Star, Crown, ShieldCheck, Gift, TrendingUp, Wallet, A
 import { inFixedWindow, pegQtaUsd, pegQtaKrw } from '../shared/qta-peg';
 const fixedQtaUsdNow = () => pegQtaUsd(Date.now()) ?? 0;
 
-// ★ OWNER RULE (2026-09-03): 배당·매칭으로 쌓인 코인의 청구는 매주 금요일(KST)
-//   오전 10시~오후 4시에만 가능. UI에서 버튼 안내/비활성 표시에 사용한다.
-//   (실제 차단은 서버에서 강제. UI는 안내용.)
-const CLAIM_WIN_WEEKDAY = 5;   // 0=일 … 5=금
-const CLAIM_WIN_START_HR = 10; // 10시(포함)
-const CLAIM_WIN_END_HR   = 16; // 16시(미포함)
-function claimWindowOpen(nowMs: number): boolean {
-  // KST = UTC+9. UTC 시각을 9시간 밀어 KST 달력 요일/시각을 읽는다.
-  const kst = new Date(nowMs + 9 * 60 * 60 * 1000);
-  const weekday = kst.getUTCDay();
-  const hour = kst.getUTCHours();
-  return weekday === CLAIM_WIN_WEEKDAY && hour >= CLAIM_WIN_START_HR && hour < CLAIM_WIN_END_HR;
-}
+// ★ OWNER RULE (2026-09-28, 옵션 ②): 배당·매칭 청구(→ Spot 지갑)는 상시 가능.
+//   금요일 10~16시(KST) 창구는 출금에만 적용 (서버 강제).
 
 // ---------------------------------------------------------------------------
 // QTA ADVANCED EARN — STAKE. EARN. GROW.
@@ -736,14 +725,7 @@ export default function EarnPage() {
                 </div>
                 <div className="flex gap-2">
                   <button
-                    onClick={() => {
-                      // ★ 청구창(금 10~16시 KST)이 닫혀 있으면 서버 호출 전 안내.
-                      if (!claimWindowOpen(Date.now())) {
-                        showToast('error', t('earn.claimWindowTitle'), t('earn.claimWindowBody'));
-                        return;
-                      }
-                      handleClaim(p);
-                    }}
+                    onClick={() => handleClaim(p)}
                     disabled={busy || p.accrued_dividend_qta <= 0}
                     className="flex-1 py-2.5 rounded-full border border-exchange-border text-exchange-text text-[13px] font-bold hover:border-exchange-buy/50 hover:text-exchange-buy transition-colors disabled:opacity-40"
                   >
@@ -766,8 +748,8 @@ export default function EarnPage() {
                     <AlertTriangle size={11} /> {t('earn.earlyExitWarn')}
                   </p>
                 )}
-                {/* ★ 청구창 안내: 금요일 10~16시(KST)만 배당·매칭 청구 가능. */}
-                <p className={`text-[10px] mt-2 flex items-center gap-1 ${claimWindowOpen(Date.now()) ? 'text-exchange-buy' : 'text-exchange-text-third'}`}>
+                {/* ★ 안내: 청구는 상시, 출금만 금요일 10~16시(KST). */}
+                <p className="text-[10px] mt-2 flex items-center gap-1 text-exchange-text-third">
                   <AlertTriangle size={11} /> {t('earn.claimWindowNote')}
                 </p>
               </div>
@@ -1411,7 +1393,8 @@ function WithdrawDividendModal({ qtaBalance, qtaPrice, usdtPrice, onClose, onDon
         `${formatAmount(res.data.payout_amount)} ${res.data.payout_coin} (${t('earn.afterFee')})`);
       onDone();
     } catch (err: any) {
-      showToast('error', t('earn.withdrawFailed'), err.response?.data?.error || '');
+      const code = err.response?.data?.error;
+      showToast('error', t('earn.withdrawFailed'), code === 'CLAIM_WINDOW_CLOSED' ? t('earn.claimWindowBody') : (code || ''));
     } finally { setBusy(false); }
   };
 

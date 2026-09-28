@@ -110,9 +110,9 @@ function kstDayIndex(ms: number): number {
   return Math.floor((ms + KST_OFFSET_MS) / MS_PER_DAY);
 }
 
-// ★ OWNER RULE (2026-09-03): 배당 + 매칭보너스로 쌓인 코인의 "청구(claim)"는
-//   매주 금요일(KST) 오전 10:00 ~ 오후 16:00 사이에만 가능하다. 그 외 시간은
-//   불가. (만기 redeem 은 이 제한을 받지 않는다.)
+// ★ OWNER RULE (2026-09-03 → 2026-09-28 개정, 옵션 ②): 금요일(KST) 10:00~16:00
+//   창구는 배당 QTA의 외부 출금(/withdraw-dividend)에만 적용된다. 청구(claim →
+//   Spot 지갑 입금)는 상시 허용. (만기 redeem 은 이 제한을 받지 않는다.)
 //   Workers runtime is UTC — shift to KST, then read the weekday & hour.
 const CLAIM_WINDOW_WEEKDAY = 5;   // 0=Sun … 5=Fri
 const CLAIM_WINDOW_START_HR = 10; // 10:00 KST inclusive
@@ -132,7 +132,7 @@ function claimWindowOpen(nowMs: number): boolean {
 function claimWindowClosed(c: any) {
   return c.json({
     error: 'CLAIM_WINDOW_CLOSED',
-    message: 'Dividend & matching rewards can only be claimed every Friday, 10:00 AM to 4:00 PM (KST).',
+    message: 'Dividend withdrawals can only be requested every Friday, 10:00 AM to 4:00 PM (KST).',
   }, 403);
 }
 
@@ -547,7 +547,7 @@ app.get('/positions', authMiddleware, async (c) => {
 // GET /unclaimed — how much dividend / match QTA this member has ACCRUED but
 // not yet CLAIMED into the wallet. Owner 2026-09-27 (census): members saw
 // "stacked QTA" on Earn but 0 in Convert/Wallet because claiming is a manual
-// Friday-window step. Convert + Wallet render a banner from this endpoint.
+// step (anytime since 2026-09-28). Convert + Wallet render a banner from this.
 // --------------------------------------------------------------------------
 app.get('/unclaimed', authMiddleware, async (c) => {
   const user = c.get('user');
@@ -577,7 +577,10 @@ app.get('/unclaimed', authMiddleware, async (c) => {
     accrued_qta: accrued, claimed_qta: paid,
     unclaimed_dividend_qta: dividend, unclaimed_match_qta: match,
     unclaimed_total_qta: dividend + match,
-    window_open: claimWindowOpen(now),
+    // Claiming is always open since 2026-09-28 (option ②); next_window_* now
+    // describes the Friday WITHDRAWAL window only.
+    window_open: true,
+    withdraw_window_open: claimWindowOpen(now),
     next_window_opens_at: new Date(openKst - KST_OFFSET_MS).toISOString(),
     next_window_closes_at: new Date(closeKst - KST_OFFSET_MS).toISOString(),
   });
@@ -832,8 +835,7 @@ app.post('/subscribe', authMiddleware, async (c) => {
 // referral match on the credited amount.
 // --------------------------------------------------------------------------
 app.post('/claim', authMiddleware, async (c) => {
-  // ★ OWNER RULE (2026-09-03): 배당 청구는 금요일 10~16시(KST)만 허용.
-  if (!claimWindowOpen(Date.now())) return claimWindowClosed(c);
+  // ★ OWNER RULE (2026-09-28, 옵션 ②): 청구는 언제든 가능 (출금만 금요일 창구).
   const user = c.get('user');
   const body = await c.req.json().catch(() => ({}));
   const positionId = String(body.position_id || '');
@@ -917,8 +919,7 @@ app.post('/claim', authMiddleware, async (c) => {
 // claims are guarded per-position by the accrued_dividend_usd snapshot CAS.
 // --------------------------------------------------------------------------
 app.post('/claim-all', authMiddleware, async (c) => {
-  // ★ OWNER RULE (2026-09-03): 배당 청구는 금요일 10~16시(KST)만 허용.
-  if (!claimWindowOpen(Date.now())) return claimWindowClosed(c);
+  // ★ OWNER RULE (2026-09-28, 옵션 ②): 청구는 언제든 가능 (출금만 금요일 창구).
   const user = c.get('user');
   const now = Date.now();
   const price = await qtaPrice(c);

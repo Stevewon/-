@@ -278,6 +278,7 @@ QTA/USDT 마켓에만 적용. 회사(마켓메이커) = **mm-bot-a / mm-bot-b** 
 - **트레저리 운영 주의**: Convert로 회사가 사준 QTA는 이미 admin 트레저리 장부에 있음(봇 경유 아님) → §8 봇→트레저리 장부 스윕 대상이 아니고, 핫월렛→메인지갑 온체인 스윕은 기존 루틴 그대로. **admin USDT 잔고가 곧 Convert 지급 여력**이므로 관리자 패널에서 확인.
 - **저장**: `convert_orders`(quoted→filled|expired|cancelled|failed, 가격·기준가·bps·트레저리·IP), `system_state.convert_enabled / convert_spread_bps`. 마이그레이션 0062.
 - **★ 미청구 배당 안내 (2026-09-27, 오너 선택 ①)**: 전수조사 결과 활성 스테이커 26명 중 13명은 한 번도 청구하지 않아 지갑 QTA 0(미청구 71.7만 QTA). 배당은 금요일 청구 시에만 지갑에 들어가므로 Convert 화면·Wallet 화면 상단에 「You have N QTA of staking rewards not yet claimed」배너 표시(배당+매칭 분리, 창구 열려 있으면 「Claim now」버튼으로 즉시 claim-all, 닫혀 있으면 다음 금요일 시각). Convert의 QTA 잔액 0이면 청구 안내 문구. API `GET /earn/unclaimed`. 진단 `cron /dividend-census`. 금요일 청구 규칙(§7) 자체는 변경 없음.
+- **★★ 청구 상시 허용 (2026-09-28, 오너 선택 ②)**: "스테이킹 스왑에 잔고가 안 보인다" 재발 → **배당·매칭 청구(claim → Spot 지갑 입금)는 요일·시간 제한 없이 언제든 가능**. 금요일 10:00~16:00 KST 창구는 **외부 출금**(`/earn/withdraw-dividend`, `/wallet/withdraw`)에만 유지. 청구된 QTA는 즉시 Convert·현물 매도에 사용 가능 — 단 §12 사전 매도승인·§6 하루 5만원 한도는 그대로라 회사 매입액은 늘지 않음. 코드: `earn.ts` `/claim`·`/claim-all`에서 창구 게이트 제거, `/unclaimed`는 `window_open:true` + `withdraw_window_open`, UnclaimedBanner 「Claim now」 상시 노출, EarnPage 청구 버튼 사전 차단 제거, 안내 문구 5개 언어 교체.
 - **코드**: `src/server/routes/convert.ts`(/status·/quote·/accept·/history), `src/shared/sell-cap.ts`(+ cron-worker 복사본), `src/server/routes/order.ts`(모든 5만원 게이트가 공유 헬퍼 사용), `src/server/routes/admin.ts`(/converts, /converts/settings, /users/sellers 합산), `src/pages/ConvertPage.tsx`, `AdminPage.tsx` ConvertAdminPanel.
 
 ---
@@ -311,3 +312,4 @@ QTA/USDT 마켓에만 적용. 회사(마켓메이커) = **mm-bot-a / mm-bot-b** 
 - 2026-09-26: **§7 개정 — 출금 신청 금액 상한(5만원) 폐지.** "금요일 출금신청은 5만원 한도가 없어, 찾을 수 있는 만큼 10테더 단위로." 지갑·배당 출금 모두 금액 게이트 제거, USDT 10단위·최소 10, 하루 1회·금요일 창구·KYC·화이트리스트·회사지급분 불가는 유지. UI Max/퍼센트 버튼 10단위 스냅, 안내문 교체(5개 언어).
 - 2026-09-27: **§12 보강 — 관리자「스테이킹 회원」탭.** 누가·언제·얼마 스테이킹했는지 전체 표 + 포지션 상세 + 행 단위 매도승인 원클릭. /admin/stakers.
 - 2026-09-27: **§14 보강 — 미청구 배당 배너.** "스왑하려는데 QTA가 안 보인다" 전수조사(26명/27포지션, 미청구 717,131 QTA, 미청구자 13명) → 원인은 미청구. Convert·Wallet에 미청구 배너 + Claim now(창구 중) + 다음 창구 시각, /earn/unclaimed, cron /dividend-census.
+- 2026-09-28: **§14 개정 — 청구 상시 허용(옵션 ②).** 배당·매칭 청구는 언제든 Spot 지갑으로, 금요일 10~16시 KST 창구는 출금에만. §6·§12 매도 제한은 유지.
