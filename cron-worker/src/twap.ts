@@ -147,6 +147,31 @@ export async function qtaMmTick(env: TwapEnv): Promise<void> {
 // the endpoint uses INSERT OR IGNORE keyed on (position_id, day_index), so
 // re-runs never double-count. Guarded by TWAP_CRON_SECRET.
 // ============================================================================
+// ★ OWNER RULE (2026-09-28): "청구 안 해도 데일리가 자동으로 쌓이게" — every */5
+//   tick asks the server to sweep newly accrued staking dividends + matching
+//   bonus into each staker's Spot wallet. Idempotent (per-position CAS); a no-op
+//   except right after each KST-midnight day rollover.
+export async function stakingAutoCredit(env: TwapEnv): Promise<void> {
+  const secret = env.TWAP_CRON_SECRET;
+  if (!secret) {
+    console.log('[auto-credit] TWAP_CRON_SECRET not set; skipping');
+    return;
+  }
+  const base = (env.APP_URL || 'https://quantaex.io').replace(/\/+$/, '');
+  try {
+    const res = await fetch(`${base}/api/earn/auto-credit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-twap-secret': secret },
+      body: '{}',
+    });
+    const body = await res.text().catch(() => '');
+    if (!res.ok) { console.warn(`[auto-credit] HTTP ${res.status}: ${body.slice(0, 200)}`); return; }
+    console.log(`[auto-credit] ok ${body.slice(0, 200)}`);
+  } catch (e: any) {
+    console.warn('[auto-credit] failed:', String(e?.message || e).slice(0, 200));
+  }
+}
+
 export async function stakingAccrueDaily(env: TwapEnv): Promise<void> {
   const secret = env.TWAP_CRON_SECRET;
   if (!secret) {

@@ -52,6 +52,7 @@
 - **★ 포지션별 개별 계산 (2026-09-04 지상명령)**: 한 회원이 서로 다른 날 여러 번 진입하면(예: 오늘 $1,000, 한 달 뒤 $5,000), **각 포지션은 자기 금액·자기 요율(daily_rate)·자기 기간(term_days)·자기 시작일(created_at)로 완전히 개별 계산**한다. 절대 합산해서 뭉뚱그리지 않는다. (코드: `accruedQta()`/`accruedDays()`가 포지션 `p`별로 계산, positions API가 포지션마다 개별 map 처리.)
 - **코드**: `accruedUsd()` + `kstDayIndex()` — `src/server/routes/earn.ts`
 - **중복 지급 방지**: claim 시 `accrued_dividend_usd` 스냅샷 원자 가드 (claim-first)
+- **★ 자동 지갑 입금 (2026-09-28 오너 지시: "청구 안 해도 자동으로 데일리가 쌓이게")**: 매일 KST 자정에 늘어난 1일치 배당(포지션별 개별 계산)과 미청구 매칭보너스는 **청구 버튼 없이 자동으로 Spot 지갑(출금 가능 잔액)에 입금**. cron `*/5` 틱이 `POST /api/earn/auto-credit`(TWAP_CRON_SECRET) 호출 → 자정 직후 첫 틱(최대 5분 내) 입금, 그 외 틱은 no-op. 중복 방지는 기존 CAS 그대로. 「Claim now」 버튼은 즉시 입금용으로 유지. 코드: `earn.ts` `sweepUserRewards()`/`runAutoCredit()`, `cron-worker/src/twap.ts` `stakingAutoCredit()`.
 
 ---
 
@@ -321,3 +322,4 @@ QTA/USDT 마켓에만 적용. 회사(마켓메이커) = **mm-bot-a / mm-bot-b** 
 - 2026-09-27: **§14 보강 — 미청구 배당 배너.** "스왑하려는데 QTA가 안 보인다" 전수조사(26명/27포지션, 미청구 717,131 QTA, 미청구자 13명) → 원인은 미청구. Convert·Wallet에 미청구 배너 + Claim now(창구 중) + 다음 창구 시각, /earn/unclaimed, cron /dividend-census.
 - 2026-09-28: **§14 개정 — 청구 상시 허용(옵션 ②).** 배당·매칭 청구는 언제든 Spot 지갑으로, 금요일 10~16시 KST 창구는 출금에만. §6·§12 매도 제한은 유지.
 - 2026-09-28: **§6 예외 신설 — 스테이킹 보상 스왑 무제한.** 스테이킹으로 받은 배당·매칭 QTA는 Convert로 매일 USDT 스왑(5만원 한도·§12 승인 미적용), 스왑된 USDT는 금요일 10~16시 출금 신청. 보상 범위 밖 QTA는 기존 한도 그대로.
+- 2026-09-28: **§2 보강 — 데일리 자동 지갑 입금.** "청구 안 해도 자동으로 데일리가 쌓이게." 매일 KST 자정 후 5분 내 배당·매칭 자동 입금(/earn/auto-credit, cron */5). 청구 버튼 없이도 Convert 잔고에 바로 보임.
