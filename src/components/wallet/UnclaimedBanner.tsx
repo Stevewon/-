@@ -3,10 +3,11 @@
 // ----------------------------------------------------------------------------
 // Owner 2026-09-27 (option ①): members saw accrued dividends on Earn but 0 QTA
 // in Convert / Wallet, because dividends only enter the wallet when CLAIMED
-// during the Friday 10:00–16:00 KST window. This banner closes that gap:
+// by the member. This banner closes that gap:
 //   • shows unclaimed dividend + match QTA (from GET /earn/unclaimed)
-//   • if the window is open → "Claim now" button (POST /earn/claim-all)
-//   • otherwise → next window time (KST) + link to Earn
+//   • "Claim now" button (POST /earn/claim-all) — claiming is open anytime
+//     since 2026-09-28 (option ②); only WITHDRAWALS keep the Friday window
+//   • next Friday withdrawal window (KST) + link to Earn
 // Member-facing → English only (OWNER_RULES §0).
 // ============================================================================
 import { useCallback, useEffect, useState } from 'react';
@@ -20,7 +21,7 @@ import { showToast } from '../common/Toast';
 type Unclaimed = {
   active_positions: number; accrued_qta: number; claimed_qta: number;
   unclaimed_dividend_qta: number; unclaimed_match_qta: number; unclaimed_total_qta: number;
-  window_open: boolean; next_window_opens_at: string; next_window_closes_at: string;
+  window_open: boolean; withdraw_window_open?: boolean; next_window_opens_at: string; next_window_closes_at: string;
 };
 
 export default function UnclaimedBanner({ onClaimed, compact = false }: { onClaimed?: () => void; compact?: boolean }) {
@@ -64,11 +65,10 @@ export default function UnclaimedBanner({ onClaimed, compact = false }: { onClai
             {data.unclaimed_match_qta >= 1 ? ` (${t('unclaimed.dividend')} ${formatAmount(Math.floor(data.unclaimed_dividend_qta))} + ${t('unclaimed.match')} ${formatAmount(Math.floor(data.unclaimed_match_qta))})` : ''}
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-2">
-            {data.window_open ? (
-              <button onClick={claim} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-exchange-yellow text-black text-xs font-semibold hover:brightness-110 disabled:opacity-50">
-                {busy ? <RefreshCw size={12} className="animate-spin" /> : <Gift size={12} />} {t('unclaimed.claimNow')}
-              </button>
-            ) : (
+            <button onClick={claim} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-exchange-yellow text-black text-xs font-semibold hover:brightness-110 disabled:opacity-50">
+              {busy ? <RefreshCw size={12} className="animate-spin" /> : <Gift size={12} />} {t('unclaimed.claimNow')}
+            </button>
+            {!data.withdraw_window_open && data.next_window_opens_at && (
               <span className="inline-flex items-center gap-1 text-xs text-exchange-text-secondary"><Clock size={12} /> {t('unclaimed.nextWindow')}: <span className="text-exchange-text font-medium tabular-nums">{fmtKst(data.next_window_opens_at)}–{new Date(data.next_window_closes_at).toLocaleTimeString('en-US', { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', hour12: false })} KST</span></span>
             )}
             <Link to="/earn" className="text-xs text-exchange-yellow hover:underline">{t('nav.earn')} ›</Link>

@@ -110,9 +110,9 @@ function kstDayIndex(ms: number): number {
   return Math.floor((ms + KST_OFFSET_MS) / MS_PER_DAY);
 }
 
-// ★ OWNER RULE (2026-09-03): 배당 + 매칭보너스로 쌓인 코인의 "청구(claim)"는
-//   매주 금요일(KST) 오전 10:00 ~ 오후 16:00 사이에만 가능하다. 그 외 시간은
-//   불가. (만기 redeem 은 이 제한을 받지 않는다.)
+// ★ OWNER RULE (2026-09-03 → 2026-09-28 개정, 옵션 ②): 금요일(KST) 10:00~16:00
+//   창구는 배당 QTA의 외부 출금(/withdraw-dividend)에만 적용된다. 청구(claim →
+//   Spot 지갑 입금)는 상시 허용. (만기 redeem 은 이 제한을 받지 않는다.)
 //   Workers runtime is UTC — shift to KST, then read the weekday & hour.
 const CLAIM_WINDOW_WEEKDAY = 5;   // 0=Sun … 5=Fri
 const CLAIM_WINDOW_START_HR = 10; // 10:00 KST inclusive
@@ -132,7 +132,7 @@ function claimWindowOpen(nowMs: number): boolean {
 function claimWindowClosed(c: any) {
   return c.json({
     error: 'CLAIM_WINDOW_CLOSED',
-    message: 'Dividend & matching rewards can only be claimed every Friday, 10:00 AM to 4:00 PM (KST).',
+    message: 'Dividend withdrawals can only be requested every Friday, 10:00 AM to 4:00 PM (KST).',
   }, 403);
 }
 
@@ -547,7 +547,7 @@ app.get('/positions', authMiddleware, async (c) => {
 // GET /unclaimed — how much dividend / match QTA this member has ACCRUED but
 // not yet CLAIMED into the wallet. Owner 2026-09-27 (census): members saw
 // "stacked QTA" on Earn but 0 in Convert/Wallet because claiming is a manual
-// Friday-window step. Convert + Wallet render a banner from this endpoint.
+// step (anytime since 2026-09-28). Convert + Wallet render a banner from this.
 // --------------------------------------------------------------------------
 app.get('/unclaimed', authMiddleware, async (c) => {
   const user = c.get('user');
@@ -577,7 +577,10 @@ app.get('/unclaimed', authMiddleware, async (c) => {
     accrued_qta: accrued, claimed_qta: paid,
     unclaimed_dividend_qta: dividend, unclaimed_match_qta: match,
     unclaimed_total_qta: dividend + match,
-    window_open: claimWindowOpen(now),
+    // Claiming is always open since 2026-09-28 (option ②); next_window_* now
+    // describes the Friday WITHDRAWAL window only.
+    window_open: true,
+    withdraw_window_open: claimWindowOpen(now),
     next_window_opens_at: new Date(openKst - KST_OFFSET_MS).toISOString(),
     next_window_closes_at: new Date(closeKst - KST_OFFSET_MS).toISOString(),
   });
@@ -832,8 +835,7 @@ app.post('/subscribe', authMiddleware, async (c) => {
 // referral match on the credited amount.
 // --------------------------------------------------------------------------
 app.post('/claim', authMiddleware, async (c) => {
-  // ★ OWNER RULE (2026-09-03): 배당 청구는 금요일 10~16시(KST)만 허용.
-  if (!claimWindowOpen(Date.now())) return claimWindowClosed(c);
+  // ★ OWNER RULE (2026-09-28, 옵션 ②): 청구는 언제든 가능 (출금만 금요일 창구).
   const user = c.get('user');
   const body = await c.req.json().catch(() => ({}));
   const positionId = String(body.position_id || '');
@@ -917,8 +919,7 @@ app.post('/claim', authMiddleware, async (c) => {
 // claims are guarded per-position by the accrued_dividend_usd snapshot CAS.
 // --------------------------------------------------------------------------
 app.post('/claim-all', authMiddleware, async (c) => {
-  // ★ OWNER RULE (2026-09-03): 배당 청구는 금요일 10~16시(KST)만 허용.
-  if (!claimWindowOpen(Date.now())) return claimWindowClosed(c);
+  // ★ OWNER RULE (2026-09-28, 옵션 ②): 청구는 언제든 가능 (출금만 금요일 창구).
   const user = c.get('user');
   const now = Date.now();
   const price = await qtaPrice(c);
@@ -928,8 +929,28 @@ app.post('/claim-all', authMiddleware, async (c) => {
   const positions = await c.env.DB.prepare(
     `SELECT * FROM staking_positions WHERE user_id = ? AND status = 'active'`
   ).bind(user.id).all<any>();
-  const rows = positions.results || [];
+  const r = await sweepUserRewards(c, user.id, positions.results || [], now, basis);
 
+  return c.json({
+    ok: true,
+    credited_qta: r.dividend_qta + r.match_qta,
+    dividend_qta: r.dividend_qta,
+    match_qta: r.match_qta,
+    match_rows: r.match_rows,
+    positions_claimed: r.positions_claimed,
+    qta_price: basis,
+  });
+});
+
+// --------------------------------------------------------------------------
+// sweepUserRewards — move every accrued-but-unpaid dividend of `rows` (the
+// user's ACTIVE positions) plus the user's unclaimed binary match bonus into
+// the QTA wallet (withdrawable). Shared by /claim-all (member button) and
+// /auto-credit (daily cron — owner 2026-09-28 "청구 안 해도 데일리가 자동으로
+// 쌓이게"). Each position is paid by its own amount/rate/term (§2). Double-pay
+// safe: per-position CAS on paid_dividend_qta, per-row CAS on match bonuses.
+// --------------------------------------------------------------------------
+async function sweepUserRewards(c: any, userId: string, rows: any[], now: number, basis: number) {
   let totalQta = 0;
   let claimedCount = 0;
   for (const pos of rows) {
@@ -954,13 +975,13 @@ app.post('/claim-all', authMiddleware, async (c) => {
     ).bind(totalUsd, posTotalQta, new Date(now).toISOString(), pos.id, alreadyPaidQta).run();
     if (!claim.meta || claim.meta.changes === 0) continue; // lost the race; skip
 
-    await creditQta(c, user.id, qta, true); // dividend = withdrawable earnings
+    await creditQta(c, userId, qta, true); // dividend = withdrawable earnings
     await c.env.DB.prepare(
       `INSERT INTO staking_dividends (id, position_id, user_id, kind, usd_amount, qta_amount, qta_price)
        VALUES (?,?,?, 'dividend', ?,?,?)`
-    ).bind(uuid(), pos.id, user.id, payableUsd, qta, basis).run();
+    ).bind(uuid(), pos.id, userId, payableUsd, qta, basis).run();
 
-    await payReferralMatch(c, user.id, payableUsd, basis, pos.id);
+    await payReferralMatch(c, userId, payableUsd, basis, pos.id);
 
     totalQta += qta;
     claimedCount += 1;
@@ -968,18 +989,60 @@ app.post('/claim-all', authMiddleware, async (c) => {
 
   // ★ OWNER RULE (2026-09-03): release UNCLAIMED binary MATCH BONUS too (once,
   //   user-scoped), together with the dividend sweep.
-  const match = await claimMatchBonuses(c, user.id);
+  const match = await claimMatchBonuses(c, userId);
+  return { dividend_qta: totalQta, match_qta: match.qta, match_rows: match.rows, positions_claimed: claimedCount };
+}
 
-  return c.json({
-    ok: true,
-    credited_qta: totalQta + match.qta,
-    dividend_qta: totalQta,
-    match_qta: match.qta,
-    match_rows: match.rows,
-    positions_claimed: claimedCount,
-    qta_price: basis,
-  });
+// --------------------------------------------------------------------------
+// POST /auto-credit — ★ OWNER RULE (2026-09-28): "청구를 안 해도 자동으로
+// 데일리가 쌓이게". The cron worker calls this every */5 tick; each KST-midnight
+// day rollover makes one more day of dividend payable, and this sweeps it (and
+// any matching bonus) straight into every staker's Spot wallet — no Claim
+// button needed. Between rollovers nothing is payable, so the tick is a cheap
+// no-op. Same secret guard as /accrue-daily.
+// --------------------------------------------------------------------------
+app.post('/auto-credit', async (c) => {
+  const secret = (c.env as any).TWAP_CRON_SECRET as string | undefined;
+  if (secret) {
+    const provided = c.req.header('x-twap-secret');
+    if (provided !== secret) return c.json({ error: 'forbidden' }, 403);
+  }
+  const res = await runAutoCredit(c);
+  return c.json({ ok: true, ...res });
 });
+
+async function runAutoCredit(c: any) {
+  const now = Date.now();
+  const basis = await qtaStakeBasisPrice(c);
+  const { results } = await c.env.DB.prepare(
+    `SELECT * FROM staking_positions WHERE status = 'active'`
+  ).all();
+  const byUser = new Map<string, any[]>();
+  for (const p of (results || []) as any[]) {
+    // only positions with something payable right now (skip no-op users)
+    if (accruedQta(p, now, basis) - Number(p.paid_dividend_qta || 0) <= 1e-9) continue;
+    const list = byUser.get(p.user_id) || [];
+    list.push(p); byUser.set(p.user_id, list);
+  }
+  // members with unclaimed matching bonus but nothing else payable
+  const m = await c.env.DB.prepare(
+    `SELECT DISTINCT user_id FROM binary_match_bonuses WHERE COALESCE(claimed,0) = 0`
+  ).all().catch(() => ({ results: [] }));
+  for (const r of (m.results || []) as any[]) if (!byUser.has(r.user_id)) byUser.set(r.user_id, []);
+
+  let users = 0, dividendQta = 0, matchQta = 0, errors = 0;
+  for (const [userId, rows] of byUser) {
+    try {
+      const r = await sweepUserRewards(c, userId, rows, now, basis);
+      if (r.dividend_qta + r.match_qta > 0) users++;
+      dividendQta += r.dividend_qta; matchQta += r.match_qta;
+    } catch (e) {
+      errors++;
+      console.error('[auto-credit] user failed', userId, e);
+    }
+  }
+  return { users_credited: users, dividend_qta: dividendQta, match_qta: matchQta, errors };
+}
 
 // --------------------------------------------------------------------------
 // POST /redeem { position_id }

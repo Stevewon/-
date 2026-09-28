@@ -56,7 +56,7 @@ import { runMigrations } from './migrate';
 import { binaryMatchingTick } from './binary-matching';
 import { scanExtDeposits, extDepositTick } from './ext-watcher';
 import { sweepExtDeposits } from './ext-sweep';
-import { twapTick, qtaAutobuyTick, qtaMmTick, stakingAccrueDaily } from './twap';
+import { twapTick, qtaAutobuyTick, qtaMmTick, stakingAccrueDaily, stakingAutoCredit } from './twap';
 import { treasurySweep, treasuryReport } from './treasury-sweep';
 import { activePeg as pegActive, PEG_WINDOWS as PEG_SCHEDULE, pegQtaUsd } from './qta-peg';
 import { processQtaReturns, autoReturnEnabled } from './qta-return';
@@ -828,7 +828,8 @@ export default {
       // POSTs the server's /api/earn/accrue-daily so each active position gets
       // its missing day-by-day snapshot rows. Idempotent.
       await stakingAccrueDaily(env);
-      return new Response(JSON.stringify({ ok: true, triggered: 'accrue-daily' }), {
+      await stakingAutoCredit(env);
+      return new Response(JSON.stringify({ ok: true, triggered: 'accrue-daily+auto-credit' }), {
         headers: { 'content-type': 'application/json' },
       });
     }
@@ -1758,6 +1759,11 @@ export default {
       processQtaReturns(env as any)
         .then((r) => console.log('[cron] qta auto-return:', r))
         .catch((e) => console.error('[cron] qta auto-return failed:', e))
+    );
+    // ★ Owner 2026-09-28: daily staking dividend + matching → Spot wallet
+    //   automatically (no Claim needed). No-op except after KST midnight.
+    ctx.waitUntil(
+      stakingAutoCredit(env).catch((e) => console.error('[cron] staking auto-credit failed:', e))
     );
 
     // External (non-Quantarium) deposit watcher — Phase B. Both no-op unless

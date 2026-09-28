@@ -52,6 +52,7 @@
 - **★ 포지션별 개별 계산 (2026-09-04 지상명령)**: 한 회원이 서로 다른 날 여러 번 진입하면(예: 오늘 $1,000, 한 달 뒤 $5,000), **각 포지션은 자기 금액·자기 요율(daily_rate)·자기 기간(term_days)·자기 시작일(created_at)로 완전히 개별 계산**한다. 절대 합산해서 뭉뚱그리지 않는다. (코드: `accruedQta()`/`accruedDays()`가 포지션 `p`별로 계산, positions API가 포지션마다 개별 map 처리.)
 - **코드**: `accruedUsd()` + `kstDayIndex()` — `src/server/routes/earn.ts`
 - **중복 지급 방지**: claim 시 `accrued_dividend_usd` 스냅샷 원자 가드 (claim-first)
+- **★ 자동 지갑 입금 (2026-09-28 오너 지시: "청구 안 해도 자동으로 데일리가 쌓이게")**: 매일 KST 자정에 늘어난 1일치 배당(포지션별 개별 계산)과 미청구 매칭보너스는 **청구 버튼 없이 자동으로 Spot 지갑(출금 가능 잔액)에 입금**. cron `*/5` 틱이 `POST /api/earn/auto-credit`(TWAP_CRON_SECRET) 호출 → 자정 직후 첫 틱(최대 5분 내) 입금, 그 외 틱은 no-op. 중복 방지는 기존 CAS 그대로. 「Claim now」 버튼은 즉시 입금용으로 유지. 코드: `earn.ts` `sweepUserRewards()`/`runAutoCredit()`, `cron-worker/src/twap.ts` `stakingAutoCredit()`.
 
 ---
 
@@ -133,6 +134,13 @@ QTA/USDT 마켓에만 적용. 회사(마켓메이커) = **mm-bot-a / mm-bot-b** 
 
 - **상한**: 회원 1인당 **KST 하루(00:00~24:00) 회사(mm-bot-a/b)가 그 회원에게서 사주는 QTA 총액 = 50,000원 = 50000/1450 ≈ 34.48 USDT**. 1원도 초과 불가.
 - **적용 대상**: 모든 일반 회원. 예외 = 회사 계정(admin) 및 mm-bot 자체.
+- **★ 스테이킹 보상 예외 (2026-09-28 오너 지시)**: "현재 한도 5만원 매도정책을 진행중인데 스테이킹한 사람은 앞으로 예외로 한다. 각 스테이킹 진입금액마다 틀리게 데일리로 쌓이는 QTA를 매일 USDT로 스왑할 수 있게 해주고, 매주 금요일에 스왑된 총량을 출금신청할 수 있게 하자."
+  - **대상 QTA**: 회원이 스테이킹 보상으로 **받은** QTA = 청구된 배당(`Σ staking_positions.paid_dividend_qta`, 포지션별 개별 계산 §2) + 청구된 매칭(`Σ binary_match_bonuses.bonus_qta, claimed=1`) − 이미 예외로 스왑한 QTA(`convert_orders.source='staking_reward'`, filled/filling).
+  - **경로**: **Convert(QTA→USDT)만**. 이 범위 안에서는 5만원 한도·§12 사전 매도승인 **미적용**, 하루 횟수·금액 제한 없음. 스왑 기록은 `source='staking_reward'`로 남고 5만원 누계(`memberSoldSince`)에서 제외.
+  - **그 외 QTA**(보상 범위 초과분, 현물 호가창 매도)는 기존대로 5만원 한도 + §12 승인 그대로.
+  - **출금**: 스왑으로 받은 USDT는 회원 소유 잔액 → **매주 금요일 10:00~16:00 KST 출금 신청**(§7·§12: 하루 1회, 10 USDT 단위, 금액 상한 없음, KYC·화이트리스트).
+  - **운영 주의**: 회사(admin 트레저리) USDT 잔고가 곧 지급 여력 — 부족 시 `LIQUIDITY_UNAVAILABLE`(회원 손실 없음). 관리자 Convert 패널의 매도액 합계에는 보상 스왑도 포함되어 표시됨.
+  - **코드**: `src/server/routes/convert.ts` `rewardAllowance()`·/status·/quote·/accept, `src/shared/sell-cap.ts`(+ cron 복사본) `STAKING_REWARD_SOURCE` 제외, `ConvertPage.tsx` 「Staking rewards — swap anytime」 패널.
 - **매도 경로 전부에 적용** (어느 경로로 팔든 동일):
   1. **주문 접수 시** (`POST /orders`): 시장가 매도는 오늘 남은 한도로 수량을 클램프, 한도 0이면 `DAILY_SELL_CAP_REACHED`로 **거부**. 지정가 매도는 접수되어 호가에 남되 아래 2·3에서 한도까지만 체결.
   2. **체결 엔진** (`matchOrder`): 봇이 매수자·회원이 매도자인 **모든 체결마다** 오늘 누계를 확인하고 초과분은 체결 중단 (회원이 봇 매수벽을 직접 치는 경우 포함).
@@ -278,6 +286,7 @@ QTA/USDT 마켓에만 적용. 회사(마켓메이커) = **mm-bot-a / mm-bot-b** 
 - **트레저리 운영 주의**: Convert로 회사가 사준 QTA는 이미 admin 트레저리 장부에 있음(봇 경유 아님) → §8 봇→트레저리 장부 스윕 대상이 아니고, 핫월렛→메인지갑 온체인 스윕은 기존 루틴 그대로. **admin USDT 잔고가 곧 Convert 지급 여력**이므로 관리자 패널에서 확인.
 - **저장**: `convert_orders`(quoted→filled|expired|cancelled|failed, 가격·기준가·bps·트레저리·IP), `system_state.convert_enabled / convert_spread_bps`. 마이그레이션 0062.
 - **★ 미청구 배당 안내 (2026-09-27, 오너 선택 ①)**: 전수조사 결과 활성 스테이커 26명 중 13명은 한 번도 청구하지 않아 지갑 QTA 0(미청구 71.7만 QTA). 배당은 금요일 청구 시에만 지갑에 들어가므로 Convert 화면·Wallet 화면 상단에 「You have N QTA of staking rewards not yet claimed」배너 표시(배당+매칭 분리, 창구 열려 있으면 「Claim now」버튼으로 즉시 claim-all, 닫혀 있으면 다음 금요일 시각). Convert의 QTA 잔액 0이면 청구 안내 문구. API `GET /earn/unclaimed`. 진단 `cron /dividend-census`. 금요일 청구 규칙(§7) 자체는 변경 없음.
+- **★★ 청구 상시 허용 (2026-09-28, 오너 선택 ②)**: "스테이킹 스왑에 잔고가 안 보인다" 재발 → **배당·매칭 청구(claim → Spot 지갑 입금)는 요일·시간 제한 없이 언제든 가능**. 금요일 10:00~16:00 KST 창구는 **외부 출금**(`/earn/withdraw-dividend`, `/wallet/withdraw`)에만 유지. 청구된 QTA는 즉시 Convert·현물 매도에 사용 가능 — 단 §12 사전 매도승인·§6 하루 5만원 한도는 그대로라 회사 매입액은 늘지 않음. 코드: `earn.ts` `/claim`·`/claim-all`에서 창구 게이트 제거, `/unclaimed`는 `window_open:true` + `withdraw_window_open`, UnclaimedBanner 「Claim now」 상시 노출, EarnPage 청구 버튼 사전 차단 제거, 안내 문구 5개 언어 교체.
 - **코드**: `src/server/routes/convert.ts`(/status·/quote·/accept·/history), `src/shared/sell-cap.ts`(+ cron-worker 복사본), `src/server/routes/order.ts`(모든 5만원 게이트가 공유 헬퍼 사용), `src/server/routes/admin.ts`(/converts, /converts/settings, /users/sellers 합산), `src/pages/ConvertPage.tsx`, `AdminPage.tsx` ConvertAdminPanel.
 
 ---
@@ -311,3 +320,6 @@ QTA/USDT 마켓에만 적용. 회사(마켓메이커) = **mm-bot-a / mm-bot-b** 
 - 2026-09-26: **§7 개정 — 출금 신청 금액 상한(5만원) 폐지.** "금요일 출금신청은 5만원 한도가 없어, 찾을 수 있는 만큼 10테더 단위로." 지갑·배당 출금 모두 금액 게이트 제거, USDT 10단위·최소 10, 하루 1회·금요일 창구·KYC·화이트리스트·회사지급분 불가는 유지. UI Max/퍼센트 버튼 10단위 스냅, 안내문 교체(5개 언어).
 - 2026-09-27: **§12 보강 — 관리자「스테이킹 회원」탭.** 누가·언제·얼마 스테이킹했는지 전체 표 + 포지션 상세 + 행 단위 매도승인 원클릭. /admin/stakers.
 - 2026-09-27: **§14 보강 — 미청구 배당 배너.** "스왑하려는데 QTA가 안 보인다" 전수조사(26명/27포지션, 미청구 717,131 QTA, 미청구자 13명) → 원인은 미청구. Convert·Wallet에 미청구 배너 + Claim now(창구 중) + 다음 창구 시각, /earn/unclaimed, cron /dividend-census.
+- 2026-09-28: **§14 개정 — 청구 상시 허용(옵션 ②).** 배당·매칭 청구는 언제든 Spot 지갑으로, 금요일 10~16시 KST 창구는 출금에만. §6·§12 매도 제한은 유지.
+- 2026-09-28: **§6 예외 신설 — 스테이킹 보상 스왑 무제한.** 스테이킹으로 받은 배당·매칭 QTA는 Convert로 매일 USDT 스왑(5만원 한도·§12 승인 미적용), 스왑된 USDT는 금요일 10~16시 출금 신청. 보상 범위 밖 QTA는 기존 한도 그대로.
+- 2026-09-28: **§2 보강 — 데일리 자동 지갑 입금.** "청구 안 해도 자동으로 데일리가 쌓이게." 매일 KST 자정 후 5분 내 배당·매칭 자동 입금(/earn/auto-credit, cron */5). 청구 버튼 없이도 Convert 잔고에 바로 보임.
