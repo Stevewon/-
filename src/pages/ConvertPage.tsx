@@ -24,6 +24,9 @@ import UnclaimedBanner from '../components/wallet/UnclaimedBanner';
 
 type Status = {
   enabled: boolean; approved: boolean; approval_source: string | null;
+  // ★ §6 exemption (2026-09-28): staking rewards swap with no daily cap
+  reward_mode?: boolean; reward_earned_qta?: number | null; reward_converted_qta?: number | null;
+  reward_room_qta?: number | null; reward_room_usdt?: number | null; cap_remaining_usdt?: number | null;
   qta_available: number; ref_price: number; price: number; spread_bps: number; quote_ttl_sec: number;
   min_to_amount: number; cap_krw: number; cap_usdt: number; usdt_krw_rate: number;
   today_sold_usdt: number; today_convert_usdt: number; today_spot_usdt: number;
@@ -32,7 +35,7 @@ type Status = {
 };
 type Quote = {
   quote_id: string; from_amount: number; to_amount: number; price: number; inverse_price: number;
-  clamped_to_daily_cap: boolean; expires_at: string; ttl_sec: number; deadline_ms: number;
+  clamped_to_daily_cap: boolean; clamped_to_reward?: boolean; reward_mode?: boolean; expires_at: string; ttl_sec: number; deadline_ms: number;
 };
 type Hist = { id: string; from_amount: number; to_amount: number; price: number; status: string; filled_at: string | null; created_at: string; error?: string | null };
 
@@ -103,6 +106,7 @@ export default function ConvertPage() {
       setQuote({ ...r.data, deadline_ms: Date.now() + ttl * 1000 });
       setResult(null);
       if (r.data.clamped_to_daily_cap) showToast('info', t('convert.clampedTitle'), t('convert.clampedBody'));
+      if (r.data.clamped_to_reward) showToast('info', t('convert.clampedTitle'), t('convert.rewardClampedBody'));
     } catch (e: any) {
       const code = e?.response?.data?.error;
       const msg = code === 'SELL_NOT_APPROVED' ? t('trade.sellNotApproved')
@@ -132,9 +136,10 @@ export default function ConvertPage() {
         : code === 'DAILY_SELL_CAP_REACHED' ? t('trade.sellCapReached')
         : code === 'INSUFFICIENT_BALANCE' ? t('convert.insufficient')
         : code === 'LIQUIDITY_UNAVAILABLE' ? t('convert.liquidity')
+        : code === 'REWARD_ALLOWANCE_EXCEEDED' ? t('convert.rewardChanged')
         : (e?.response?.data?.message || t('common.error'));
       showToast('error', t('convert.failed'), msg);
-      if (code === 'QUOTE_EXPIRED' || code === 'QUOTE_ALREADY_USED') setQuote(null);
+      if (code === 'QUOTE_EXPIRED' || code === 'QUOTE_ALREADY_USED' || code === 'REWARD_ALLOWANCE_EXCEEDED') setQuote(null);
       loadStatus();
     } finally { setBusy(null); }
   };
@@ -262,8 +267,31 @@ export default function ConvertPage() {
           </div>
         )}
 
-        {/* Daily cap widget (same numbers as the trade screen) */}
-        {status && status.approved && (
+        {/* ★ §6 exemption — staking reward swap allowance (no daily cap) */}
+        {status && status.reward_earned_qta != null && status.reward_earned_qta > 0 && (
+          <div className="card p-4 text-xs space-y-1.5 border border-exchange-buy/40">
+            <div className="flex items-center justify-between">
+              <span className="text-exchange-text font-semibold">{t('convert.rewardTitle')}</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-exchange-buy/15 text-exchange-buy font-semibold">{t('convert.rewardNoCap')}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-exchange-text-third">{t('convert.rewardEarned')}</span>
+              <span className="tabular-nums">{formatAmount(status.reward_earned_qta)} QTA</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-exchange-text-third">{t('convert.rewardConverted')}</span>
+              <span className="tabular-nums">{formatAmount(status.reward_converted_qta ?? 0)} QTA</span>
+            </div>
+            <div className="flex items-center justify-between border-t border-exchange-border/60 pt-1.5">
+              <span className="text-exchange-text-third">{t('convert.rewardRoom')}</span>
+              <span className="tabular-nums font-semibold text-exchange-buy">{formatAmount(status.reward_room_qta ?? 0)} QTA{status.reward_room_usdt != null ? <span className="text-exchange-text-third font-normal"> ≈ {fmtUsdt(status.reward_room_usdt)} USDT</span> : null}</span>
+            </div>
+            <div className="text-[10px] text-exchange-text-third leading-relaxed">{t('convert.rewardNote')}</div>
+          </div>
+        )}
+
+        {/* Daily cap widget (same numbers as the trade screen) — non-reward QTA */}
+        {status && status.approved && !status.reward_mode && (
           <div className="card p-4 text-xs space-y-1.5">
             <div className="flex items-center justify-between">
               <span className="text-exchange-text-third">{t('trade.sellCapTitle')}</span>

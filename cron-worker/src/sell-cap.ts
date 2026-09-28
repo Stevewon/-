@@ -24,6 +24,12 @@ export const USDT_KRW_RATE = 1450;
 export const MEMBER_SELL_CAP_KRW = 50000;
 /** ≈ 34.4828 USDT / member / KST day */
 export const MEMBER_SELL_CAP_USDT = MEMBER_SELL_CAP_KRW / USDT_KRW_RATE;
+/**
+ * ★ OWNER RULE (2026-09-28, §6 예외): 스테이킹 회원이 받은 배당·매칭 QTA를
+ *   Convert로 스왑한 건은 convert_orders.source = 'staking_reward' 로 기록되며
+ *   하루 5만원 한도 계산에서 제외된다 (한도는 그 외 QTA 매도에만 적용).
+ */
+export const STAKING_REWARD_SOURCE = 'staking_reward';
 
 type DbLike = {
   prepare(sql: string): {
@@ -56,6 +62,8 @@ export interface SoldBreakdown {
  * How much the company has already bought from `userId` since `sinceUtc`
  * (omit → lifetime). Combines spot trades vs the MM bots AND filled Convert
  * orders. `convert_orders` may not exist yet on a fresh DB → treated as 0.
+ * Staking-reward swaps (source='staking_reward') are EXCLUDED — they are
+ * exempt from the §6 daily cap (owner 2026-09-28).
  */
 export async function memberSoldSince(DB: DbLike, marketId: string, userId: string, sinceUtc?: string): Promise<SoldBreakdown> {
   const tradeSql = `SELECT COALESCE(SUM(total),0) usdt, COALESCE(SUM(amount),0) qta, COUNT(*) n FROM trades
@@ -63,7 +71,8 @@ export async function memberSoldSince(DB: DbLike, marketId: string, userId: stri
   const tradeArgs: any[] = [marketId, MM_BOT_A, MM_BOT_B, userId];
   if (sinceUtc) tradeArgs.push(sinceUtc);
   const convSql = `SELECT COALESCE(SUM(to_amount),0) usdt, COALESCE(SUM(from_amount),0) qta, COUNT(*) n FROM convert_orders
-     WHERE user_id=? AND from_coin='QTA' AND to_coin='USDT' AND status='filled'` + (sinceUtc ? ' AND filled_at >= ?' : '');
+     WHERE user_id=? AND from_coin='QTA' AND to_coin='USDT' AND status='filled'
+       AND COALESCE(source,'convert') <> '${STAKING_REWARD_SOURCE}'` + (sinceUtc ? ' AND filled_at >= ?' : '');
   const convArgs: any[] = [userId];
   if (sinceUtc) convArgs.push(sinceUtc);
   const [t, cv] = await Promise.all([

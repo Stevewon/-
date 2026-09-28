@@ -25,6 +25,10 @@
 //       §12 sell pre-approval (approved OR shareholder)      → SELL_NOT_APPROVED
 //       §6  KRW 50,000 / day SHARED with spot sells          → DAILY_SELL_CAP_REACHED
 //       feature switch system_state.convert_enabled='on'     → CONVERT_DISABLED
+//   • ★ §6 exemption (owner 2026-09-28): QTA a member received as STAKING
+//     REWARDS (claimed dividend + matching) swaps with NO daily cap and NO
+//     §12 approval, up to rewardAllowance(). Recorded as source=
+//     'staking_reward' and excluded from the shared 5만원 budget.
 //   • The USDT the member receives is NOT company-issued: available_initial
 //     is NOT bumped, so it counts as withdrawable (normal §12 Friday window
 //     rules apply). The QTA they spent may well have been company-issued
@@ -37,7 +41,7 @@ import { authMiddleware } from '../middleware/auth';
 import { rateLimit } from '../middleware/rateLimit';
 import { loadSellApproval } from '../../shared/shareholder';
 import {
-  MEMBER_SELL_CAP_KRW, MEMBER_SELL_CAP_USDT, USDT_KRW_RATE,
+  MEMBER_SELL_CAP_KRW, MEMBER_SELL_CAP_USDT, USDT_KRW_RATE, STAKING_REWARD_SOURCE,
   kstDayStart, memberSoldSince, memberSellRoomUsdt,
 } from '../../shared/sell-cap';
 
@@ -108,6 +112,32 @@ function isCompany(user: any): boolean {
 }
 
 // ----------------------------------------------------------------------------
+// ★ OWNER RULE (2026-09-28, §6 예외): "스테이킹한 사람은 앞으로 예외 — 각 스테이킹
+//   진입금액마다 데일리로 쌓이는 QTA를 매일 USDT로 스왑, 금요일에 스왑된 총량 출금."
+// Staking reward allowance = QTA the member has RECEIVED as staking rewards
+//   (claimed dividends: Σ staking_positions.paid_dividend_qta over all their
+//    positions, each accrued at its own amount/rate/term — §2;
+//    + claimed binary matching bonus: Σ binary_match_bonuses.bonus_qta claimed=1)
+//   − QTA already swapped under this exemption (convert_orders source=
+//     'staking_reward', filled or mid-settlement).
+// Swaps inside the allowance: no §6 KRW 50,000 daily cap and no §12
+// pre-approval. Anything beyond it is a normal Convert (both gates apply).
+// ----------------------------------------------------------------------------
+async function rewardAllowance(DB: D1Database, userId: string, excludeQuoteId = ''): Promise<{ earned_qta: number; converted_qta: number; room_qta: number }> {
+  const [div, match, used] = await Promise.all([
+    DB.prepare('SELECT COALESCE(SUM(paid_dividend_qta),0) q FROM staking_positions WHERE user_id=?').bind(userId).first<{ q: number }>().catch(() => null),
+    DB.prepare('SELECT COALESCE(SUM(bonus_qta),0) q FROM binary_match_bonuses WHERE user_id=? AND COALESCE(claimed,0)=1').bind(userId).first<{ q: number }>().catch(() => null),
+    DB.prepare(
+      `SELECT COALESCE(SUM(from_amount),0) q FROM convert_orders
+        WHERE user_id=? AND source=? AND status IN ('filled','filling') AND id <> ?`,
+    ).bind(userId, STAKING_REWARD_SOURCE, excludeQuoteId).first<{ q: number }>().catch(() => null),
+  ]);
+  const earned = Number(div?.q || 0) + Number(match?.q || 0);
+  const converted = Number(used?.q || 0);
+  return { earned_qta: earned, converted_qta: converted, room_qta: Math.max(0, earned - converted) };
+}
+
+// ----------------------------------------------------------------------------
 // GET /convert/status — everything the Convert screen needs to render
 // ----------------------------------------------------------------------------
 app.get('/status', authMiddleware, async (c) => {
@@ -129,11 +159,22 @@ app.get('/status', authMiddleware, async (c) => {
     memberSoldSince(DB as any, market.id, user.id),
   ]);
   const company = isCompany(user);
-  const remaining = company ? null : Math.max(0, MEMBER_SELL_CAP_USDT - today.usdt);
   const price = ref > 0 ? floorTo(ref * (1 - bps / 10000), Number(market.price_decimals) || 8) : 0;
+  const adec = Number(market.amount_decimals) || 4;
+  // §6 exemption: staking rewards swap first, with no daily cap.
+  const reward = company ? null : await rewardAllowance(DB, user.id);
+  const rewardMode = !!reward && price > 0 && reward.room_qta * price >= MIN_CONVERT_USDT;
+  const capRemaining = company ? null : Math.max(0, MEMBER_SELL_CAP_USDT - today.usdt);
+  const remaining = rewardMode ? reward!.room_qta * price : capRemaining;
   return c.json({
     enabled,
-    approved: company || approval.approved,
+    reward_mode: rewardMode,
+    reward_earned_qta: reward ? reward.earned_qta : null,
+    reward_converted_qta: reward ? reward.converted_qta : null,
+    reward_room_qta: reward ? floorTo(reward.room_qta, adec) : null,
+    reward_room_usdt: reward && price > 0 ? Math.round(reward.room_qta * price * 1e4) / 1e4 : null,
+    cap_remaining_usdt: capRemaining == null ? null : Math.round(capRemaining * 1e4) / 1e4,
+    approved: company || approval.approved || rewardMode,
     approval_source: company ? 'company' : approval.explicit ? 'admin' : approval.via_shareholder ? 'shareholder' : null,
     from_coin: 'QTA', to_coin: 'USDT',
     qta_available: Number(wallet?.available || 0),
@@ -172,20 +213,25 @@ app.post('/quote', authMiddleware, rlQuote, async (c) => {
   if (!market) return c.json({ error: 'market not found' }, 404);
   const pdec = Number(market.price_decimals) || 8, adec = Number(market.amount_decimals) || 4;
 
-  // §12 — pre-approved sellers only (shareholders auto).
   const company = isCompany(user);
-  if (!company) {
-    const approval = await loadSellApproval(DB as any, user.id);
-    if (!approval.approved) {
-      return c.json({ error: 'SELL_NOT_APPROVED', message: 'Selling QTA requires prior approval from the exchange. Please contact support.' }, 403);
-    }
-  }
-
   const ref = await referencePrice(DB, market.id);
   if (!(ref > 0)) return c.json({ error: 'PRICE_UNAVAILABLE', message: 'Reference price unavailable. Try again shortly.' }, 503);
   const bps = await spreadBps(DB);
   const price = floorTo(ref * (1 - bps / 10000), pdec);
   if (!(price > 0)) return c.json({ error: 'PRICE_UNAVAILABLE' }, 503);
+
+  // §6 exemption (2026-09-28): while the member still has swappable staking
+  // rewards, this quote is a reward swap — no daily cap, no §12 approval.
+  const reward = company ? null : await rewardAllowance(DB, user.id);
+  const rewardMode = !!reward && reward.room_qta * price >= MIN_CONVERT_USDT;
+
+  // §12 — pre-approved sellers only (shareholders auto) for non-reward QTA.
+  if (!company && !rewardMode) {
+    const approval = await loadSellApproval(DB as any, user.id);
+    if (!approval.approved) {
+      return c.json({ error: 'SELL_NOT_APPROVED', message: 'Selling QTA requires prior approval from the exchange. Please contact support.' }, 403);
+    }
+  }
 
   // Amount: either side may be given; we always settle on from_amount (QTA).
   let fromAmount = Number(body.from_amount);
@@ -200,7 +246,10 @@ app.post('/quote', authMiddleware, rlQuote, async (c) => {
 
   // §6 daily cap — shared with spot sells. Clamp like a market sell would be.
   let clamped = false;
-  if (!company) {
+  if (rewardMode) {
+    const maxQty = floorTo(reward!.room_qta, adec);
+    if (fromAmount > maxQty) { fromAmount = maxQty; clamped = true; }
+  } else if (!company) {
     const room = await memberSellRoomUsdt(DB as any, market.id, user.id);
     if (room < MIN_CONVERT_USDT) {
       return c.json({ error: 'DAILY_SELL_CAP_REACHED', message: 'Daily QTA sell limit (KRW 50,000) reached. Try again after 00:00 KST.', remaining_usdt: room }, 400);
@@ -217,15 +266,18 @@ app.post('/quote', authMiddleware, rlQuote, async (c) => {
   const expiresAt = new Date(Date.now() + CONVERT_QUOTE_TTL_SEC * 1000);
   const ip = c.req.header('CF-Connecting-IP') || null;
   await DB.prepare(
-    `INSERT INTO convert_orders (id, user_id, from_coin, to_coin, from_amount, to_amount, price, ref_price, spread_bps, fee_amount, status, quote_expires_at, ip_address)
-     VALUES (?,?,?,?,?,?,?,?,?,0,'quoted',?,?)`,
-  ).bind(id, user.id, 'QTA', 'USDT', fromAmount, toAmount, price, ref, bps, expiresAt.toISOString().slice(0, 19).replace('T', ' '), ip).run();
+    `INSERT INTO convert_orders (id, user_id, from_coin, to_coin, from_amount, to_amount, price, ref_price, spread_bps, fee_amount, status, quote_expires_at, ip_address, source)
+     VALUES (?,?,?,?,?,?,?,?,?,0,'quoted',?,?,?)`,
+  ).bind(id, user.id, 'QTA', 'USDT', fromAmount, toAmount, price, ref, bps, expiresAt.toISOString().slice(0, 19).replace('T', ' '), ip,
+    rewardMode ? STAKING_REWARD_SOURCE : 'convert').run();
 
   return c.json({
     quote_id: id, from_coin: 'QTA', to_coin: 'USDT',
     from_amount: fromAmount, to_amount: toAmount, price, ref_price: ref, spread_bps: bps, fee: 0,
     inverse_price: price > 0 ? 1 / price : 0,
-    clamped_to_daily_cap: clamped,
+    reward_mode: rewardMode,
+    clamped_to_daily_cap: clamped && !rewardMode,
+    clamped_to_reward: clamped && rewardMode,
     expires_at: expiresAt.toISOString(), ttl_sec: CONVERT_QUOTE_TTL_SEC, server_now: new Date().toISOString(),
   });
 });
@@ -255,8 +307,11 @@ app.post('/accept', authMiddleware, rlAccept, async (c) => {
   if (!market) return c.json({ error: 'market not found' }, 404);
   const company = isCompany(user);
 
-  // §12 re-check at fill time (approval could have been revoked in the 10 s).
-  if (!company) {
+  const isRewardSwap = q.source === STAKING_REWARD_SOURCE;
+  // (reward swaps re-check their allowance right after the quote is claimed
+  //  below, so concurrent 'filling' quotes are counted against each other)
+  if (!isRewardSwap && !company) {
+    // §12 re-check at fill time (approval could have been revoked in the 10 s).
     const approval = await loadSellApproval(DB as any, user.id);
     if (!approval.approved) {
       await DB.prepare("UPDATE convert_orders SET status='cancelled', error='SELL_NOT_APPROVED', updated_at=datetime('now') WHERE id=?").bind(quoteId).run();
@@ -281,6 +336,16 @@ app.post('/accept', authMiddleware, rlAccept, async (c) => {
     "UPDATE convert_orders SET status='filling', updated_at=datetime('now') WHERE id=? AND status='quoted'",
   ).bind(quoteId).run();
   if (!claim.meta || claim.meta.changes === 0) return c.json({ error: 'QUOTE_ALREADY_USED' }, 409);
+
+  // 1b) §6 exemption re-check for reward swaps (other filled/filling reward
+  //     quotes already count against the allowance).
+  if (isRewardSwap) {
+    const reward = await rewardAllowance(DB, user.id, quoteId);
+    if (fromAmt > reward.room_qta + 1e-9) {
+      await DB.prepare("UPDATE convert_orders SET status='cancelled', error='REWARD_ALLOWANCE_EXCEEDED', updated_at=datetime('now') WHERE id=?").bind(quoteId).run();
+      return c.json({ error: 'REWARD_ALLOWANCE_EXCEEDED', message: 'Your staking reward balance changed. Please request a new quote.', reward_room_qta: reward.room_qta }, 400);
+    }
+  }
 
   // 2) Treasury must have the USDT (atomic conditional debit).
   const payUsdt = await DB.prepare(
@@ -345,6 +410,7 @@ app.post('/accept', authMiddleware, rlAccept, async (c) => {
     usdt_balance: Number(usdtW?.available || 0), qta_balance: Number(qtaW?.available || 0),
     from_coin: 'QTA', to_coin: 'USDT', from_amount: fromAmt, to_amount: toAmt, price: Number(q.price), fee: 0,
     filled_at: filledAt,
+    reward_swap: isRewardSwap,
     today_sold_usdt: Math.round(today.usdt * 1e4) / 1e4,
     remaining_usdt: company ? null : Math.round(Math.max(0, MEMBER_SELL_CAP_USDT - today.usdt) * 1e4) / 1e4,
   });

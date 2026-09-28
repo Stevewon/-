@@ -133,6 +133,13 @@ QTA/USDT 마켓에만 적용. 회사(마켓메이커) = **mm-bot-a / mm-bot-b** 
 
 - **상한**: 회원 1인당 **KST 하루(00:00~24:00) 회사(mm-bot-a/b)가 그 회원에게서 사주는 QTA 총액 = 50,000원 = 50000/1450 ≈ 34.48 USDT**. 1원도 초과 불가.
 - **적용 대상**: 모든 일반 회원. 예외 = 회사 계정(admin) 및 mm-bot 자체.
+- **★ 스테이킹 보상 예외 (2026-09-28 오너 지시)**: "현재 한도 5만원 매도정책을 진행중인데 스테이킹한 사람은 앞으로 예외로 한다. 각 스테이킹 진입금액마다 틀리게 데일리로 쌓이는 QTA를 매일 USDT로 스왑할 수 있게 해주고, 매주 금요일에 스왑된 총량을 출금신청할 수 있게 하자."
+  - **대상 QTA**: 회원이 스테이킹 보상으로 **받은** QTA = 청구된 배당(`Σ staking_positions.paid_dividend_qta`, 포지션별 개별 계산 §2) + 청구된 매칭(`Σ binary_match_bonuses.bonus_qta, claimed=1`) − 이미 예외로 스왑한 QTA(`convert_orders.source='staking_reward'`, filled/filling).
+  - **경로**: **Convert(QTA→USDT)만**. 이 범위 안에서는 5만원 한도·§12 사전 매도승인 **미적용**, 하루 횟수·금액 제한 없음. 스왑 기록은 `source='staking_reward'`로 남고 5만원 누계(`memberSoldSince`)에서 제외.
+  - **그 외 QTA**(보상 범위 초과분, 현물 호가창 매도)는 기존대로 5만원 한도 + §12 승인 그대로.
+  - **출금**: 스왑으로 받은 USDT는 회원 소유 잔액 → **매주 금요일 10:00~16:00 KST 출금 신청**(§7·§12: 하루 1회, 10 USDT 단위, 금액 상한 없음, KYC·화이트리스트).
+  - **운영 주의**: 회사(admin 트레저리) USDT 잔고가 곧 지급 여력 — 부족 시 `LIQUIDITY_UNAVAILABLE`(회원 손실 없음). 관리자 Convert 패널의 매도액 합계에는 보상 스왑도 포함되어 표시됨.
+  - **코드**: `src/server/routes/convert.ts` `rewardAllowance()`·/status·/quote·/accept, `src/shared/sell-cap.ts`(+ cron 복사본) `STAKING_REWARD_SOURCE` 제외, `ConvertPage.tsx` 「Staking rewards — swap anytime」 패널.
 - **매도 경로 전부에 적용** (어느 경로로 팔든 동일):
   1. **주문 접수 시** (`POST /orders`): 시장가 매도는 오늘 남은 한도로 수량을 클램프, 한도 0이면 `DAILY_SELL_CAP_REACHED`로 **거부**. 지정가 매도는 접수되어 호가에 남되 아래 2·3에서 한도까지만 체결.
   2. **체결 엔진** (`matchOrder`): 봇이 매수자·회원이 매도자인 **모든 체결마다** 오늘 누계를 확인하고 초과분은 체결 중단 (회원이 봇 매수벽을 직접 치는 경우 포함).
@@ -313,3 +320,4 @@ QTA/USDT 마켓에만 적용. 회사(마켓메이커) = **mm-bot-a / mm-bot-b** 
 - 2026-09-27: **§12 보강 — 관리자「스테이킹 회원」탭.** 누가·언제·얼마 스테이킹했는지 전체 표 + 포지션 상세 + 행 단위 매도승인 원클릭. /admin/stakers.
 - 2026-09-27: **§14 보강 — 미청구 배당 배너.** "스왑하려는데 QTA가 안 보인다" 전수조사(26명/27포지션, 미청구 717,131 QTA, 미청구자 13명) → 원인은 미청구. Convert·Wallet에 미청구 배너 + Claim now(창구 중) + 다음 창구 시각, /earn/unclaimed, cron /dividend-census.
 - 2026-09-28: **§14 개정 — 청구 상시 허용(옵션 ②).** 배당·매칭 청구는 언제든 Spot 지갑으로, 금요일 10~16시 KST 창구는 출금에만. §6·§12 매도 제한은 유지.
+- 2026-09-28: **§6 예외 신설 — 스테이킹 보상 스왑 무제한.** 스테이킹으로 받은 배당·매칭 QTA는 Convert로 매일 USDT 스왑(5만원 한도·§12 승인 미적용), 스왑된 USDT는 금요일 10~16시 출금 신청. 보상 범위 밖 QTA는 기존 한도 그대로.
