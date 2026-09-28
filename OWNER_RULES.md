@@ -138,6 +138,9 @@ QTA/USDT 마켓에만 적용. 회사(마켓메이커) = **mm-bot-a / mm-bot-b** 
   - **대상 QTA**: 회원이 스테이킹 보상으로 **받은** QTA = 청구된 배당(`Σ staking_positions.paid_dividend_qta`, 포지션별 개별 계산 §2) + 청구된 매칭(`Σ binary_match_bonuses.bonus_qta, claimed=1`) − 이미 예외로 스왑한 QTA(`convert_orders.source='staking_reward'`, filled/filling).
   - **경로**: **Convert(QTA→USDT)만**. 이 범위 안에서는 5만원 한도·§12 사전 매도승인 **미적용**, 하루 횟수·금액 제한 없음. 스왑 기록은 `source='staking_reward'`로 남고 5만원 누계(`memberSoldSince`)에서 제외.
   - **그 외 QTA**(보상 범위 초과분, 현물 호가창 매도)는 기존대로 5만원 한도 + §12 승인 그대로.
+  - **★★ 보강 (2026-09-28, 명심)**: "스테이킹한 회원이 스왑 전에 판매를 할 경우에는 **5만원만 매도**하는 거야. 그리고 남은 거는 **언제든 갖고 있는 총량을 스왑**할 수 있고."
+    - **현물 호가창 매도 = 스테이커도 하루 5만원 한도 그대로** (order.ts 5개 게이트 변경 없음, 스왑과 별개 예산).
+    - **Convert 스왑 = 활성 스테이커(active 포지션 1개 이상)는 지갑에 가진 QTA 총량 전부**, 언제든, 한도 없이. (보상량 제한 없음. 만기/해지로 활성 포지션이 없어진 회원은 위 "받은 보상 − 스왑한 양" 범위만.)
   - **출금**: 스왑으로 받은 USDT는 회원 소유 잔액 → **매주 금요일 10:00~16:00 KST 출금 신청**(§7·§12: 하루 1회, 10 USDT 단위, 금액 상한 없음, KYC·화이트리스트).
   - **운영 주의**: 회사(admin 트레저리) USDT 잔고가 곧 지급 여력 — 부족 시 `LIQUIDITY_UNAVAILABLE`(회원 손실 없음). 관리자 Convert 패널의 매도액 합계에는 보상 스왑도 포함되어 표시됨.
   - **코드**: `src/server/routes/convert.ts` `rewardAllowance()`·/status·/quote·/accept, `src/shared/sell-cap.ts`(+ cron 복사본) `STAKING_REWARD_SOURCE` 제외, `ConvertPage.tsx` 「Staking rewards — swap anytime」 패널.

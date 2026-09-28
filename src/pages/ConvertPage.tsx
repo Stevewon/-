@@ -25,7 +25,7 @@ import UnclaimedBanner from '../components/wallet/UnclaimedBanner';
 type Status = {
   enabled: boolean; approved: boolean; approval_source: string | null;
   // ★ §6 exemption (2026-09-28): staking rewards swap with no daily cap
-  reward_mode?: boolean; reward_earned_qta?: number | null; reward_converted_qta?: number | null;
+  reward_mode?: boolean; active_staker?: boolean; reward_earned_qta?: number | null; reward_converted_qta?: number | null;
   reward_room_qta?: number | null; reward_room_usdt?: number | null; cap_remaining_usdt?: number | null;
   qta_available: number; ref_price: number; price: number; spread_bps: number; quote_ttl_sec: number;
   min_to_amount: number; cap_krw: number; cap_usdt: number; usdt_krw_rate: number;
@@ -268,7 +268,7 @@ export default function ConvertPage() {
         )}
 
         {/* ★ §6 exemption — staking reward swap allowance (no daily cap) */}
-        {status && status.reward_earned_qta != null && status.reward_earned_qta > 0 && (
+        {status && (status.active_staker || (status.reward_earned_qta != null && status.reward_earned_qta > 0)) && (
           <div className="card p-4 text-xs space-y-1.5 border border-exchange-buy/40">
             <div className="flex items-center justify-between">
               <span className="text-exchange-text font-semibold">{t('convert.rewardTitle')}</span>
@@ -276,7 +276,7 @@ export default function ConvertPage() {
             </div>
             <div className="flex items-center justify-between">
               <span className="text-exchange-text-third">{t('convert.rewardEarned')}</span>
-              <span className="tabular-nums">{formatAmount(status.reward_earned_qta)} QTA</span>
+              <span className="tabular-nums">{formatAmount(status.reward_earned_qta ?? 0)} QTA</span>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-exchange-text-third">{t('convert.rewardConverted')}</span>

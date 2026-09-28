@@ -122,19 +122,30 @@ function isCompany(user: any): boolean {
 //     'staking_reward', filled or mid-settlement).
 // Swaps inside the allowance: no §6 KRW 50,000 daily cap and no §12
 // pre-approval. Anything beyond it is a normal Convert (both gates apply).
+//
+// ★ OWNER RULE (2026-09-28 보강): "스테이킹한 회원이 스왑 전에 판매를 할 경우에는
+//   5만원만 매도, 남은 것은 언제든 갖고 있는 총량을 스왑할 수 있고."
+//   → ACTIVE stakers: allowance = the WHOLE QTA they hold (wallet available),
+//     not just rewards. Spot order-book sells stay under the 5만원 cap (§6,
+//     order.ts — unchanged). Ex-stakers (no active position) keep the
+//     rewards-received allowance above.
 // ----------------------------------------------------------------------------
-async function rewardAllowance(DB: D1Database, userId: string, excludeQuoteId = ''): Promise<{ earned_qta: number; converted_qta: number; room_qta: number }> {
-  const [div, match, used] = await Promise.all([
+async function rewardAllowance(DB: D1Database, userId: string, excludeQuoteId = ''): Promise<{ earned_qta: number; converted_qta: number; room_qta: number; active_staker: boolean }> {
+  const [div, match, used, act, wallet] = await Promise.all([
     DB.prepare('SELECT COALESCE(SUM(paid_dividend_qta),0) q FROM staking_positions WHERE user_id=?').bind(userId).first<{ q: number }>().catch(() => null),
     DB.prepare('SELECT COALESCE(SUM(bonus_qta),0) q FROM binary_match_bonuses WHERE user_id=? AND COALESCE(claimed,0)=1').bind(userId).first<{ q: number }>().catch(() => null),
     DB.prepare(
       `SELECT COALESCE(SUM(from_amount),0) q FROM convert_orders
         WHERE user_id=? AND source=? AND status IN ('filled','filling') AND id <> ?`,
     ).bind(userId, STAKING_REWARD_SOURCE, excludeQuoteId).first<{ q: number }>().catch(() => null),
+    DB.prepare("SELECT COUNT(*) n FROM staking_positions WHERE user_id=? AND status='active'").bind(userId).first<{ n: number }>().catch(() => null),
+    DB.prepare("SELECT available FROM wallets WHERE user_id=? AND coin_symbol='QTA'").bind(userId).first<{ available: number }>().catch(() => null),
   ]);
   const earned = Number(div?.q || 0) + Number(match?.q || 0);
   const converted = Number(used?.q || 0);
-  return { earned_qta: earned, converted_qta: converted, room_qta: Math.max(0, earned - converted) };
+  const activeStaker = Number(act?.n || 0) > 0;
+  const room = activeStaker ? Math.max(0, Number(wallet?.available || 0)) : Math.max(0, earned - converted);
+  return { earned_qta: earned, converted_qta: converted, room_qta: room, active_staker: activeStaker };
 }
 
 // ----------------------------------------------------------------------------
@@ -169,6 +180,7 @@ app.get('/status', authMiddleware, async (c) => {
   return c.json({
     enabled,
     reward_mode: rewardMode,
+    active_staker: reward ? reward.active_staker : false,
     reward_earned_qta: reward ? reward.earned_qta : null,
     reward_converted_qta: reward ? reward.converted_qta : null,
     reward_room_qta: reward ? floorTo(reward.room_qta, adec) : null,
