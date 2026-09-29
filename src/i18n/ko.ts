@@ -546,7 +546,7 @@ const ko = {
   'convert.rewardEarned': 'Rewards received (dividend + matching)',
   'convert.rewardConverted': 'Already swapped',
   'convert.rewardRoom': 'Swappable now',
-  'convert.rewardNote': 'Staking members can swap ALL the QTA they hold to USDT here, anytime, with no daily limit. Selling on the spot order book stays limited to KRW 50,000 per day. Staking rewards are added to your wallet automatically every day (00:00 KST). Swapped USDT can be withdrawn every Friday 10:00–16:00 (KST).',
+  'convert.rewardNote': 'Staking members can swap ALL the QTA they hold to USDT here, anytime, with no daily limit, at the staking payout rate (KRW 10 per QTA at USDT = KRW 1,450) — the same rate your daily rewards are paid at. Selling on the spot order book stays limited to KRW 50,000 per day at the market price. Rewards are added to your wallet automatically every day (00:00 KST). Swapped USDT can be withdrawn every Friday 10:00–16:00 (KST).',
   'convert.rewardClampedBody': 'The amount was reduced to your swappable QTA balance.',
   'convert.rewardChanged': 'Your staking reward balance changed. Please request a new quote.',
   'convert.notYetHint': 'Not converted yet — tap Confirm to complete the swap',

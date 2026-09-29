@@ -40,6 +40,7 @@ import type { AppEnv } from '../index';
 import { authMiddleware } from '../middleware/auth';
 import { rateLimit } from '../middleware/rateLimit';
 import { loadSellApproval } from '../../shared/shareholder';
+import { pegQtaUsd } from '../../shared/qta-peg';
 import {
   MEMBER_SELL_CAP_KRW, MEMBER_SELL_CAP_USDT, USDT_KRW_RATE, STAKING_REWARD_SOURCE,
   kstDayStart, memberSoldSince, memberSellRoomUsdt,
@@ -107,6 +108,22 @@ async function referencePrice(DB: D1Database, marketId: string): Promise<number>
   return px;
 }
 
+// ----------------------------------------------------------------------------
+// ★ OWNER RULE (2026-09-29): "QTA를 테더로 스왑함에 있어서 데일리를 어찌 주는데
+//   테더가 이상하게 수량이 많냐" — daily rewards are paid in QTA converted from
+//   USD at the FIXED payout basis (§9: 10원 / 1,450 ≈ 0.006897 USDT per QTA),
+//   but reward swaps were bought back at the market bid (~0.0101 ≈ 14.7원),
+//   paying out ~1.47× the USD value of the reward. Reward swaps now use the
+//   SAME basis the reward was paid at, so a $25/day dividend swaps to 25 USDT.
+//   Never above the market bid. Normal (5만원-cap) Convert keeps the market bid.
+// ----------------------------------------------------------------------------
+function rewardSwapPrice(marketPrice: number, pdec: number): number {
+  const peg = pegQtaUsd(Date.now()) ?? (PEG_FALLBACK_KRW / USDT_KRW_RATE);
+  const p = marketPrice > 0 ? Math.min(peg, marketPrice) : peg;
+  return floorTo(p, pdec);
+}
+const PEG_FALLBACK_KRW = 10;
+
 function isCompany(user: any): boolean {
   return user?.role === 'admin' || user?.email === 'admin@quantaex.io';
 }
@@ -170,11 +187,14 @@ app.get('/status', authMiddleware, async (c) => {
     memberSoldSince(DB as any, market.id, user.id),
   ]);
   const company = isCompany(user);
-  const price = ref > 0 ? floorTo(ref * (1 - bps / 10000), Number(market.price_decimals) || 8) : 0;
+  const marketPrice = ref > 0 ? floorTo(ref * (1 - bps / 10000), Number(market.price_decimals) || 8) : 0;
   const adec = Number(market.amount_decimals) || 4;
-  // §6 exemption: staking rewards swap first, with no daily cap.
+  // §6 exemption: staking rewards swap first, with no daily cap — at the
+  // staking payout basis price (rewardSwapPrice), not the market bid.
   const reward = company ? null : await rewardAllowance(DB, user.id);
-  const rewardMode = !!reward && price > 0 && reward.room_qta * price >= MIN_CONVERT_USDT;
+  const rPrice = rewardSwapPrice(marketPrice, Number(market.price_decimals) || 8);
+  const rewardMode = !!reward && rPrice > 0 && reward.room_qta * rPrice >= MIN_CONVERT_USDT;
+  const price = rewardMode ? rPrice : marketPrice;
   const capRemaining = company ? null : Math.max(0, MEMBER_SELL_CAP_USDT - today.usdt);
   const remaining = rewardMode ? reward!.room_qta * price : capRemaining;
   return c.json({
@@ -191,6 +211,7 @@ app.get('/status', authMiddleware, async (c) => {
     from_coin: 'QTA', to_coin: 'USDT',
     qta_available: Number(wallet?.available || 0),
     ref_price: ref, price, spread_bps: bps, fee: 0,
+    market_price: marketPrice, reward_price: rPrice,
     quote_ttl_sec: CONVERT_QUOTE_TTL_SEC,
     min_to_amount: MIN_CONVERT_USDT,
     cap_krw: MEMBER_SELL_CAP_KRW, cap_usdt: Math.round(MEMBER_SELL_CAP_USDT * 100) / 100, usdt_krw_rate: USDT_KRW_RATE,
@@ -229,13 +250,16 @@ app.post('/quote', authMiddleware, rlQuote, async (c) => {
   const ref = await referencePrice(DB, market.id);
   if (!(ref > 0)) return c.json({ error: 'PRICE_UNAVAILABLE', message: 'Reference price unavailable. Try again shortly.' }, 503);
   const bps = await spreadBps(DB);
-  const price = floorTo(ref * (1 - bps / 10000), pdec);
-  if (!(price > 0)) return c.json({ error: 'PRICE_UNAVAILABLE' }, 503);
+  const marketPrice = floorTo(ref * (1 - bps / 10000), pdec);
+  if (!(marketPrice > 0)) return c.json({ error: 'PRICE_UNAVAILABLE' }, 503);
 
   // §6 exemption (2026-09-28): while the member still has swappable staking
-  // rewards, this quote is a reward swap — no daily cap, no §12 approval.
+  // rewards, this quote is a reward swap — no daily cap, no §12 approval —
+  // priced at the staking payout basis (rewardSwapPrice), not the market bid.
   const reward = company ? null : await rewardAllowance(DB, user.id);
-  const rewardMode = !!reward && reward.room_qta * price >= MIN_CONVERT_USDT;
+  const rPrice = rewardSwapPrice(marketPrice, pdec);
+  const rewardMode = !!reward && rPrice > 0 && reward.room_qta * rPrice >= MIN_CONVERT_USDT;
+  const price = rewardMode ? rPrice : marketPrice;
 
   // §12 — pre-approved sellers only (shareholders auto) for non-reward QTA.
   if (!company && !rewardMode) {
