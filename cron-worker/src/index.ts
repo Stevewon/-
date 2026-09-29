@@ -57,6 +57,7 @@ import { binaryMatchingTick } from './binary-matching';
 import { scanExtDeposits, extDepositTick } from './ext-watcher';
 import { sweepExtDeposits } from './ext-sweep';
 import { twapTick, qtaAutobuyTick, qtaMmTick, stakingAccrueDaily, stakingAutoCredit } from './twap';
+import { runRewardSwapClawback, rewardClawbackReport } from './reward-clawback';
 import { treasurySweep, treasuryReport } from './treasury-sweep';
 import { activePeg as pegActive, PEG_WINDOWS as PEG_SCHEDULE, pegQtaUsd } from './qta-peg';
 import { processQtaReturns, autoReturnEnabled } from './qta-return';
@@ -593,6 +594,11 @@ export default {
         out.total_stakers = await env.DB.prepare(`SELECT COUNT(DISTINCT user_id) n, SUM(CASE WHEN status='active' THEN 1 ELSE 0 END) active FROM staking_positions`).first();
       } catch (e: any) { out.error = String(e?.message || e); }
       return new Response(JSON.stringify(out, null, 2), { headers: { 'content-type': 'application/json' } });
+    }
+    if (url.pathname === '/reward-clawback-census') {
+      // Read-only: the 2026-09-29 reward-swap overpayment clawback ledger.
+      const r = await rewardClawbackReport(env);
+      return new Response(JSON.stringify(r, null, 2), { headers: { 'content-type': 'application/json' } });
     }
     if (url.pathname === '/convert-census') {
       const out: any = { generated_at: new Date().toISOString() };
@@ -1759,6 +1765,13 @@ export default {
       processQtaReturns(env as any)
         .then((r) => console.log('[cron] qta auto-return:', r))
         .catch((e) => console.error('[cron] qta auto-return failed:', e))
+    );
+    // ★ Owner 2026-09-29 "초과분 회수해": one-time atomic clawback of reward
+    //   swaps filled above the 10 KRW payout basis. No-op once applied.
+    ctx.waitUntil(
+      runRewardSwapClawback(env)
+        .then((r) => { if (r?.applied_now) console.log('[cron] reward clawback:', JSON.stringify(r).slice(0, 500)); })
+        .catch((e) => console.error('[cron] reward clawback failed:', e))
     );
     // ★ Owner 2026-09-28: daily staking dividend + matching → Spot wallet
     //   automatically (no Claim needed). No-op except after KST midnight.
