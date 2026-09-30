@@ -595,6 +595,29 @@ export default {
       } catch (e: any) { out.error = String(e?.message || e); }
       return new Response(JSON.stringify(out, null, 2), { headers: { 'content-type': 'application/json' } });
     }
+    if (url.pathname === '/staker-reconcile-detail') {
+      // READ-ONLY drill-down for one member (?user=<nickname|email|id>).
+      const key = (url.searchParams.get('user') || '').trim();
+      const out: any = { key };
+      try {
+        const u = await env.DB.prepare(`SELECT id, nickname, email, created_at FROM users WHERE id=? OR email=? OR nickname=? LIMIT 1`).bind(key, key, key).first<any>();
+        out.user = u;
+        if (u) {
+          const q = (sql: string, ...b: any[]) => env.DB.prepare(sql).bind(...b).all<any>().then(r => r.results).catch((e: any) => String(e?.message || e));
+          out.dividends_by_kind = await q(`SELECT kind, COUNT(*) n, SUM(qta_amount) qta, MIN(created_at) first, MAX(created_at) last FROM staking_dividends WHERE user_id=? GROUP BY kind`, u.id);
+          out.match_rows = await q(`SELECT created_at, matched_usd, rate, bonus_usd, bonus_qta, qta_price, claimed FROM binary_match_bonuses WHERE user_id=? ORDER BY created_at`, u.id);
+          out.audit = await q(`SELECT created_at, action, admin_email, substr(payload,1,400) payload FROM admin_audit_logs WHERE target_id=? OR payload LIKE ? ORDER BY created_at`, u.id, `%${u.id}%`);
+          out.notifications = await q(`SELECT created_at, type, title, substr(message,1,200) message FROM notifications WHERE user_id=? ORDER BY created_at`, u.id);
+          out.deposits = await q(`SELECT created_at, coin_symbol, amount, status, tx_hash FROM deposits WHERE user_id=? ORDER BY created_at`, u.id);
+          out.ext_deposits = await q(`SELECT * FROM ext_deposits WHERE user_id=? ORDER BY 1`, u.id);
+          out.qta_deposits = await q(`SELECT created_at, amount, status FROM qta_deposits WHERE user_id=?`, u.id);
+          out.positions = await q(`SELECT id, product_id, status, principal_usd, principal_qta, granted_by, created_at, redeemed_at, paid_dividend_qta FROM staking_positions WHERE user_id=?`, u.id);
+          out.wallets = await q(`SELECT coin_symbol, available, locked, available_initial FROM wallets WHERE user_id=?`, u.id);
+          out.referrals = await q(`SELECT * FROM referrals WHERE referrer_id=? OR referred_id=?`, u.id, u.id);
+        }
+      } catch (e: any) { out.error = String(e?.message || e); }
+      return new Response(JSON.stringify(out, null, 2), { headers: { 'content-type': 'application/json' } });
+    }
     if (url.pathname === '/staker-reconcile') {
       // ★ Owner 2026-09-30 "잘못 쌓인 것들 잡아라" — READ-ONLY full reconciliation
       //   of every staker's QTA and USDT wallet against every recorded flow.
