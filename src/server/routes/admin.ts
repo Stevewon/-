@@ -14,6 +14,7 @@ import {
   loadSchedule as loadQtaSchedule, saveSchedule as saveQtaSchedule, normalizeTemplate as normalizeQtaTemplate,
 } from '../lib/qta-day-plan';
 import { computeBalanceBreakdown } from '../lib/balance-breakdown';
+import { stakingSummary, stakerLedger, withdrawEligible, stakingPolicyReport } from '../lib/staking-admin';
 import { recomputeBinaryFromStaking, rollStakeUpBinary, placeInBinaryTree, assignBinaryLeg } from '../lib/binary-matching';
 import {
   tmplWithdrawApproved,
@@ -3708,6 +3709,32 @@ app.get('/stakers/:id/positions', async (c) => {
            (SELECT COALESCE(SUM(qta_amount),0) FROM staking_dividends d WHERE d.position_id = sp.id) AS dividends_qta
       FROM staking_positions sp WHERE sp.user_id = ? ORDER BY sp.created_at DESC`).bind(uid).all<any>().catch(() => ({ results: [] as any[] }));
   return c.json({ ok: true, positions: results || [] });
+});
+
+// ★ Owner 2026-09-30 — staking console (lib/staking-admin.ts, read-only).
+// GET /admin/staking/summary?days=30  — totals + per-KST-day series
+app.get('/staking/summary', async (c) => {
+  const days = Math.max(1, Math.min(365, parseInt(c.req.query('days') || '30', 10) || 30));
+  return c.json({ ok: true, ...(await stakingSummary(c.env.DB, days)) });
+});
+// GET /admin/stakers/:id/ledger — one member's full cumulative history
+app.get('/stakers/:id/ledger', async (c) => {
+  const r = await stakerLedger(c.env.DB, c.req.param('id'));
+  if (!r) return c.json({ ok: false, error: 'user not found' }, 404);
+  return c.json({ ok: true, ...r });
+});
+// GET /admin/withdraw-eligible — Friday withdrawal-eligible members, by amount
+app.get('/withdraw-eligible', async (c) => c.json({ ok: true, ...(await withdrawEligible(c.env.DB)) }));
+// GET /admin/staking/policy-report — Word-openable staking policy report (.doc)
+app.get('/staking/policy-report', async (c) => {
+  const { html, filename } = await stakingPolicyReport(c.env.DB);
+  return new Response('﻿' + html, {
+    headers: {
+      'content-type': 'application/msword; charset=utf-8',
+      'content-disposition': `attachment; filename="staking-policy.doc"; filename*=UTF-8''${encodeURIComponent(filename)}`,
+      'cache-control': 'no-store',
+    },
+  });
 });
 
 // GET /admin/staking-grants — list admin-granted positions with progress.

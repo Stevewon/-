@@ -11,9 +11,10 @@ import useStore from '../../store/useStore';
 import { useI18n } from '../../i18n';
 import QuantaLogo from '../common/QuantaLogo';
 import DepositBell from '../admin/DepositBell';
+import { StakingTicker } from '../admin/StakingConsole';
 
 export type AdminTab =
-  | 'overview' | 'users' | 'stakers' | 'kyc' | 'deposits' | 'withdrawals'
+  | 'overview' | 'users' | 'stakers' | 'stakingDash' | 'fridayWithdraw' | 'kyc' | 'deposits' | 'withdrawals'
   | 'trades' | 'coins' | 'broadcast' | 'notices' | 'fees' | 'audit' | 'system'
   // Sprint 4 Phase C — QTA chain admin
   | 'chainWallets' | 'chainQueue' | 'chainHealth' | 'risk'
@@ -62,7 +63,9 @@ export default function AdminLayout({
       title: t('admin.groupOps'),
       items: [
         { key: 'users',       label: t('admin.users'),       icon: Users },
+        { key: 'stakingDash', label: '스테이킹 현황',              icon: TrendingUp },
         { key: 'stakers',     label: '스테이킹 회원',              icon: PiggyBank },
+        { key: 'fridayWithdraw', label: '금요일 출금 대상',         icon: ListChecks },
         { key: 'kyc',         label: t('admin.kyc'),         icon: ShieldCheck },
         { key: 'deposits',    label: t('admin.deposits'),    icon: ArrowDownToLine },
         { key: 'withdrawals', label: t('admin.withdrawals'), icon: ArrowUpFromLine },
@@ -241,6 +244,8 @@ export default function AdminLayout({
             </span>
             {/* ★ Owner 2026-09-14: audible "띵동, 테더가 입금되었습니다" on every credited USDT deposit. */}
             <DepositBell />
+            {/* ★ Owner 2026-09-30: staking total always visible on every admin tab */}
+            <StakingTicker onOpen={() => onChange('stakingDash' as AdminTab)} />
           </div>
           <div className="flex items-center gap-1">
             {onPriceAlertCheck && (

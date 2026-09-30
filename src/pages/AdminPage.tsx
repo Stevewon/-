@@ -16,6 +16,7 @@ import { showToast } from '../components/common/Toast';
 import CoinIcon from '../components/common/CoinIcon';
 import AdminLayout, { type AdminTab } from '../components/layout/AdminLayout';
 import BalanceBreakdownModal, { type BalanceBreakdown } from '../components/wallet/BalanceBreakdownModal';
+import { StakingDashTab, FridayWithdrawTab, StakerLedgerPanel } from '../components/admin/StakingConsole';
 
 type Tab = AdminTab;
 
@@ -94,6 +95,8 @@ export default function AdminPage() {
       {tab === 'overview'    && <Overview stats={stats} trends={trends} topMarkets={topMarkets} activity={activity} t={t} onJump={(k: Tab) => setTab(k)} />}
       {tab === 'users'       && <UsersTab t={t} onUpdate={refresh} />}
       {tab === 'stakers'     && <StakersTab t={t} onUpdate={refresh} />}
+      {tab === 'stakingDash' && <StakingDashTab />}
+      {tab === 'fridayWithdraw' && <FridayWithdrawTab />}
       {tab === 'kyc'         && <KycTab t={t} onUpdate={refresh} />}
       {tab === 'deposits'    && <DepositsTab t={t} onUpdate={refresh} />}
       {tab === 'withdrawals' && <WithdrawalsTab t={t} onUpdate={refresh} />}
@@ -2285,7 +2288,7 @@ function StakersTab({ t, onUpdate }: any) {
         <table className="w-full text-xs">
           <thead>
             <tr className="text-exchange-text-third border-b border-exchange-border">
-              <th className="text-left px-3 py-2">회원 (클릭: 포지션 상세)</th>
+              <th className="text-left px-3 py-2">회원 (클릭: 누적 내역·포지션)</th>
               <th className="text-left px-3 py-2">KYC</th>
               <th className="text-right px-3 py-2">스테이킹 총액</th>
               <th className="text-right px-3 py-2">포지션</th>
@@ -2342,7 +2345,9 @@ function StakersTab({ t, onUpdate }: any) {
                   </tr>
                   {open === u.id && (
                     <tr className="border-b border-exchange-border/50 bg-exchange-input/30">
-                      <td colSpan={10} className="px-4 py-2">
+                      <td colSpan={10} className="px-4 py-2 space-y-3">
+                        {/* ★ Owner 2026-09-30: 회원별 정확한 누적 내역 */}
+                        <StakerLedgerPanel userId={u.id} />
                         {!positions[u.id] ? <div className="text-exchange-text-third">불러오는 중…</div> : positions[u.id].length === 0 ? <div className="text-exchange-text-third">포지션 없음</div> : (
                           <table className="w-full text-[11px]">
                             <thead><tr className="text-exchange-text-third"><th className="text-left px-2 py-1">스테이킹 시각(KST)</th><th className="text-left px-2 py-1">상품</th><th className="text-right px-2 py-1">금액 USD</th><th className="text-right px-2 py-1">QTA</th><th className="text-right px-2 py-1">기간</th><th className="text-left px-2 py-1">만기</th><th className="text-right px-2 py-1">배당 QTA</th><th className="text-left px-2 py-1">상태</th></tr></thead>
