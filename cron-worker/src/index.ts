@@ -595,6 +595,61 @@ export default {
       } catch (e: any) { out.error = String(e?.message || e); }
       return new Response(JSON.stringify(out, null, 2), { headers: { 'content-type': 'application/json' } });
     }
+    if (url.pathname === '/staker-reconcile') {
+      // ★ Owner 2026-09-30 "잘못 쌓인 것들 잡아라" — READ-ONLY full reconciliation
+      //   of every staker's QTA and USDT wallet against every recorded flow.
+      //   diff = wallet(available+locked) − expected. Non-zero diff = money
+      //   that no ledger row explains (a wrong credit, or an unlogged path).
+      const out: any = { generated_at: new Date().toISOString() };
+      try {
+        const mk = await env.DB.prepare("SELECT id FROM markets WHERE base_coin='QTA' AND quote_coin='USDT' LIMIT 1").first<any>();
+        const mid = mk?.id || '';
+        const users = (await env.DB.prepare(
+          `SELECT DISTINCT u.id, u.nickname, u.email FROM staking_positions sp JOIN users u ON u.id = sp.user_id
+            WHERE u.id NOT IN ('mm-bot-a','mm-bot-b') AND u.role <> 'admin'`).all<any>()).results || [];
+        const one = async (sql: string, ...b: any[]) => Number((await env.DB.prepare(sql).bind(...b).first<any>().catch(() => null))?.v || 0);
+        const bad = "('rejected','failed','cancelled')";
+        const rows: any[] = [];
+        for (const u of users) {
+          const id = u.id;
+          const w = async (coin: string) => (await env.DB.prepare(`SELECT COALESCE(available,0) a, COALESCE(locked,0) l, COALESCE(available_initial,0) i FROM wallets WHERE user_id=? AND coin_symbol=?`).bind(id, coin).first<any>().catch(() => null)) || { a: 0, l: 0, i: 0 };
+          const [wq, wu] = await Promise.all([w('QTA'), w('USDT')]);
+          const q = {
+            dividends: await one(`SELECT COALESCE(SUM(qta_amount),0) v FROM staking_dividends WHERE user_id=? AND kind='dividend'`, id),
+            match_claimed: await one(`SELECT COALESCE(SUM(bonus_qta),0) v FROM binary_match_bonuses WHERE user_id=? AND COALESCE(claimed,0)=1`, id),
+            bought: await one(`SELECT COALESCE(SUM(amount),0) v FROM trades WHERE market_id=? AND buyer_id=?`, mid, id),
+            sold: await one(`SELECT COALESCE(SUM(amount),0) v FROM trades WHERE market_id=? AND seller_id=?`, mid, id),
+            deposits: await one(`SELECT COALESCE(SUM(CAST(amount AS REAL)),0) v FROM qta_deposits WHERE user_id=? AND status='credited' AND COALESCE(asset,'QTA')='QTA'`, id)
+              + await one(`SELECT COALESCE(SUM(amount),0) v FROM deposits WHERE user_id=? AND coin_symbol='QTA' AND status='completed'`, id),
+            converted: await one(`SELECT COALESCE(SUM(from_amount),0) v FROM convert_orders WHERE user_id=? AND status='filled'`, id),
+            withdrawn: await one(`SELECT COALESCE(SUM(CAST(amount AS REAL)),0) v FROM qta_withdrawals WHERE user_id=? AND COALESCE(asset,'QTA')='QTA' AND status NOT IN ${bad}`, id)
+              + await one(`SELECT COALESCE(SUM(amount),0) v FROM withdrawals WHERE user_id=? AND coin_symbol='QTA' AND status NOT IN ${bad}`, id),
+            staked_locked_qta: await one(`SELECT COALESCE(SUM(principal_qta),0) v FROM staking_positions WHERE user_id=? AND granted_by IS NULL`, id),
+          };
+          const qExpected = q.dividends + q.match_claimed + q.bought - q.sold + q.deposits - q.converted - q.withdrawn;
+          const uu = {
+            deposits: await one(`SELECT COALESCE(SUM(amount),0) v FROM deposits WHERE user_id=? AND coin_symbol='USDT' AND status='completed'`, id),
+            convert_in: await one(`SELECT COALESCE(SUM(to_amount),0) v FROM convert_orders WHERE user_id=? AND status='filled'`, id),
+            clawed_back: await one(`SELECT COALESCE(SUM(taken_usdt),0) v FROM convert_clawbacks WHERE user_id=? AND applied=1`, id),
+            sold_net: await one(`SELECT COALESCE(SUM(total - COALESCE(seller_fee,0)),0) v FROM trades WHERE market_id=? AND seller_id=?`, mid, id),
+            bought_cost: await one(`SELECT COALESCE(SUM(total + COALESCE(buyer_fee,0)),0) v FROM trades WHERE market_id=? AND buyer_id=?`, mid, id),
+            withdrawn: await one(`SELECT COALESCE(SUM(amount),0) v FROM withdrawals WHERE user_id=? AND coin_symbol='USDT' AND status NOT IN ${bad}`, id),
+          };
+          const uExpected = uu.deposits + uu.convert_in - uu.clawed_back + uu.sold_net - uu.bought_cost - uu.withdrawn;
+          const r2 = (n: number) => Math.round(n * 100) / 100;
+          rows.push({
+            user: u.nickname, email: u.email, user_id: id,
+            qta: { wallet: r2(wq.a + wq.l), expected: r2(qExpected), diff: r2(wq.a + wq.l - qExpected), initial: r2(wq.i), ...Object.fromEntries(Object.entries(q).map(([k, v]) => [k, r2(v as number)])) },
+            usdt: { wallet: r2(wu.a + wu.l), expected: r2(uExpected), diff: r2(wu.a + wu.l - uExpected), initial: r2(wu.i), ...Object.fromEntries(Object.entries(uu).map(([k, v]) => [k, r2(v as number)])) },
+          });
+        }
+        rows.sort((a, b) => (Math.abs(b.usdt.diff) + Math.abs(b.qta.diff) * 0.0069) - (Math.abs(a.usdt.diff) + Math.abs(a.qta.diff) * 0.0069));
+        out.members = rows.length;
+        out.flagged = rows.filter(r => Math.abs(r.usdt.diff) >= 0.5 || Math.abs(r.qta.diff) >= 50).length;
+        out.rows = rows;
+      } catch (e: any) { out.error = String(e?.message || e); }
+      return new Response(JSON.stringify(out, null, 2), { headers: { 'content-type': 'application/json' } });
+    }
     if (url.pathname === '/reward-clawback-census') {
       // Read-only: the 2026-09-29 reward-swap overpayment clawback ledger.
       const r = await rewardClawbackReport(env);
