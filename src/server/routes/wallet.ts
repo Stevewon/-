@@ -481,9 +481,20 @@ app.post('/withdraw', authMiddleware, rlWithdraw, requireKyc('approved'), async 
          AND (network IS ? OR network = ?)`
     ).bind(user.id, coin_symbol, address, network || null, network || null)
       .first<{ id: string; cooldown_until: string; is_active: number }>().catch(() => null);
-    if (!wl) return c.json({ error: 'Address not in whitelist. Add it first.' }, 400);
-    if (!wl.is_active) return c.json({ error: 'Address disabled' }, 400);
-    if (wl.cooldown_until && new Date(wl.cooldown_until).getTime() > Date.now()) {
+    // ★ OWNER DECISION (2026-10-02, "1번으로 진행"): members have NO screen to
+    //   add a whitelist address, so every USDT withdrawal failed with "Address
+    //   not in whitelist" — no withdrawal was ever accepted. The address a
+    //   member submits (after KYC + 2FA above) is now registered on first use,
+    //   with no cooldown. Every request still needs admin approval (Withdrawals
+    //   tab) before anything is sent; 1/day + Friday window unchanged.
+    if (!wl) {
+      await c.env.DB.prepare(
+        `INSERT INTO withdraw_whitelist (id, user_id, coin_symbol, network, memo, address, label, cooldown_until)
+         VALUES (?, ?, ?, ?, ?, ?, 'auto (first withdrawal)', NULL)`,
+      ).bind(crypto.randomUUID(), user.id, coin_symbol, network || null, memo || null, address).run();
+    } else if (!wl.is_active) {
+      return c.json({ error: 'Address disabled' }, 400);
+    } else if (wl.cooldown_until && new Date(wl.cooldown_until).getTime() > Date.now()) {
       return c.json({ error: 'Address is in 24h cooldown', cooldown_until: wl.cooldown_until }, 400);
     }
   }
