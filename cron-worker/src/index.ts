@@ -595,83 +595,11 @@ export default {
       } catch (e: any) { out.error = String(e?.message || e); }
       return new Response(JSON.stringify(out, null, 2), { headers: { 'content-type': 'application/json' } });
     }
-    if (url.pathname === '/staker-reconcile-detail') {
-      // READ-ONLY drill-down for one member (?user=<nickname|email|id>).
-      const key = (url.searchParams.get('user') || '').trim();
-      const out: any = { key };
-      try {
-        const u = await env.DB.prepare(`SELECT id, nickname, email, created_at FROM users WHERE id=? OR email=? OR nickname=? LIMIT 1`).bind(key, key, key).first<any>();
-        out.user = u;
-        if (u) {
-          const q = (sql: string, ...b: any[]) => env.DB.prepare(sql).bind(...b).all<any>().then(r => r.results).catch((e: any) => String(e?.message || e));
-          out.dividends_by_kind = await q(`SELECT kind, COUNT(*) n, SUM(qta_amount) qta, MIN(created_at) first, MAX(created_at) last FROM staking_dividends WHERE user_id=? GROUP BY kind`, u.id);
-          out.match_rows = await q(`SELECT created_at, matched_usd, rate, bonus_usd, bonus_qta, qta_price, claimed FROM binary_match_bonuses WHERE user_id=? ORDER BY created_at`, u.id);
-          out.audit = await q(`SELECT created_at, action, admin_email, substr(payload,1,400) payload FROM admin_audit_logs WHERE target_id=? OR payload LIKE ? ORDER BY created_at`, u.id, `%${u.id}%`);
-          out.notifications = await q(`SELECT created_at, type, title, substr(message,1,200) message FROM notifications WHERE user_id=? ORDER BY created_at`, u.id);
-          out.deposits = await q(`SELECT created_at, coin_symbol, amount, status, tx_hash FROM deposits WHERE user_id=? ORDER BY created_at`, u.id);
-          out.ext_deposits = await q(`SELECT * FROM ext_deposits WHERE user_id=? ORDER BY 1`, u.id);
-          out.qta_deposits = await q(`SELECT created_at, amount, status FROM qta_deposits WHERE user_id=?`, u.id);
-          out.positions = await q(`SELECT id, product_id, status, principal_usd, principal_qta, granted_by, created_at, redeemed_at, paid_dividend_qta FROM staking_positions WHERE user_id=?`, u.id);
-          out.wallets = await q(`SELECT coin_symbol, available, locked, available_initial FROM wallets WHERE user_id=?`, u.id);
-          out.referrals = await q(`SELECT * FROM referrals WHERE referrer_id=? OR referred_id=?`, u.id, u.id);
-        }
-      } catch (e: any) { out.error = String(e?.message || e); }
-      return new Response(JSON.stringify(out, null, 2), { headers: { 'content-type': 'application/json' } });
-    }
-    if (url.pathname === '/staker-reconcile') {
-      // ★ Owner 2026-09-30 "잘못 쌓인 것들 잡아라" — READ-ONLY full reconciliation
-      //   of every staker's QTA and USDT wallet against every recorded flow.
-      //   diff = wallet(available+locked) − expected. Non-zero diff = money
-      //   that no ledger row explains (a wrong credit, or an unlogged path).
-      const out: any = { generated_at: new Date().toISOString() };
-      try {
-        const mk = await env.DB.prepare("SELECT id FROM markets WHERE base_coin='QTA' AND quote_coin='USDT' LIMIT 1").first<any>();
-        const mid = mk?.id || '';
-        const users = (await env.DB.prepare(
-          `SELECT DISTINCT u.id, u.nickname, u.email FROM staking_positions sp JOIN users u ON u.id = sp.user_id
-            WHERE u.id NOT IN ('mm-bot-a','mm-bot-b') AND u.role <> 'admin'`).all<any>()).results || [];
-        const one = async (sql: string, ...b: any[]) => Number((await env.DB.prepare(sql).bind(...b).first<any>().catch(() => null))?.v || 0);
-        const bad = "('rejected','failed','cancelled')";
-        const rows: any[] = [];
-        for (const u of users) {
-          const id = u.id;
-          const w = async (coin: string) => (await env.DB.prepare(`SELECT COALESCE(available,0) a, COALESCE(locked,0) l, COALESCE(available_initial,0) i FROM wallets WHERE user_id=? AND coin_symbol=?`).bind(id, coin).first<any>().catch(() => null)) || { a: 0, l: 0, i: 0 };
-          const [wq, wu] = await Promise.all([w('QTA'), w('USDT')]);
-          const q = {
-            dividends: await one(`SELECT COALESCE(SUM(qta_amount),0) v FROM staking_dividends WHERE user_id=? AND kind='dividend'`, id),
-            match_claimed: await one(`SELECT COALESCE(SUM(bonus_qta),0) v FROM binary_match_bonuses WHERE user_id=? AND COALESCE(claimed,0)=1`, id),
-            bought: await one(`SELECT COALESCE(SUM(amount),0) v FROM trades WHERE market_id=? AND buyer_id=?`, mid, id),
-            sold: await one(`SELECT COALESCE(SUM(amount),0) v FROM trades WHERE market_id=? AND seller_id=?`, mid, id),
-            deposits: await one(`SELECT COALESCE(SUM(CAST(amount AS REAL)),0) v FROM qta_deposits WHERE user_id=? AND status='credited' AND COALESCE(asset,'QTA')='QTA'`, id)
-              + await one(`SELECT COALESCE(SUM(amount),0) v FROM deposits WHERE user_id=? AND coin_symbol='QTA' AND status='completed'`, id),
-            converted: await one(`SELECT COALESCE(SUM(from_amount),0) v FROM convert_orders WHERE user_id=? AND status='filled'`, id),
-            withdrawn: await one(`SELECT COALESCE(SUM(CAST(amount AS REAL)),0) v FROM qta_withdrawals WHERE user_id=? AND COALESCE(asset,'QTA')='QTA' AND status NOT IN ${bad}`, id)
-              + await one(`SELECT COALESCE(SUM(amount),0) v FROM withdrawals WHERE user_id=? AND coin_symbol='QTA' AND status NOT IN ${bad}`, id),
-            staked_locked_qta: await one(`SELECT COALESCE(SUM(principal_qta),0) v FROM staking_positions WHERE user_id=? AND granted_by IS NULL`, id),
-          };
-          const qExpected = q.dividends + q.match_claimed + q.bought - q.sold + q.deposits - q.converted - q.withdrawn;
-          const uu = {
-            deposits: await one(`SELECT COALESCE(SUM(amount),0) v FROM deposits WHERE user_id=? AND coin_symbol='USDT' AND status='completed'`, id),
-            convert_in: await one(`SELECT COALESCE(SUM(to_amount),0) v FROM convert_orders WHERE user_id=? AND status='filled'`, id),
-            clawed_back: await one(`SELECT COALESCE(SUM(taken_usdt),0) v FROM convert_clawbacks WHERE user_id=? AND applied=1`, id),
-            sold_net: await one(`SELECT COALESCE(SUM(total - COALESCE(seller_fee,0)),0) v FROM trades WHERE market_id=? AND seller_id=?`, mid, id),
-            bought_cost: await one(`SELECT COALESCE(SUM(total + COALESCE(buyer_fee,0)),0) v FROM trades WHERE market_id=? AND buyer_id=?`, mid, id),
-            withdrawn: await one(`SELECT COALESCE(SUM(amount),0) v FROM withdrawals WHERE user_id=? AND coin_symbol='USDT' AND status NOT IN ${bad}`, id),
-          };
-          const uExpected = uu.deposits + uu.convert_in - uu.clawed_back + uu.sold_net - uu.bought_cost - uu.withdrawn;
-          const r2 = (n: number) => Math.round(n * 100) / 100;
-          rows.push({
-            user: u.nickname, email: u.email, user_id: id,
-            qta: { wallet: r2(wq.a + wq.l), expected: r2(qExpected), diff: r2(wq.a + wq.l - qExpected), initial: r2(wq.i), ...Object.fromEntries(Object.entries(q).map(([k, v]) => [k, r2(v as number)])) },
-            usdt: { wallet: r2(wu.a + wu.l), expected: r2(uExpected), diff: r2(wu.a + wu.l - uExpected), initial: r2(wu.i), ...Object.fromEntries(Object.entries(uu).map(([k, v]) => [k, r2(v as number)])) },
-          });
-        }
-        rows.sort((a, b) => (Math.abs(b.usdt.diff) + Math.abs(b.qta.diff) * 0.0069) - (Math.abs(a.usdt.diff) + Math.abs(a.qta.diff) * 0.0069));
-        out.members = rows.length;
-        out.flagged = rows.filter(r => Math.abs(r.usdt.diff) >= 0.5 || Math.abs(r.qta.diff) >= 50).length;
-        out.rows = rows;
-      } catch (e: any) { out.error = String(e?.message || e); }
-      return new Response(JSON.stringify(out, null, 2), { headers: { 'content-type': 'application/json' } });
+    if (url.pathname === '/staker-reconcile' || url.pathname === '/staker-reconcile-detail') {
+      // ★ 2026-10-02: REMOVED. These one-off audits scanned the whole trades
+      //   table per member and helped exhaust D1's daily row-read limit (site
+      //   500s). They were also public and returned member emails.
+      return new Response('gone', { status: 410 });
     }
     if (url.pathname === '/reward-clawback-census') {
       // Read-only: the 2026-09-29 reward-swap overpayment clawback ledger.

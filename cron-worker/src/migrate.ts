@@ -48,6 +48,22 @@ function isIdempotentError(msg: string): boolean {
 // ---------------------------------------------------------------------------
 const MIGRATIONS: Migration[] = [
   {
+    // 0063 — ★ 2026-10-02 D1 free-tier daily ROW-READ limit exhausted (site 500s).
+    //   trades had only (market_id, created_at), so every per-member query
+    //   (lifetime sell totals polled every 15 s by the trade widget + Convert
+    //   status, 5만원 cap checks, admin lists) scanned the WHOLE market history.
+    //   These indexes make them seek by member instead.
+    id: '0063_read_load_indexes',
+    statements: [
+      `CREATE INDEX IF NOT EXISTS idx_trades_seller ON trades(seller_id, market_id, created_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_trades_buyer ON trades(buyer_id, market_id, created_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_convert_orders_user ON convert_orders(user_id, status, filled_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_staking_positions_user ON staking_positions(user_id, status)`,
+      `CREATE INDEX IF NOT EXISTS idx_bmb_user ON binary_match_bonuses(user_id, claimed)`,
+      `CREATE INDEX IF NOT EXISTS idx_withdrawals_user ON withdrawals(user_id, status, created_at)`,
+    ],
+  },
+  {
     // 0044 — QTA staking tier model: schema (ADD COLUMN + ledger table).
     id: '0044_staking_tier_model',
     statements: [

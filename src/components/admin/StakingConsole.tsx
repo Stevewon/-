@@ -41,9 +41,11 @@ export function StakingTicker({ onOpen }: { onOpen?: () => void }) {
   const [s, setS] = useState<any>(null);
   useEffect(() => {
     let alive = true;
-    const load = () => api.get('/admin/staking/summary', { params: { days: 1 } }).then(r => { if (alive) setS(r.data); }).catch(() => {});
+    // ★ 2026-10-02: was every 60 s on every admin tab — part of the D1 read
+    //   overload. Now every 10 min, and only while the tab is visible.
+    const load = () => { if (document.visibilityState !== 'visible') return; api.get('/admin/staking/summary', { params: { days: 1 } }).then(r => { if (alive) setS(r.data); }).catch(() => {}); };
     load();
-    const h = window.setInterval(load, 60_000);
+    const h = window.setInterval(load, 600_000);
     return () => { alive = false; window.clearInterval(h); };
   }, []);
   if (!s?.totals) return null;
