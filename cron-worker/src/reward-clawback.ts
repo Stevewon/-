@@ -117,6 +117,96 @@ export async function runRewardSwapClawback(env: ClawbackEnv): Promise<any> {
   return { ok: true, applied_now: rows.length, ledger: done.results };
 }
 
+// ============================================================================
+// Double-paid matching bonus clawback — ONE-TIME, idempotent, atomic.
+// ----------------------------------------------------------------------------
+// ★ OWNER ORDER (2026-09-30): "잘못 쌓인 것들 잡으라고".
+// /staker-reconcile found that the binary matching bonuses created
+// 2026-09-01 14:38 UTC (before the 2026-09-03 "claimable" change, be6faa5)
+// sit in these members' wallets TWICE: once credited at match time and again
+// when the row (reset to claimed=0 on 09-03) was claimed. The 09-03 reversal
+// only reached chogukho. Evidence per member: wallet − ledger = exactly the
+// bonus amount. Only the proven duplicate is taken back; unexplained
+// remainders (tree75 3,850 · namim 9,804 QTA) are reported, not touched.
+// Taken from QTA first; if the member already swapped it, the rest is taken
+// from USDT at the 10 KRW payout basis (the rate those swaps now settle at).
+// Returned to the treasury (admin-001).
+// ============================================================================
+const MATCH_DOUBLE_PAID: { user_id: string; nickname: string; qta: number }[] = [
+  { user_id: '3d7b1376-4e39-4dcb-9312-ecc57cc3ebf7', nickname: 'yesica', qta: 176416.66666667 },
+  { user_id: '784ef18b-6879-4880-8215-b68ef7d332d7', nickname: 'parkjongbum', qta: 7250 },
+  { user_id: '5e51e5d6-f4f1-4467-96bd-c61193749120', nickname: 'KIMYEONSIM', qta: 7250 },
+  { user_id: '2a192ce4-bd04-40b7-9f0b-a1aae703be07', nickname: 'insillee', qta: 7250 },
+  { user_id: '9a39fd6e-418c-4796-9836-5c39453575b5', nickname: 'tree75', qta: 7250 },
+  { user_id: '5d3c4905-ef04-4812-9efd-9a7b628949d8', nickname: 'namim', qta: 7250 },
+];
+
+export async function runMatchDoubleClawback(env: ClawbackEnv): Promise<any> {
+  const DB = env.DB;
+  await DB.prepare(
+    `CREATE TABLE IF NOT EXISTS match_double_clawbacks (
+       user_id TEXT PRIMARY KEY, nickname TEXT, due_qta REAL NOT NULL,
+       qta_taken REAL, usdt_taken REAL, qta_equiv_from_usdt REAL,
+       applied INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')), applied_at TEXT)`,
+  ).run();
+  for (const m of MATCH_DOUBLE_PAID) {
+    await DB.prepare(`INSERT OR IGNORE INTO match_double_clawbacks (user_id, nickname, due_qta) VALUES (?,?,?)`)
+      .bind(m.user_id, m.nickname, m.qta).run();
+  }
+  const pending = (await DB.prepare(`SELECT user_id, nickname, due_qta FROM match_double_clawbacks WHERE applied = 0`).all<any>()).results || [];
+  if (!pending.length) return { ok: true, pending: 0 };
+  const now = new Date().toISOString();
+  const B = BASIS_USDT_PER_QTA;
+  const stmts: D1PreparedStatement[] = [];
+  for (const r of pending) {
+    const uid = r.user_id;
+    stmts.push(DB.prepare(
+      `UPDATE match_double_clawbacks SET qta_taken = MIN(due_qta, MAX(0, COALESCE(
+         (SELECT available FROM wallets WHERE user_id = ? AND coin_symbol = 'QTA'), 0))) WHERE user_id = ? AND applied = 0`).bind(uid, uid));
+    stmts.push(DB.prepare(
+      `UPDATE match_double_clawbacks SET usdt_taken = ROUND(MIN((due_qta - qta_taken) * ?, MAX(0, COALESCE(
+         (SELECT available FROM wallets WHERE user_id = ? AND coin_symbol = 'USDT'), 0))), 6) WHERE user_id = ? AND applied = 0`).bind(B, uid, uid));
+    stmts.push(DB.prepare(
+      `UPDATE match_double_clawbacks SET qta_equiv_from_usdt = ROUND(usdt_taken / ?, 4) WHERE user_id = ? AND applied = 0`).bind(B, uid));
+    stmts.push(DB.prepare(
+      `UPDATE wallets SET available = available - (SELECT qta_taken FROM match_double_clawbacks WHERE user_id = ?)
+        WHERE user_id = ? AND coin_symbol = 'QTA'`).bind(uid, uid));
+    stmts.push(DB.prepare(
+      `UPDATE wallets SET available_initial = MIN(COALESCE(available_initial,0), available) WHERE user_id = ? AND coin_symbol = 'QTA'`).bind(uid));
+    stmts.push(DB.prepare(
+      `UPDATE wallets SET available = available - (SELECT usdt_taken FROM match_double_clawbacks WHERE user_id = ?)
+        WHERE user_id = ? AND coin_symbol = 'USDT'`).bind(uid, uid));
+    stmts.push(DB.prepare(
+      `UPDATE wallets SET available = available + (SELECT qta_taken FROM match_double_clawbacks WHERE user_id = ?)
+        WHERE user_id = 'admin-001' AND coin_symbol = 'QTA'`).bind(uid));
+    stmts.push(DB.prepare(
+      `UPDATE wallets SET available = available + (SELECT usdt_taken FROM match_double_clawbacks WHERE user_id = ?)
+        WHERE user_id = 'admin-001' AND coin_symbol = 'USDT'`).bind(uid));
+    stmts.push(DB.prepare(
+      `INSERT INTO notifications (id, user_id, type, title, message, data, is_read, created_at)
+       SELECT ?, ?, 'earn', 'Matching bonus correction',
+              'Your 2026-09-01 matching bonus of ' || CAST(CAST(due_qta AS INTEGER) AS TEXT) ||
+              ' QTA was credited to your wallet twice due to a system error. The duplicate has been corrected: ' ||
+              printf('%.2f', qta_taken) || ' QTA' ||
+              CASE WHEN usdt_taken > 0 THEN ' and ' || printf('%.2f', usdt_taken) || ' USDT (for QTA already converted)' ELSE '' END ||
+              ' adjusted from your balance.', ?, 0, ?
+         FROM match_double_clawbacks WHERE user_id = ?`,
+    ).bind(crypto.randomUUID(), uid, JSON.stringify({ rule: 'match double-credit 2026-09-01', due_qta: r.due_qta }), now, uid));
+    stmts.push(DB.prepare(
+      `INSERT INTO admin_audit_logs (id, admin_id, admin_email, action, target_type, target_id, payload, created_at)
+       SELECT ?, 'system:match-clawback', 'system@quantaex.io', 'earn.match_double_clawback', 'user', user_id,
+              json_object('nickname', nickname, 'due_qta', due_qta, 'qta_taken', qta_taken, 'usdt_taken', usdt_taken,
+                          'qta_equiv_from_usdt', qta_equiv_from_usdt, 'basis', ?, 'order', 'owner 2026-09-30 잘못 쌓인 것 회수'), ?
+         FROM match_double_clawbacks WHERE user_id = ?`,
+    ).bind(crypto.randomUUID(), B, now, uid));
+    stmts.push(DB.prepare(`UPDATE match_double_clawbacks SET applied = 1, applied_at = ? WHERE user_id = ? AND applied = 0`).bind(now, uid));
+  }
+  await DB.batch(stmts); // atomic
+  const done = (await DB.prepare(`SELECT * FROM match_double_clawbacks ORDER BY due_qta DESC`).all<any>()).results;
+  console.log('[match-clawback] applied', JSON.stringify(done).slice(0, 800));
+  return { ok: true, applied_now: pending.length, ledger: done };
+}
+
 /** Read-only report for /reward-clawback-census. */
 export async function rewardClawbackReport(env: ClawbackEnv): Promise<any> {
   const out: any = { generated_at: new Date().toISOString(), basis_usdt_per_qta: BASIS_USDT_PER_QTA };
@@ -125,6 +215,14 @@ export async function rewardClawbackReport(env: ClawbackEnv): Promise<any> {
             (SELECT available FROM wallets w WHERE w.user_id = c.user_id AND w.coin_symbol = 'USDT') AS usdt_now
        FROM convert_clawbacks c LEFT JOIN users u ON u.id = c.user_id ORDER BY c.created_at`,
   ).all<any>().catch((e: any) => ({ results: String(e?.message || e) }))).results;
+  out.match_double = (await env.DB.prepare(
+    `SELECT m.*, (SELECT available FROM wallets w WHERE w.user_id = m.user_id AND w.coin_symbol='QTA') qta_now,
+            (SELECT available FROM wallets w WHERE w.user_id = m.user_id AND w.coin_symbol='USDT') usdt_now
+       FROM match_double_clawbacks m ORDER BY due_qta DESC`,
+  ).all<any>().catch((e: any) => ({ results: String(e?.message || e) }))).results;
+  out.treasury_qta = await env.DB.prepare(
+    `SELECT available FROM wallets WHERE user_id = 'admin-001' AND coin_symbol = 'QTA'`,
+  ).first<any>().catch(() => null);
   out.treasury_usdt = await env.DB.prepare(
     `SELECT available FROM wallets WHERE user_id = 'admin-001' AND coin_symbol = 'USDT'`,
   ).first<any>().catch(() => null);

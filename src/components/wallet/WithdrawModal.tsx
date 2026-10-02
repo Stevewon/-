@@ -236,6 +236,9 @@ export default function WithdrawModal({ open, onClose, initialCoin = 'USDT' }: P
         network: network.id,
         memo: memo || undefined,
         payout_coin: payoutCoin,
+        // ★ 2026-10-02 fix: the 2FA code typed in the confirm step was never
+        //   sent, so every 2FA-enabled member got "2FA code required".
+        totp_code: twoFA || undefined,
       });
       setStep('done');
       fetchWallets();

@@ -57,7 +57,7 @@ import { binaryMatchingTick } from './binary-matching';
 import { scanExtDeposits, extDepositTick } from './ext-watcher';
 import { sweepExtDeposits } from './ext-sweep';
 import { twapTick, qtaAutobuyTick, qtaMmTick, stakingAccrueDaily, stakingAutoCredit } from './twap';
-import { runRewardSwapClawback, rewardClawbackReport } from './reward-clawback';
+import { runRewardSwapClawback, runMatchDoubleClawback, rewardClawbackReport } from './reward-clawback';
 import { treasurySweep, treasuryReport } from './treasury-sweep';
 import { activePeg as pegActive, PEG_WINDOWS as PEG_SCHEDULE, pegQtaUsd } from './qta-peg';
 import { processQtaReturns, autoReturnEnabled } from './qta-return';
@@ -1850,6 +1850,11 @@ export default {
       runRewardSwapClawback(env)
         .then((r) => { if (r?.applied_now) console.log('[cron] reward clawback:', JSON.stringify(r).slice(0, 500)); })
         .catch((e) => console.error('[cron] reward clawback failed:', e))
+    );
+    ctx.waitUntil(
+      runMatchDoubleClawback(env)
+        .then((r) => { if (r?.applied_now) console.log('[cron] match double clawback:', JSON.stringify(r).slice(0, 500)); })
+        .catch((e) => console.error('[cron] match double clawback failed:', e))
     );
     // ★ Owner 2026-09-28: daily staking dividend + matching → Spot wallet
     //   automatically (no Claim needed). No-op except after KST midnight.
