@@ -1286,10 +1286,10 @@ function WithdrawalsTab({ t, onUpdate }: any) {
             <tr className="text-xs text-exchange-text-third border-b border-exchange-border">
               <th className="text-left px-3 py-2.5">{t('admin.nickname')}</th>
               <th className="text-left px-3 py-2.5">{t('admin.coin')}</th>
-              <th className="text-right px-3 py-2.5">{t('admin.amount')}</th>
+              <th className="text-right px-3 py-2.5">송금할 금액 (수수료 차감 후)</th>
               <th className="text-right px-3 py-2.5">{t('wallet.fee')}</th>
               <th className="text-left px-3 py-2.5">{t('admin.network')}</th>
-              <th className="text-left px-3 py-2.5">{t('admin.address')}</th>
+              <th className="text-left px-3 py-2.5">받는 지갑 주소 (전체)</th>
               <th className="text-left px-3 py-2.5">{t('admin.status')}</th>
               <th className="text-left px-3 py-2.5">{t('trade.time')}</th>
               <th className="text-right px-3 py-2.5">{t('market.action')}</th>
@@ -1300,12 +1300,26 @@ function WithdrawalsTab({ t, onUpdate }: any) {
               <tr><td colSpan={9} className="px-3 py-8 text-center text-exchange-text-third text-xs">{t('admin.noData')}</td></tr>
             ) : list.map(w => (
               <tr key={w.id} className="border-b border-exchange-border/50 hover:bg-exchange-hover/30">
-                <td className="px-3 py-2 text-xs">{w.nickname}</td>
+                <td className="px-3 py-2 text-xs"><div className="font-medium">{w.nickname}</div><div className="text-[10px] text-exchange-text-third">{w.email}</div></td>
                 <td className="px-3 py-2 text-xs font-medium">{w.coin_symbol}</td>
-                <td className="px-3 py-2 text-right text-xs tabular-nums">{formatPrice(w.amount)}</td>
+                <td className="px-3 py-2 text-right text-xs tabular-nums font-semibold">{formatPrice(w.amount)}</td>
                 <td className="px-3 py-2 text-right text-xs tabular-nums text-exchange-text-third">{formatPrice(w.fee || 0)}</td>
                 <td className="px-3 py-2 text-[11px]">{w.network || '-'}</td>
-                <td className="px-3 py-2 text-[11px] text-exchange-text-secondary font-mono" title={w.address}>{(w.address || '').slice(0, 14)}...</td>
+                {/* ★ 2026-10-02 owner: full destination address (was cut to 14 chars) + copy + explorer */}
+                <td className="px-3 py-2 text-[11px] font-mono min-w-[18rem]">
+                  <div className="break-all text-exchange-text select-all">{w.address || '-'}</div>
+                  {w.address && (
+                    <div className="flex gap-2 mt-1 font-sans">
+                      <button
+                        onClick={() => { navigator.clipboard?.writeText(w.address).then(() => showToast('success', '주소 복사', w.address)).catch(() => showToast('error', '복사 실패', '주소를 길게 눌러 직접 복사하세요')); }}
+                        className="px-1.5 py-0.5 rounded bg-exchange-yellow/15 text-exchange-yellow text-[10px] font-semibold"
+                      >주소 복사</button>
+                      {/^0x[0-9a-fA-F]{40}$/.test(w.address) && String(w.network || '').toLowerCase().includes('bep') && (
+                        <a href={`https://bscscan.com/address/${w.address}`} target="_blank" rel="noreferrer" className="px-1.5 py-0.5 rounded bg-exchange-input text-exchange-text-secondary text-[10px]">BscScan ↗</a>
+                      )}
+                    </div>
+                  )}
+                </td>
                 <td className="px-3 py-2">
                   <span className={`text-[10px] px-1.5 py-0.5 rounded ${
                     w.status === 'completed' ? 'bg-exchange-buy/15 text-exchange-buy' :
@@ -5210,7 +5224,7 @@ function ChainQueueTab({ t }: any) {
             {items.map((w) => (
               <tr key={w.id} className="border-t border-exchange-border">
                 <td className="px-4 py-3 truncate max-w-[200px]">{w.email || w.user_id}</td>
-                <td className="px-4 py-3 font-mono text-xs truncate max-w-[220px]">{w.to_address}</td>
+                <td className="px-4 py-3 font-mono text-xs break-all min-w-[18rem] select-all">{w.to_address}</td>
                 <td className="px-4 py-3 text-right font-semibold">{w.amount} QTA</td>
                 <td className="px-4 py-3 font-mono text-[10px] truncate max-w-[180px] text-exchange-text-third">
                   {w.tx_hash || '—'}

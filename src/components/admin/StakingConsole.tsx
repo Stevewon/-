@@ -292,7 +292,7 @@ export function StakerLedgerPanel({ userId }: { userId: string }) {
           </>)}
           {sec === 'withdrawals' && (<>
             <thead><tr className="text-exchange-text-third"><th className={th}>신청 시각</th><th className={th}>구분</th><th className={th}>코인</th><th className={thr}>금액</th><th className={thr}>수수료</th><th className={th}>상태</th><th className={th}>주소</th></tr></thead>
-            <tbody>{d.withdrawals.map((r: any, i: number) => <tr key={i} className="border-t border-exchange-border/40"><td className={td}>{kst(r.created_at)}</td><td className={td}>{r.kind === 'dividend' ? '배당 출금' : '지갑 출금'}</td><td className={td}>{r.coin}</td><td className={tdr}>{n2(r.amount)}</td><td className={tdr}>{n2(r.fee)}</td><td className={td}>{r.status}</td><td className={`${td} truncate max-w-[12rem]`}>{r.address}</td></tr>)}</tbody>
+            <tbody>{d.withdrawals.map((r: any, i: number) => <tr key={i} className="border-t border-exchange-border/40"><td className={td}>{kst(r.created_at)}</td><td className={td}>{r.kind === 'dividend' ? '배당 출금' : '지갑 출금'}</td><td className={td}>{r.coin}</td><td className={tdr}>{n2(r.amount)}</td><td className={tdr}>{n2(r.fee)}</td><td className={td}>{r.status}</td><td className={`${td} break-all min-w-[16rem] font-mono select-all`}>{r.address}</td></tr>)}</tbody>
           </>)}
         </table>
       </div>
