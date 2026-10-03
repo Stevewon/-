@@ -4,6 +4,9 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-04-20",
   "compatibility_flags": ["nodejs_compat"],
+  // ★ 2026-10-03: Workers Paid — the */5 tick (deposits, withdrawals, auto-credit,
+  //   migrations) needs more than the 2 s it was being cut at.
+  "limits": { "cpu_ms": 300000 },
   "triggers": {
     // Every 1 min → QTA market-making tick ONLY (fills member buys/sells within
     //   1..59s of placement — owner rule 2026-09-05).
